@@ -181,7 +181,8 @@ tfoot td { background: #f8fafc; font-weight: 700; border-top: 2px solid var(--bo
 
 <div class="toolbar no-print">
   <h2><i style="margin-right:6px">📋</i><?= clean($companyName) ?> — Audit Report (<?= clean($periodLabel) ?>)</h2>
-  <button class="btn-print" onclick="window.print()">🖨 Print / Save as PDF</button>
+  <a class="btn-print" href="audit_pdf_download.php?year=<?= $year ?>&month=<?= $month ?>">⬇ Download PDF</a>
+  <button class="btn-print" onclick="window.print()">🖨 Print</button>
   <button class="btn-print" onclick="window.close()">✕ Close</button>
 </div>
 
