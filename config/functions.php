@@ -106,8 +106,10 @@ function generateInvoiceNo(PDO $pdo): string {
         if ($row) $prefix = $row;
     } catch (Exception $e) {}
     $year = date('Y');
-    $seq = $pdo->query("SELECT COUNT(*)+1 FROM payments WHERE YEAR(created_at) = $year")->fetchColumn();
-    return $prefix . '-' . $year . '-' . str_pad($seq, 5, '0', STR_PAD_LEFT);
+    $like = $prefix . '-' . $year . '-%';
+    $max  = $pdo->prepare("SELECT COALESCE(MAX(CAST(SUBSTRING_INDEX(invoice_no,'-',-1) AS UNSIGNED)),0) FROM payments WHERE invoice_no LIKE ?");
+    $max->execute([$like]);
+    return $prefix . '-' . $year . '-' . str_pad((int)$max->fetchColumn() + 1, 5, '0', STR_PAD_LEFT);
 }
 
 // ─── File Upload Handler ─────────────────────────────────────
