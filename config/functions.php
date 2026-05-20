@@ -150,6 +150,24 @@ function handleUpload(string $fieldName, string $subDir): array {
     return ['path' => UPLOAD_URL_BASE . $subDir . '/' . $filename, 'error' => null];
 }
 
+// ─── Rate History Lookup ─────────────────────────────────────
+// Returns the effective monthly rate for a unit in a given month/year
+// by finding the most recent unit_rate_history row on or before that month.
+// Falls back to $baseRate (rental_units.monthly_rate) if no history exists.
+function getRateForMonth(PDO $pdo, int $unitId, float $baseRate, int $month, int $year): float {
+    try {
+        $lastDay = date('Y-m-t', mktime(0, 0, 0, $month, 1, $year));
+        $stmt = $pdo->prepare(
+            "SELECT monthly_rate FROM unit_rate_history
+             WHERE unit_id = ? AND effective_date <= ?
+             ORDER BY effective_date DESC LIMIT 1"
+        );
+        $stmt->execute([$unitId, $lastDay]);
+        $r = $stmt->fetchColumn();
+        return $r !== false ? (float)$r : $baseRate;
+    } catch (Exception $e) { return $baseRate; }
+}
+
 // ─── Proration Helper ────────────────────────────────────────
 // Returns the prorated charge for a month when contract_start falls after
 // the due day, otherwise returns the full monthly rate.
@@ -187,10 +205,12 @@ function getUnitPaymentStatus(PDO $pdo, int $unitId, int $month, int $year): str
     $u = $unit->fetch();
     if (!$u) return 'gray';
 
+    $rate = getRateForMonth($pdo, $unitId, (float)$u['monthly_rate'], $month, $year);
+
     $paid = $pdo->prepare("SELECT COALESCE(SUM(amount),0) FROM payments WHERE unit_id=? AND payment_type='rent' AND period_month=? AND period_year=?");
     $paid->execute([$unitId, $month, $year]);
     $totalPaid = (float)$paid->fetchColumn();
-    $expected  = prorateFirstMonth((float)$u['monthly_rate'], (int)$u['due_day'], $u['contract_start'] ?? null, $month, $year);
+    $expected  = prorateFirstMonth($rate, (int)$u['due_day'], $u['contract_start'] ?? null, $month, $year);
 
     if ($totalPaid <= 0 && $expected > 0) {
         $dueDate = mktime(0,0,0, $month, $u['due_day'], $year);

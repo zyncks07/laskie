@@ -82,13 +82,12 @@ $sq->execute([$unitId, $dateFrom, $dateTo]);
 $pdfServiceCharges = $sq->fetchAll();
 
 // ── Build Ledger ──────────────────────────────────────────────
-$ledger = [];
-$rate   = (float)$unit['monthly_rate'];
-$dueDay = (int)$unit['due_day'];
+$ledger   = [];
+$baseRate = (float)$unit['monthly_rate'];
+$dueDay   = (int)$unit['due_day'];
 $multiOccupant = count($occupants) > 1;
 
 foreach ($occupants as $occupant) {
-    if ($rate <= 0) continue;
     $contractStart = $occupant['contract_start'] ?? null;
     $contractEnd   = $occupant['contract_end']   ?? null;
 
@@ -102,8 +101,10 @@ foreach ($occupants as $occupant) {
     $endDt = new DateTime($chargeTo);
 
     while ($iter <= $endDt) {
-        $m       = (int)$iter->format('n');
-        $y       = (int)$iter->format('Y');
+        $m    = (int)$iter->format('n');
+        $y    = (int)$iter->format('Y');
+        $rate = getRateForMonth($pdo, $unitId, $baseRate, $m, $y);
+        if ($rate <= 0) { $iter->modify('+1 month'); continue; }
         $charge  = prorateFirstMonth($rate, $dueDay, $contractStart, $m, $y);
         $dateStr = chargeDate($dueDay, $contractStart, $m, $y);
         $desc    = 'Rent — ' . $iter->format('F Y');

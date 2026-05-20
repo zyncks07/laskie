@@ -106,13 +106,12 @@ if ($selUnit) {
 // ── Build Ledger (charges + payments merged, sorted by date) ──
 $ledger = [];
 if ($selUnit && $unitInfo) {
-    $rate = (float)$unitInfo['monthly_rate'];
+    $baseRate = (float)$unitInfo['monthly_rate'];
 
     // Generate charge rows for every occupant whose period overlaps the range
     $dueDay = (int)$unitInfo['due_day'];
     $multiOccupant = count($occupants) > 1;
     foreach ($occupants as $occupant) {
-        if ($rate <= 0) continue;
         $contractStart = $occupant['contract_start'] ?? null;
         $contractEnd   = $occupant['contract_end']   ?? null;
 
@@ -126,8 +125,10 @@ if ($selUnit && $unitInfo) {
         $endDt = new DateTime($chargeTo);
 
         while ($iter <= $endDt) {
-            $m       = (int)$iter->format('n');
-            $y       = (int)$iter->format('Y');
+            $m    = (int)$iter->format('n');
+            $y    = (int)$iter->format('Y');
+            $rate = getRateForMonth($pdo, $selUnit, $baseRate, $m, $y);
+            if ($rate <= 0) { $iter->modify('+1 month'); continue; }
             $charge  = prorateFirstMonth($rate, $dueDay, $contractStart, $m, $y);
             $dateStr = chargeDate($dueDay, $contractStart, $m, $y);
             $desc    = 'Rent — ' . $iter->format('F Y');

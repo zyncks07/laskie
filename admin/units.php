@@ -127,6 +127,60 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         jsonOk(['type' => $row->fetch()]);
     }
 
+    // ── Rate History ──────────────────────────────────────────
+    if ($action === 'save_rate_increase') {
+        $unitId   = (int)($_POST['unit_id']   ?? 0);
+        $rate     = (float)($_POST['monthly_rate'] ?? 0);
+        $effDate  = trim($_POST['effective_date'] ?? '');
+        $notes    = nullOrStr($_POST['notes'] ?? '');
+        if (!$unitId) jsonErr('Unit required.');
+        if ($rate <= 0) jsonErr('Rate must be greater than zero.');
+        if (!$effDate || !strtotime($effDate)) jsonErr('Valid effective date required.');
+        $pdo->prepare("INSERT INTO unit_rate_history (unit_id,monthly_rate,effective_date,notes,created_by) VALUES (?,?,?,?,?)")
+            ->execute([$unitId, $rate, $effDate, $notes, $_SESSION['user']['id']]);
+        // Keep rental_units.monthly_rate in sync with the latest rate
+        $pdo->prepare("UPDATE rental_units SET monthly_rate=?
+                       WHERE id=? AND ? >= (
+                           SELECT COALESCE(MAX(effective_date),'1970-01-01')
+                           FROM unit_rate_history WHERE unit_id=? AND id != LAST_INSERT_ID()
+                       )")
+            ->execute([$rate, $unitId, $effDate, $unitId]);
+        logActivity($pdo,'RATE_INCREASE','Units',"Unit #$unitId new rate ₱$rate eff. $effDate");
+        jsonOk(['msg'=>'Rate change recorded.']);
+    }
+
+    if ($action === 'get_rate_history') {
+        $unitId = (int)($_POST['unit_id'] ?? 0);
+        $rows = $pdo->prepare("
+            SELECT urh.*, u.full_name as created_by_name
+            FROM unit_rate_history urh
+            LEFT JOIN users u ON urh.created_by = u.id
+            WHERE urh.unit_id = ?
+            ORDER BY urh.effective_date DESC, urh.created_at DESC
+        ");
+        $rows->execute([$unitId]);
+        jsonOk(['history' => $rows->fetchAll()]);
+    }
+
+    if ($action === 'delete_rate_history') {
+        $id = (int)($_POST['id'] ?? 0);
+        $unitId = (int)($_POST['unit_id'] ?? 0);
+        // Prevent deleting if it's the only history row
+        $cnt = $pdo->prepare("SELECT COUNT(*) FROM unit_rate_history WHERE unit_id=?");
+        $cnt->execute([$unitId]);
+        if ((int)$cnt->fetchColumn() <= 1) jsonErr('Cannot delete the only rate record for this unit.');
+        $pdo->prepare("DELETE FROM unit_rate_history WHERE id=?")->execute([$id]);
+        // Re-sync current rate to latest remaining history entry
+        $latest = $pdo->prepare("SELECT monthly_rate FROM unit_rate_history WHERE unit_id=? ORDER BY effective_date DESC, created_at DESC LIMIT 1");
+        $latest->execute([$unitId]);
+        $latestRate = $latest->fetchColumn();
+        if ($latestRate !== false) {
+            $pdo->prepare("UPDATE rental_units SET monthly_rate=? WHERE id=?")->execute([$latestRate, $unitId]);
+        }
+        logActivity($pdo,'DELETE_RATE_HISTORY','Units',"Deleted rate history #$id for unit #$unitId");
+        jsonOk(['msg'=>'Rate record deleted.']);
+    }
+
     exit;
 }
 
@@ -192,6 +246,7 @@ include '../includes/header.php';
             <td><span class="badge badge-<?= $u['status'] ?>"><?= ucfirst($u['status']) ?></span></td>
             <td class="truncate" style="max-width:180px"><?= clean($u['description'] ?? '—') ?></td>
             <td class="text-center">
+              <button class="btn-icon" title="Rate History" onclick="openRateHistory(<?= $u['id'] ?>, '<?= clean(addslashes($u['unit_name'])) ?>', <?= (float)$u['monthly_rate'] ?>)"><i class="fa-solid fa-chart-line fa-xs"></i></button>
               <button class="btn-icon" title="Edit" onclick="editUnit(<?= $u['id'] ?>)"><i class="fa-solid fa-pen fa-xs"></i></button>
               <button class="btn-icon danger" title="Delete" onclick="deleteUnit(<?= $u['id'] ?>, '<?= clean(addslashes($u['unit_name'])) ?>')"><i class="fa-solid fa-trash fa-xs"></i></button>
             </td>
@@ -366,6 +421,60 @@ include '../includes/header.php';
   </div>
 </div>
 
+<!-- ── Modal: Rate History ───────────────────────────────────── -->
+<div class="modal fade" id="rateHistoryModal" tabindex="-1">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="fa-solid fa-chart-line me-2"></i>Rate History — <span id="rateUnitName"></span></h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="rateUnitId">
+        <!-- History table -->
+        <div class="table-responsive mb-4">
+          <table class="table table-sm" id="rateHistoryTable">
+            <thead>
+              <tr>
+                <th>Effective Date</th>
+                <th class="text-end">Monthly Rate</th>
+                <th>Notes</th>
+                <th>Recorded By</th>
+                <th class="text-center">Action</th>
+              </tr>
+            </thead>
+            <tbody id="rateHistoryBody">
+              <tr><td colspan="5" class="text-center text-muted">Loading…</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <hr>
+        <!-- Add new rate change -->
+        <div class="fw-600 mb-3"><i class="fa-solid fa-plus-circle me-1 text-primary"></i>Record New Rate Change</div>
+        <div class="row g-3">
+          <div class="col-md-4">
+            <label class="form-label">New Monthly Rate (₱) *</label>
+            <input type="number" step="0.01" min="0.01" class="form-control" id="newRate" placeholder="0.00">
+          </div>
+          <div class="col-md-4">
+            <label class="form-label">Effective Date *</label>
+            <input type="date" class="form-control" id="newRateDate">
+          </div>
+          <div class="col-md-4">
+            <label class="form-label">Notes <small class="text-muted">(optional)</small></label>
+            <input type="text" class="form-control" id="newRateNotes" placeholder="e.g. Annual increase">
+          </div>
+        </div>
+        <div id="rateMsg" class="mt-3" style="display:none"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Close</button>
+        <button class="btn btn-primary btn-sm" onclick="saveRateIncrease()"><i class="fa-solid fa-save me-1"></i>Save Rate Change</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- ── Modal: Global Due Day ────────────────────────────────── -->
 <div class="modal fade" id="dueDayModal" tabindex="-1">
   <div class="modal-dialog modal-sm">
@@ -390,11 +499,12 @@ include '../includes/header.php';
 
 <?php $extraJs = <<<'JS'
 <script>
-var unitModal, typeModal, serviceModal;
+var unitModal, typeModal, serviceModal, rateHistoryModal;
 document.addEventListener('DOMContentLoaded', function() {
-  unitModal    = new bootstrap.Modal(document.getElementById('unitModal'));
-  typeModal    = new bootstrap.Modal(document.getElementById('typeModal'));
-  serviceModal = new bootstrap.Modal(document.getElementById('serviceModal'));
+  unitModal        = new bootstrap.Modal(document.getElementById('unitModal'));
+  typeModal        = new bootstrap.Modal(document.getElementById('typeModal'));
+  serviceModal     = new bootstrap.Modal(document.getElementById('serviceModal'));
+  rateHistoryModal = new bootstrap.Modal(document.getElementById('rateHistoryModal'));
 });
 
 $(document).ready(function(){
@@ -527,6 +637,66 @@ function deleteService(id,name) {
     apiPost('../admin/units.php',{action:'delete_service',id},(err,res)=>{
       if(!res.success) return showToast(res.error,'error');
       showToast(res.msg,'success'); setTimeout(()=>location.reload(),800);
+    });
+  });
+}
+
+// ── Rate History ─────────────────────────────────────────────
+function openRateHistory(unitId, unitName, currentRate) {
+  document.getElementById('rateUnitId').value   = unitId;
+  document.getElementById('rateUnitName').textContent = unitName;
+  document.getElementById('newRate').value      = '';
+  document.getElementById('newRateDate').value  = new Date().toISOString().slice(0,10);
+  document.getElementById('newRateNotes').value = '';
+  document.getElementById('rateMsg').style.display = 'none';
+  loadRateHistory(unitId);
+  rateHistoryModal.show();
+}
+
+function loadRateHistory(unitId) {
+  const tbody = document.getElementById('rateHistoryBody');
+  tbody.innerHTML = '<tr><td colspan="5" class="text-center text-muted">Loading…</td></tr>';
+  apiPost('../admin/units.php', {action:'get_rate_history', unit_id:unitId}, (err, res) => {
+    if (!res.success) { tbody.innerHTML = '<tr><td colspan="5" class="text-danger">Failed to load.</td></tr>'; return; }
+    if (!res.history.length) { tbody.innerHTML = '<tr><td colspan="5" class="text-center text-muted">No rate history recorded yet.</td></tr>'; return; }
+    tbody.innerHTML = res.history.map((h,i) => `
+      <tr>
+        <td class="fw-600">${h.effective_date}</td>
+        <td class="text-end fw-600 text-success">₱${parseFloat(h.monthly_rate).toLocaleString('en',{minimumFractionDigits:2})}</td>
+        <td class="text-muted" style="font-size:12px">${h.notes||'—'}</td>
+        <td style="font-size:12px">${h.created_by_name||'—'}</td>
+        <td class="text-center">
+          ${res.history.length > 1
+            ? `<button class="btn-icon danger" title="Delete" onclick="deleteRateHistory(${h.id}, ${unitId})"><i class="fa-solid fa-trash fa-xs"></i></button>`
+            : '<span class="text-muted" style="font-size:11px">Initial</span>'}
+        </td>
+      </tr>`).join('');
+  });
+}
+
+function saveRateIncrease() {
+  const unitId = document.getElementById('rateUnitId').value;
+  const rate   = document.getElementById('newRate').value;
+  const date   = document.getElementById('newRateDate').value;
+  const notes  = document.getElementById('newRateNotes').value;
+  const msgEl  = document.getElementById('rateMsg');
+  apiPost('../admin/units.php', {action:'save_rate_increase', unit_id:unitId, monthly_rate:rate, effective_date:date, notes}, (err, res) => {
+    msgEl.style.display = '';
+    if (!res.success) { msgEl.className='alert alert-danger'; msgEl.textContent=res.error; return; }
+    msgEl.className='alert alert-success'; msgEl.textContent=res.msg;
+    loadRateHistory(unitId);
+    document.getElementById('newRate').value = '';
+    document.getElementById('newRateNotes').value = '';
+    setTimeout(()=>{ msgEl.style.display='none'; }, 3000);
+  });
+}
+
+function deleteRateHistory(id, unitId) {
+  confirmDelete('Delete this rate record? This cannot be undone.', () => {
+    apiPost('../admin/units.php', {action:'delete_rate_history', id, unit_id:unitId}, (err, res) => {
+      if (!res.success) return showToast(res.error, 'error');
+      showToast(res.msg, 'success');
+      loadRateHistory(unitId);
     });
   });
 }
