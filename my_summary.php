@@ -333,7 +333,7 @@ include 'includes/header.php';
       <?php endif; ?>
       <?php foreach($myLogs as $log): ?>
       <tr>
-        <td class="mono" style="font-size:11.5px;white-space:nowrap"><?= date('M j, Y H:i:s',strtotime($log['created_at'])) ?></td>
+        <td data-order="<?= $log['created_at'] ?>" class="mono" style="font-size:11.5px;white-space:nowrap"><?= date('M j, Y H:i:s',strtotime($log['created_at'])) ?></td>
         <td><span class="badge log-action badge-staff" style="font-size:10.5px"><?= clean($log['action']) ?></span></td>
         <td style="font-size:12px;color:var(--text-muted)"><?= clean($log['module']??'—') ?></td>
         <td class="log-details"><?= clean($log['details']??'—') ?></td>

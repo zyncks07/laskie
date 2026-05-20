@@ -124,7 +124,7 @@ include '../includes/header.php';
           <?= clean($t['phone'] ?? '—') ?>
           <?php if($t['phone2']): ?><br><small><?= clean($t['phone2']) ?></small><?php endif; ?>
         </td>
-        <td>
+        <td data-order="<?= $t['contract_start'] ?? '' ?>">
           <?php if($t['contract_start']): ?>
             <?= fmtDate($t['contract_start'],'M Y') ?> – <?= $t['contract_end'] ? fmtDate($t['contract_end'],'M Y') : 'Open' ?>
           <?php else: ?>—<?php endif; ?>

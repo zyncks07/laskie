@@ -408,7 +408,7 @@ include '../includes/header.php';
         $trClass   = $row['type']==='payment' ? 'tr-payment' : ($isRefund ? 'tr-refund' : ($isSvcChg ? 'tr-svc-charge' : ''));
       ?>
       <tr class="<?=$trClass?>">
-        <td style="white-space:nowrap;font-size:12.5px"><?=fmtDate($row['date'],'M j, Y')?></td>
+        <td data-order="<?=$row['date']?>" style="white-space:nowrap;font-size:12.5px"><?=fmtDate($row['date'],'M j, Y')?></td>
         <td style="font-size:12.5px">
           <?php if($row['type']==='charge'): ?>
             <i class="fa-solid fa-file-invoice fa-xs me-1 text-muted"></i><?=clean($row['description'])?>

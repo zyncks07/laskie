@@ -219,7 +219,7 @@ $deletes    = count(array_filter($logRows, fn($r)=>str_starts_with($r['action'],
       <tbody>
       <?php foreach($logRows as $log): ?>
       <tr>
-        <td class="mono" style="font-size:11.5px;white-space:nowrap"><?= date('M j, Y H:i:s', strtotime($log['created_at'])) ?></td>
+        <td data-order="<?= $log['created_at'] ?>" class="mono" style="font-size:11.5px;white-space:nowrap"><?= date('M j, Y H:i:s', strtotime($log['created_at'])) ?></td>
         <td>
           <div class="fw-600" style="font-size:12.5px"><?= clean($log['full_name'] ?? $log['username'] ?? '—') ?></div>
           <div class="mono" style="font-size:10.5px;color:var(--text-muted)"><?= clean($log['username'] ?? '') ?></div>
