@@ -231,8 +231,8 @@ include 'includes/header.php';
 <script>
 var CHART_DATA = {
   unitLabels:  <?= json_encode(array_column($units, 'unit_name')) ?>,
-  unitRev:     <?= json_encode(array_values($unitRevenue)) ?>,
-  unitExp:     <?= json_encode(array_values($unitExpenses)) ?>,
+  unitRev:     <?= json_encode(array_map(fn($u) => $unitRevenue[$u['id']], $units)) ?>,
+  unitExp:     <?= json_encode(array_map(fn($u) => $unitExpenses[$u['id']], $units)) ?>,
   catLabels:   <?= json_encode(array_column($catExpData, 'name')) ?>,
   catTotals:   <?= json_encode(array_map(fn($r) => (float)$r['total'], $catExpData)) ?>,
   monthLabels: <?= json_encode(['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']) ?>,
