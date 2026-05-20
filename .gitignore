@@ -1,0 +1,4 @@
+.claude/
+uploads/
+config/db.php
+*.log

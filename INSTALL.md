@@ -1,0 +1,346 @@
+# Laskie Rental Property Management System
+## Installation Guide — Debian 13 + Apache + MySQL + FileZilla
+
+---
+
+## REQUIREMENTS
+
+| Component | Version |
+|-----------|---------|
+| Debian    | 12 / 13 |
+| Apache    | 2.4+    |
+| PHP       | 8.1+    |
+| MySQL     | 8.0+ (or MariaDB 10.6+) |
+| FileZilla | Any     |
+
+---
+
+## STEP 1 — Install LAMP Stack (SSH as root or sudo user)
+
+```bash
+# Update system
+apt update && apt upgrade -y
+
+# Install Apache
+apt install apache2 -y
+
+# Install PHP 8.2 + required extensions
+apt install php8.2 php8.2-mysql php8.2-mbstring php8.2-xml \
+    php8.2-curl php8.2-gd php8.2-zip libapache2-mod-php8.2 -y
+
+# Install MySQL
+apt install mysql-server -y
+
+# Enable Apache modules
+a2enmod rewrite headers expires deflate
+systemctl restart apache2
+```
+
+---
+
+## STEP 2 — Create MySQL Database & User
+
+```bash
+# Open MySQL as root
+mysql -u root -p
+```
+
+Inside MySQL shell:
+
+```sql
+CREATE DATABASE laskie_rental CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+CREATE USER 'laskie_db_user'@'localhost' IDENTIFIED BY 'StrongPassword2024!';
+
+GRANT ALL PRIVILEGES ON laskie_rental.* TO 'laskie_db_user'@'localhost';
+
+FLUSH PRIVILEGES;
+EXIT;
+```
+
+> **Change `StrongPassword2024!` to your own strong password.**  
+> Use the same password in `config/db.php`.
+
+---
+
+## STEP 3 — Import Database Schema
+
+```bash
+mysql -u laskie_db_user -p laskie_rental < /var/www/laskie/install.sql
+```
+
+Or via phpMyAdmin: select `laskie_rental` → Import → choose `install.sql`.
+
+---
+
+## STEP 4 — Configure Apache Virtual Host
+
+```bash
+nano /etc/apache2/sites-available/laskie.conf
+```
+
+Paste this:
+
+```apache
+<VirtualHost *:80>
+    ServerName laskie.local
+    DocumentRoot /var/www/laskie
+    DirectoryIndex index.php
+
+    <Directory /var/www/laskie>
+        Options -Indexes +FollowSymLinks
+        AllowOverride All
+        Require all granted
+    </Directory>
+
+    # Deny direct access to sensitive dirs
+    <Directory /var/www/laskie/config>
+        Require all denied
+    </Directory>
+    <Directory /var/www/laskie/includes>
+        Require all denied
+    </Directory>
+
+    ErrorLog  ${APACHE_LOG_DIR}/laskie_error.log
+    CustomLog ${APACHE_LOG_DIR}/laskie_access.log combined
+</VirtualHost>
+```
+
+Enable the site:
+
+```bash
+a2ensite laskie.conf
+a2dissite 000-default.conf   # optional: disable default site
+systemctl reload apache2
+```
+
+---
+
+## STEP 5 — Upload Files via FileZilla
+
+### FileZilla Connection Settings
+| Field    | Value                        |
+|----------|------------------------------|
+| Host     | Your server IP or hostname   |
+| Username | `bulik`                      |
+| Password | Your SSH password            |
+| Port     | 22                           |
+| Protocol | SFTP – SSH File Transfer Protocol |
+
+### Steps
+1. Open FileZilla
+2. File → Site Manager → New Site → fill in the settings above
+3. Connect
+4. On the **Remote** panel, navigate to `/var/www/`
+5. On the **Local** panel, navigate to the `laskie/` folder you downloaded
+6. Drag the entire `laskie/` folder into `/var/www/`
+7. Wait for transfer to complete
+
+---
+
+## STEP 6 — Set File Permissions (SSH)
+
+```bash
+# Set ownership to Apache web user
+chown -R www-data:www-data /var/www/laskie
+
+# Directories: 755, Files: 644
+find /var/www/laskie -type d -exec chmod 755 {} \;
+find /var/www/laskie -type f -exec chmod 644 {} \;
+
+# Uploads directory needs write permission
+chmod -R 775 /var/www/laskie/uploads
+
+# If bulik user needs to manage files too:
+usermod -aG www-data bulik
+```
+
+---
+
+## STEP 7 — Update Database Config
+
+Edit `config/db.php` on the server (or before uploading):
+
+```php
+define('DB_HOST', 'localhost');
+define('DB_NAME', 'laskie_rental');
+define('DB_USER', 'laskie_db_user');     // match Step 2
+define('DB_PASS', 'StrongPassword2024!'); // match Step 2
+```
+
+```bash
+# Edit directly on server
+nano /var/www/laskie/config/db.php
+```
+
+---
+
+## STEP 8 — First Login
+
+Open your browser and go to:
+
+```
+http://YOUR_SERVER_IP/laskie/
+```
+
+Or if you set `ServerName laskie.local`, add to `/etc/hosts` on your PC:
+
+```
+192.168.x.x    laskie.local
+```
+
+Then visit: `http://laskie.local/`
+
+**Default credentials:**
+
+| Field    | Value         |
+|----------|---------------|
+| Username | `admin`       |
+| Password | `Admin@2024`  |
+
+> ⚠️ **Change the password immediately** after first login:  
+> Go to **Admin → Accounts → Edit your account → set new password**
+
+---
+
+## STEP 9 — Initial System Setup (after login)
+
+Do these in order immediately after first login:
+
+1. **Admin → Accounts** — Change the default admin password. Add your staff accounts.
+2. **Admin → Units → Unit Types** — Review/add your property types (Room, Apartment, etc.)
+3. **Admin → Units → Rental Units** — Add all your rental units with correct rates and due days
+4. **Admin → Units → Service Types** — Set default amounts for deposits, late fees, parking, etc.
+5. **Admin → Tenants** — Add all current tenants, link them to their units, upload contracts
+6. **Settings** (via DB or future settings page) — Update company name, address, phone, email in the `settings` table
+
+Update company info directly in MySQL:
+
+```sql
+UPDATE settings SET setting_value='Your Company Name'   WHERE setting_key='company_name';
+UPDATE settings SET setting_value='Your Address'        WHERE setting_key='company_address';
+UPDATE settings SET setting_value='09xx-xxx-xxxx'       WHERE setting_key='company_phone';
+UPDATE settings SET setting_value='email@yourdomain.com' WHERE setting_key='company_email';
+```
+
+---
+
+## STEP 10 — Secure with HTTPS (Optional but Recommended)
+
+```bash
+# Install Certbot for Let's Encrypt (if you have a public domain)
+apt install certbot python3-certbot-apache -y
+certbot --apache -d yourdomain.com
+
+# For local network only — use self-signed cert
+openssl req -x509 -nodes -days 3650 -newkey rsa:2048 \
+    -keyout /etc/ssl/private/laskie.key \
+    -out /etc/ssl/certs/laskie.crt \
+    -subj "/CN=laskie.local"
+```
+
+---
+
+## DIRECTORY STRUCTURE
+
+```
+/var/www/laskie/
+├── index.php              ← Login page
+├── logout.php
+├── dashboard.php          ← Annual dashboard (landing after login)
+├── expenses.php           ← Expenses tracking
+├── cash.php               ← Cash on hand
+├── my_summary.php         ← Per-user summary
+├── install.sql            ← Run once to create DB
+├── .htaccess              ← Apache security rules
+│
+├── admin/
+│   ├── accounts.php       ← User account management
+│   ├── tenants.php        ← Tenant management
+│   ├── units.php          ← Units, types, services
+│   └── logs.php           ← Master audit logs
+│
+├── payments/
+│   ├── collection.php     ← Payment collection dashboard
+│   ├── history.php        ← Statement of account
+│   ├── invoice_print.php  ← Printable invoice
+│   ├── soa_pdf.php        ← PDF statement of account
+│   └── api_payment.php    ← Payment API
+│
+├── api/
+│   ├── expenses_api.php   ← Expenses API
+│   └── cash_api.php       ← Cash on hand API
+│
+├── config/
+│   ├── db.php             ← Database credentials
+│   └── functions.php      ← Core helpers
+│
+├── includes/
+│   ├── header.php         ← Sidebar + topbar layout
+│   └── footer.php         ← JS includes + closing tags
+│
+├── assets/
+│   ├── css/app.css        ← Design system
+│   └── js/app.js          ← Shared JavaScript
+│
+└── uploads/               ← User-uploaded files (writable)
+    ├── contracts/
+    ├── receipts/
+    ├── docs/
+    └── remittance/
+```
+
+---
+
+## TROUBLESHOOTING
+
+| Problem | Fix |
+|---------|-----|
+| White/blank page | Check Apache error log: `tail -f /var/log/apache2/laskie_error.log` |
+| "Database connection failed" | Check `config/db.php` credentials and MySQL is running: `systemctl status mysql` |
+| Upload fails | Check `uploads/` is writable: `chmod -R 775 /var/www/laskie/uploads && chown -R www-data:www-data /var/www/laskie/uploads` |
+| 403 Forbidden | Verify `AllowOverride All` in VirtualHost and `mod_rewrite` is enabled: `a2enmod rewrite` |
+| Login not working | Confirm `install.sql` was imported — check `users` table exists |
+| Session expires fast | Add `php_value session.gc_maxlifetime 7200` to `.htaccess` |
+| FileZilla permission denied | Make sure `bulik` is in `www-data` group: `usermod -aG www-data bulik` then re-login |
+| .htaccess not working | Ensure `AllowOverride All` is set and `mod_rewrite` enabled |
+
+---
+
+## BACKUP RECOMMENDATION
+
+```bash
+# Database backup (run daily via cron)
+mysqldump -u laskie_db_user -p laskie_rental > /home/bulik/backups/laskie_$(date +%Y%m%d).sql
+
+# Files backup
+tar -czf /home/bulik/backups/laskie_files_$(date +%Y%m%d).tar.gz /var/www/laskie/uploads
+
+# Cron job (daily at 2am)
+crontab -e
+# Add: 0 2 * * * mysqldump -u laskie_db_user -pStrongPassword2024! laskie_rental > /home/bulik/backups/laskie_$(date +\%Y\%m\%d).sql
+```
+
+---
+
+## ROLE PERMISSIONS SUMMARY
+
+| Feature              | Admin | Accountant | Staff |
+|----------------------|:-----:|:----------:|:-----:|
+| Dashboard            | ✓     | ✓          | ✓     |
+| Payment Collection   | ✓     | ✓          | ✓     |
+| Statement of Account | ✓     | ✓          | ✓     |
+| Expenses             | ✓     | ✓          | ✓     |
+| Cash on Hand         | ✓     | ✓          | ✓     |
+| My Summary           | ✓     | ✓          | ✓     |
+| Manage Accounts      | ✓     | ✗          | ✗     |
+| Manage Tenants       | ✓     | ✗          | ✗     |
+| Manage Units         | ✓     | ✗          | ✗     |
+| Audit Logs           | ✓     | ✗          | ✗     |
+| Delete Payments      | ✓     | ✗          | ✗     |
+| Delete Expenses      | ✓     | ✗          | ✗     |
+| Manage Categories    | ✓     | ✗          | ✗     |
+
+---
+
+*Laskie Rental Property Management System — v1.0.0*
