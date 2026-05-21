@@ -158,6 +158,19 @@ CREATE TABLE IF NOT EXISTS cash_transactions (
     FOREIGN KEY (reference_expense_id) REFERENCES expenses(id) ON DELETE SET NULL
 );
 
+-- Unit Rate History (tracks rent increases / rate changes per unit)
+CREATE TABLE IF NOT EXISTS unit_rate_history (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    unit_id INT NOT NULL,
+    monthly_rate DECIMAL(12,2) NOT NULL,
+    effective_date DATE NOT NULL,
+    notes TEXT,
+    created_by INT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (unit_id) REFERENCES rental_units(id) ON DELETE CASCADE,
+    FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
+);
+
 -- System Audit Logs
 CREATE TABLE IF NOT EXISTS system_logs (
     id INT AUTO_INCREMENT PRIMARY KEY,
@@ -223,9 +236,10 @@ INSERT INTO settings (setting_key, setting_value) VALUES
 ('company_name', 'Laskie Rental Properties'),
 ('company_address', ''),
 ('company_phone', ''),
-('company_email', '');
+('company_email', ''),
+-- Default master password: Admin@2024 — change in Settings > Security after first login
+('master_password', '$2y$12$fwiNYRv3EqojX2QCo.WMaOx4yg3IcVoNg98HUlxrmsDeKPQUEC6xu');
 
--- Default admin account: username=admin / password=Admin@2024 (CHANGE IMMEDIATELY)
+-- Default admin account: username=admin / password=Admin@2024 — CHANGE IMMEDIATELY after first login
 INSERT INTO users (username, password_hash, full_name, role, email, status) VALUES
-('admin', '$2y$12$LQv3c1yqBWVHxkd0LHAkCOYz6TiE6RH2bLM.JSmjmQiWvXKXr0h7W', 'System Administrator', 'admin', 'admin@laskie.local', 'active');
--- Note: Default password is Admin@2024 — change this in Admin > Accounts immediately after first login
+('admin', '$2y$12$t5v4i5Ct9GjShHGfXJUVmOHk3P5it.tksivxNwAQfcHvq40KQWY9e', 'System Administrator', 'admin', 'admin@laskie.local', 'active');
