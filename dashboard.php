@@ -67,6 +67,43 @@ if (!in_array(date('Y'), $years)) array_unshift($years, (int)date('Y'));
 if (!in_array($selectedYear, $years)) $years[] = $selectedYear;
 rsort($years);
 
+// ─── Unit payment status for current month ───────────────────
+// Only computed when viewing the current year (same gate as the summary card)
+$unitStatusData = [];
+if ($selectedYear === $curYear) {
+    // Tenant info + current-month rent paid — one query for all units
+    $usStmt = $pdo->prepare("
+        SELECT ru.id, ru.unit_name, ru.monthly_rate, ru.due_day, ru.status,
+               t.full_name AS tenant_name, t.contract_start,
+               COALESCE(cm.paid, 0) AS cur_paid
+        FROM rental_units ru
+        LEFT JOIN tenants t ON t.unit_id = ru.id AND t.status = 'active'
+        LEFT JOIN (
+            SELECT unit_id, SUM(amount) AS paid
+            FROM payments
+            WHERE payment_type = 'rent'
+              AND period_month = ? AND period_year = ?
+              AND deleted_at IS NULL AND status != 'voided'
+            GROUP BY unit_id
+        ) cm ON cm.unit_id = ru.id
+        ORDER BY ru.unit_name
+    ");
+    $usStmt->execute([$curMonth, $curYear]);
+    $unitStatusData = $usStmt->fetchAll();
+
+    // Count distinct paid rent periods before current month (per unit)
+    $prevStmt = $pdo->prepare("
+        SELECT unit_id, COUNT(DISTINCT CONCAT(period_year,'-',period_month)) AS periods
+        FROM payments
+        WHERE payment_type = 'rent' AND deleted_at IS NULL AND status != 'voided'
+          AND period_month IS NOT NULL AND period_year IS NOT NULL
+          AND (period_year < ? OR (period_year = ? AND period_month < ?))
+        GROUP BY unit_id
+    ");
+    $prevStmt->execute([$curYear, $curYear, $curMonth]);
+    $prevPaidPeriods = array_column($prevStmt->fetchAll(), 'periods', 'unit_id');
+}
+
 logActivity($pdo, 'VIEW_DASHBOARD', 'Dashboard', "Viewed annual dashboard for $selectedYear");
 include 'includes/header.php';
 ?>
@@ -150,6 +187,89 @@ include 'includes/header.php';
             <div class="fw-bold fs-5" style="color:<?= $cmNet >= 0 ? 'var(--success)' : 'var(--danger)' ?>"><?= money($cmNet) ?></div>
           </div>
         </div>
+      </div>
+    </div>
+  </div>
+</div>
+<?php endif; ?>
+
+<?php if ($selectedYear === $curYear && !empty($unitStatusData)): ?>
+<!-- Current Month Unit Status -->
+<div class="row g-3 mb-3">
+  <div class="col-12">
+    <div class="card">
+      <div class="card-header">
+        <span class="card-header-title"><i class="fa-solid fa-building me-2"></i><?= date('F Y') ?> — Unit Payment Status</span>
+      </div>
+      <div class="table-responsive">
+        <table class="table table-sm mb-0">
+          <thead><tr>
+            <th>Unit</th>
+            <th>Tenant</th>
+            <th class="text-end">Rate</th>
+            <th>Status</th>
+          </tr></thead>
+          <tbody>
+          <?php foreach ($unitStatusData as $u):
+            if ($u['status'] === 'vacant'):
+          ?>
+            <tr>
+              <td class="fw-600"><?= clean($u['unit_name']) ?></td>
+              <td class="text-muted">—</td>
+              <td class="text-end text-muted">—</td>
+              <td><span class="badge" style="background:#e2e8f0;color:#64748b">Vacant</span></td>
+            </tr>
+          <?php else:
+              $rate     = getRateForMonth($pdo, (int)$u['id'], (float)$u['monthly_rate'], $curMonth, $curYear);
+              $expected = prorateFirstMonth($rate, (int)$u['due_day'], $u['contract_start'] ?? null, $curMonth, $curYear);
+              $curPaid  = (float)$u['cur_paid'];
+
+              // Expected months from contract_start up to (not including) current month
+              $hasArrears = false;
+              if ($u['contract_start']) {
+                  $cs = new DateTime($u['contract_start']);
+                  $csY = (int)$cs->format('Y'); $csM = (int)$cs->format('n');
+                  $expectedPrior = 0;
+                  $iy = $csY; $im = $csM;
+                  while ($iy < $curYear || ($iy === $curYear && $im < $curMonth)) {
+                      $expectedPrior++;
+                      $im++; if ($im > 12) { $im = 1; $iy++; }
+                  }
+                  $paidPrior = (int)($prevPaidPeriods[$u['id']] ?? 0);
+                  $hasArrears = $expectedPrior > 0 && $paidPrior < $expectedPrior;
+              }
+
+              $curMonthPaid = $expected > 0 && $curPaid >= $expected;
+
+              if (!$curMonthPaid && $expected > 0):
+                  // Red — current month unpaid
+                  $amountDue = $expected - $curPaid;
+          ?>
+            <tr>
+              <td class="fw-600"><?= clean($u['unit_name']) ?></td>
+              <td><?= clean($u['tenant_name'] ?? '—') ?></td>
+              <td class="text-end"><?= money($expected) ?></td>
+              <td style="color:var(--danger);font-weight:600"><i class="fa-solid fa-circle-xmark me-1"></i>Due <?= money($amountDue) ?></td>
+            </tr>
+          <?php elseif ($curMonthPaid && $hasArrears): ?>
+            <tr>
+              <td class="fw-600"><?= clean($u['unit_name']) ?></td>
+              <td><?= clean($u['tenant_name'] ?? '—') ?></td>
+              <td class="text-end"><?= money($expected) ?></td>
+              <td style="color:var(--warning);font-weight:600"><i class="fa-solid fa-triangle-exclamation me-1"></i>Has prior arrears</td>
+            </tr>
+          <?php else: ?>
+            <tr>
+              <td class="fw-600"><?= clean($u['unit_name']) ?></td>
+              <td><?= clean($u['tenant_name'] ?? '—') ?></td>
+              <td class="text-end"><?= money($expected) ?></td>
+              <td style="color:var(--success);font-weight:600"><i class="fa-solid fa-circle-check me-1"></i>Paid</td>
+            </tr>
+          <?php endif; ?>
+          <?php endif; ?>
+          <?php endforeach; ?>
+          </tbody>
+        </table>
       </div>
     </div>
   </div>

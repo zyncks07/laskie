@@ -234,7 +234,7 @@ document.addEventListener('DOMContentLoaded', function() {
 });
 
 $(document).ready(function(){
-  $('#tenantTable').DataTable({pageLength:25, order:[[4,'asc'],[0,'asc']], columnDefs:[{orderable:false,targets:5}]});
+  $('#tenantTable').DataTable({pageLength:50, order:[[4,'asc'],[0,'asc']], columnDefs:[{orderable:false,targets:5}]});
 });
 
 function filterTenants(status, el) {

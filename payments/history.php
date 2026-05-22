@@ -7,7 +7,13 @@ $pageTitle = 'Statement of Account';
 $depth = '../';
 
 // ── Selectors ─────────────────────────────────────────────────
-$units    = $pdo->query("SELECT id, unit_name, monthly_rate, status, due_day FROM rental_units ORDER BY unit_name")->fetchAll();
+$units    = $pdo->query("
+    SELECT ru.id, ru.unit_name, ru.monthly_rate, ru.status, ru.due_day,
+           t.full_name AS tenant_name
+    FROM rental_units ru
+    LEFT JOIN tenants t ON t.unit_id = ru.id AND t.status = 'active'
+    ORDER BY ru.unit_name
+")->fetchAll();
 $selUnit  = (int)($_GET['unit_id']   ?? ($units[0]['id'] ?? 0));
 $dateFrom = $_GET['date_from'] ?? date('Y-01-01');
 $dateTo   = $_GET['date_to']   ?? date('Y-m-d');
@@ -52,7 +58,7 @@ if ($selUnit) {
         FROM   payments p
         LEFT JOIN service_types st ON p.service_type_id = st.id
         LEFT JOIN users u          ON p.received_by     = u.id
-        WHERE  p.unit_id = ? AND p.payment_date BETWEEN ? AND ?
+        WHERE  p.unit_id = ? AND p.payment_date BETWEEN ? AND ? AND p.deleted_at IS NULL
         ORDER  BY p.payment_date ASC, p.created_at ASC
     ");
     $q->execute([$selUnit, $dateFrom, $dateTo]);
@@ -251,7 +257,7 @@ include '../includes/header.php';
         <select name="unit_id" class="form-select form-select-sm">
           <?php foreach($units as $u): ?>
           <option value="<?=$u['id']?>" <?=$u['id']==$selUnit?'selected':''?>>
-            <?=clean($u['unit_name'])?> (<?=ucfirst($u['status'])?>)
+            <?=clean($u['unit_name'])?> (<?=ucfirst($u['status'])?>)<?= $u['tenant_name'] ? ' — ' . clean($u['tenant_name']) : '' ?>
           </option>
           <?php endforeach; ?>
         </select>

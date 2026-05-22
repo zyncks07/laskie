@@ -530,9 +530,9 @@ document.addEventListener('DOMContentLoaded', function() {
 });
 
 $(document).ready(function(){
-  $('#unitsTable').DataTable({pageLength:25, columnDefs:[{orderable:false,targets:7}]});
-  $('#typesTable').DataTable({pageLength:25, columnDefs:[{orderable:false,targets:2}]});
-  $('#servicesTable').DataTable({pageLength:25, columnDefs:[{orderable:false,targets:4}]});
+  $('#unitsTable').DataTable({pageLength:50, columnDefs:[{orderable:false,targets:7}]});
+  $('#typesTable').DataTable({pageLength:50, columnDefs:[{orderable:false,targets:2}]});
+  $('#servicesTable').DataTable({pageLength:50, columnDefs:[{orderable:false,targets:4}]});
 });
 
 // ── Rental Units ─────────────────────────────────────────────
