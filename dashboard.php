@@ -199,11 +199,11 @@ include 'includes/header.php';
 
     <!-- Unit payment status -->
     <?php if (!empty($unitStatusData)): ?>
-    <div class="card db-card" style="flex:1 1 0;min-height:0">
+    <div class="card db-card">
       <div class="card-header">
         <span class="card-header-title"><i class="fa-solid fa-building me-1"></i><?= date('F Y') ?> — Unit Status</span>
       </div>
-      <div style="overflow-y:auto;max-height:680px">
+      <div style="overflow-y:auto;height:680px">
         <table class="table db-tbl mb-0">
           <thead style="position:sticky;top:0;background:#f9fafb;z-index:1">
             <tr><th>Unit</th><th>Tenant</th><th>Status</th></tr>
