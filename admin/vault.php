@@ -57,15 +57,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         jsonOk(['msg'=>'Distribution deleted.']);
     }
 
-    if ($action === 'get_distribution') {
-        $id = (int)($_POST['id'] ?? 0);
-        $row = $pdo->prepare("SELECT id, recipient_id, amount, distribution_date, notes FROM dividend_distributions WHERE id=?");
-        $row->execute([$id]);
-        $dist = $row->fetch();
-        if (!$dist) jsonErr('Distribution not found.');
-        jsonOk(['distribution' => $dist]);
-    }
-
     if ($action === 'edit_distribution') {
         $id          = (int)($_POST['id'] ?? 0);
         $recipientId = (int)($_POST['recipient_id'] ?? 0);
@@ -107,6 +98,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $pdo->prepare("DELETE FROM dividend_returns WHERE id=?")->execute([$id]);
         logActivity($pdo,'DELETE_DIVIDEND_RETURN','Vault',"Deleted return #$id");
         jsonOk(['msg'=>'Return deleted.']);
+    }
+
+    if ($action === 'edit_return') {
+        $id          = (int)($_POST['id'] ?? 0);
+        $recipientId = (int)($_POST['recipient_id'] ?? 0);
+        $amount      = (float)($_POST['amount'] ?? 0);
+        $date        = trim($_POST['return_date'] ?? '');
+        $notes       = nullOrStr($_POST['notes'] ?? '');
+        if (!$id) jsonErr('Return ID required.');
+        if (!$recipientId) jsonErr('Please select a recipient.');
+        if ($amount <= 0) jsonErr('Amount must be greater than zero.');
+        if (!$date || !strtotime($date)) jsonErr('Valid date required.');
+        $chk = $pdo->prepare("SELECT id FROM dividend_returns WHERE id=?");
+        $chk->execute([$id]);
+        if (!$chk->fetch()) jsonErr('Return not found.');
+        $pdo->prepare("UPDATE dividend_returns SET recipient_id=?,amount=?,return_date=?,notes=? WHERE id=?")
+            ->execute([$recipientId,$amount,$date,$notes,$id]);
+        logActivity($pdo,'EDIT_DIVIDEND_RETURN','Vault',"Edited return #$id (₱$amount from recipient #$recipientId)");
+        jsonOk(['msg'=>'Return updated.']);
     }
 
     if ($action === 'save_recipient') {
@@ -340,6 +350,98 @@ include '../includes/header.php';
   </div>
 </div>
 
+<!-- Distribution Records -->
+<div class="card mb-4">
+  <div class="card-body">
+    <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+      <h6 class="mb-0 fw-600"><i class="fa-solid fa-money-bill-transfer me-2" style="color:var(--success)"></i>Distribution Records</h6>
+      <button class="btn btn-sm btn-success" onclick="openDistributionModal()"><i class="fa-solid fa-plus me-1"></i>Add Distribution</button>
+    </div>
+    <?php if (empty($distributions)): ?>
+    <div class="text-center text-muted py-4"><i class="fa-solid fa-inbox fa-2x mb-2 d-block" style="opacity:.2"></i>No distributions recorded yet.</div>
+    <?php else: ?>
+    <div class="table-responsive">
+      <table class="table table-sm table-hover mb-0" id="distTable">
+        <thead>
+          <tr>
+            <th>Date</th><th>Recipient</th>
+            <th class="text-end">Amount</th><th>Notes</th>
+            <th class="text-center" style="width:70px">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          <?php foreach ($distributions as $d): ?>
+          <tr data-dist-id="<?= $d['id'] ?>">
+            <td style="white-space:nowrap;color:var(--text-secondary)"><?= fmtDate($d['distribution_date']) ?></td>
+            <td class="fw-600"><?= clean($d['recipient_name'] ?? '—') ?></td>
+            <td class="text-end fw-600 text-success"><?= money((float)$d['amount']) ?></td>
+            <td class="text-muted" style="font-size:12px"><?= $d['notes'] ? clean($d['notes']) : '—' ?></td>
+            <td class="text-center" style="white-space:nowrap">
+              <button class="btn-icon" title="Edit" onclick="openEditDist(<?= $d['id'] ?>)"><i class="fa-solid fa-pen fa-xs"></i></button>
+              <button class="btn-icon danger" title="Delete" onclick="deleteDistribution(<?= $d['id'] ?>)"><i class="fa-solid fa-trash fa-xs"></i></button>
+            </td>
+          </tr>
+          <?php endforeach; ?>
+        </tbody>
+        <tfoot>
+          <tr style="border-top:2px solid var(--border)">
+            <td colspan="2" class="fw-700">Total</td>
+            <td class="text-end fw-700" id="distTotal"><?= money($totalDistrib) ?></td>
+            <td colspan="2"></td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+    <?php endif; ?>
+  </div>
+</div>
+
+<!-- Return Records -->
+<div class="card mb-4">
+  <div class="card-body">
+    <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+      <h6 class="mb-0 fw-600"><i class="fa-solid fa-rotate-left me-2" style="color:var(--warning)"></i>Return Records</h6>
+      <button class="btn btn-sm btn-warning" onclick="openReturnModal()"><i class="fa-solid fa-plus me-1"></i>Add Return</button>
+    </div>
+    <?php if (empty($returnRecords)): ?>
+    <div class="text-center text-muted py-3" style="font-size:13px">No returns recorded yet.</div>
+    <?php else: ?>
+    <div class="table-responsive">
+      <table class="table table-sm table-hover mb-0" id="retTable">
+        <thead>
+          <tr>
+            <th>Date</th><th>Returned By</th>
+            <th class="text-end">Amount</th><th>Notes</th>
+            <th class="text-center" style="width:70px">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          <?php foreach ($returnRecords as $ret): ?>
+          <tr data-ret-id="<?= $ret['id'] ?>">
+            <td style="white-space:nowrap;color:var(--text-secondary)"><?= fmtDate($ret['return_date']) ?></td>
+            <td class="fw-600"><?= clean($ret['recipient_name'] ?? '—') ?></td>
+            <td class="text-end fw-600" style="color:var(--warning)"><?= money((float)$ret['amount']) ?></td>
+            <td class="text-muted" style="font-size:12px"><?= $ret['notes'] ? clean($ret['notes']) : '—' ?></td>
+            <td class="text-center" style="white-space:nowrap">
+              <button class="btn-icon" title="Edit" onclick="openEditReturn(<?= $ret['id'] ?>)"><i class="fa-solid fa-pen fa-xs"></i></button>
+              <button class="btn-icon danger" title="Delete" onclick="deleteReturn(<?= $ret['id'] ?>)"><i class="fa-solid fa-trash fa-xs"></i></button>
+            </td>
+          </tr>
+          <?php endforeach; ?>
+        </tbody>
+        <tfoot>
+          <tr style="border-top:2px solid var(--border)">
+            <td colspan="2" class="fw-700">Total Returned</td>
+            <td class="text-end fw-700" id="retTotal" style="color:var(--warning)"><?= money($totalReturned) ?></td>
+            <td colspan="2"></td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+    <?php endif; ?>
+  </div>
+</div>
+
 <!-- Chart -->
 <div class="card mb-4">
   <div class="card-body">
@@ -439,105 +541,6 @@ include '../includes/header.php';
     <?php endif; ?>
   </div>
 </div>
-
-<!-- Distribution Records -->
-<div class="card mb-4">
-  <div class="card-body">
-    <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
-      <h6 class="mb-0 fw-600"><i class="fa-solid fa-money-bill-transfer me-2" style="color:var(--success)"></i>Distribution Records</h6>
-      <button class="btn btn-sm btn-success" onclick="openDistributionModal()"><i class="fa-solid fa-plus me-1"></i>Add Distribution</button>
-    </div>
-    <?php if (empty($distributions)): ?>
-    <div class="text-center text-muted py-4"><i class="fa-solid fa-inbox fa-2x mb-2 d-block" style="opacity:.2"></i>No distributions recorded yet.</div>
-    <?php else: ?>
-    <div class="table-responsive">
-      <table class="table table-sm table-hover mb-0">
-        <thead>
-          <tr>
-            <th>Date</th>
-            <th>Recipient</th>
-            <th class="text-end">Amount</th>
-            <th>Notes</th>
-            <th class="text-center" style="width:70px">Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-          <?php foreach ($distributions as $d): ?>
-          <tr>
-            <td style="white-space:nowrap;color:var(--text-secondary)"><?= fmtDate($d['distribution_date']) ?></td>
-            <td class="fw-600"><?= clean($d['recipient_name'] ?? '—') ?></td>
-            <td class="text-end fw-600 text-success"><?= money((float)$d['amount']) ?></td>
-            <td class="text-muted" style="font-size:12px"><?= $d['notes'] ? clean($d['notes']) : '—' ?></td>
-            <td class="text-center" style="white-space:nowrap">
-              <button class="btn-icon" title="Edit" onclick="openEditDist(<?= $d['id'] ?>)">
-                <i class="fa-solid fa-pen fa-xs"></i>
-              </button>
-              <button class="btn-icon danger" title="Delete" onclick="deleteDistribution(<?= $d['id'] ?>)">
-                <i class="fa-solid fa-trash fa-xs"></i>
-              </button>
-            </td>
-          </tr>
-          <?php endforeach; ?>
-        </tbody>
-        <tfoot>
-          <tr style="border-top:2px solid var(--border)">
-            <td colspan="2" class="fw-700">Total</td>
-            <td class="text-end fw-700"><?= money($totalDistrib) ?></td>
-            <td colspan="2"></td>
-          </tr>
-        </tfoot>
-      </table>
-    </div>
-    <?php endif; ?>
-  </div>
-</div>
-
-<!-- Return Records -->
-<?php if (!empty($returnRecords)): ?>
-<div class="card mb-4">
-  <div class="card-body">
-    <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
-      <h6 class="mb-0 fw-600"><i class="fa-solid fa-rotate-left me-2" style="color:var(--warning)"></i>Return Records</h6>
-      <button class="btn btn-sm btn-warning" onclick="openReturnModal()"><i class="fa-solid fa-plus me-1"></i>Add Return</button>
-    </div>
-    <div class="table-responsive">
-      <table class="table table-sm table-hover mb-0">
-        <thead>
-          <tr>
-            <th>Date</th>
-            <th>Returned By</th>
-            <th class="text-end">Amount</th>
-            <th>Notes</th>
-            <th class="text-center" style="width:50px">Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-          <?php foreach ($returnRecords as $ret): ?>
-          <tr>
-            <td style="white-space:nowrap;color:var(--text-secondary)"><?= fmtDate($ret['return_date']) ?></td>
-            <td class="fw-600"><?= clean($ret['recipient_name'] ?? '—') ?></td>
-            <td class="text-end fw-600" style="color:var(--warning)"><?= money((float)$ret['amount']) ?></td>
-            <td class="text-muted" style="font-size:12px"><?= $ret['notes'] ? clean($ret['notes']) : '—' ?></td>
-            <td class="text-center">
-              <button class="btn-icon danger" title="Delete" onclick="deleteReturn(<?= $ret['id'] ?>)">
-                <i class="fa-solid fa-trash fa-xs"></i>
-              </button>
-            </td>
-          </tr>
-          <?php endforeach; ?>
-        </tbody>
-        <tfoot>
-          <tr style="border-top:2px solid var(--border)">
-            <td colspan="2" class="fw-700">Total Returned</td>
-            <td class="text-end fw-700" style="color:var(--warning)"><?= money($totalReturned) ?></td>
-            <td colspan="2"></td>
-          </tr>
-        </tfoot>
-      </table>
-    </div>
-  </div>
-</div>
-<?php endif; ?>
 
 <!-- Transaction Logs -->
 <div class="card">
@@ -662,6 +665,10 @@ include '../includes/header.php';
         <!-- Add / Edit form -->
         <div class="p-3 mb-3 rounded" style="background:var(--bg)">
           <div id="recipFormTitle" class="fw-600 mb-2" style="font-size:13px">Add New Recipient</div>
+          <div id="recipEditBanner" style="display:none" class="alert alert-warning py-2 px-3 mb-2 d-flex justify-content-between align-items-center">
+            <span style="font-size:12px"><i class="fa-solid fa-pen me-1"></i>Editing: <strong id="recipEditName"></strong></span>
+            <button class="btn btn-xs btn-outline-secondary" onclick="cancelEditRecipient()">Cancel</button>
+          </div>
           <input type="hidden" id="recipId">
           <div class="row g-2 align-items-end">
             <div class="col-sm-5">
@@ -820,6 +827,47 @@ include '../includes/header.php';
   </div>
 </div>
 
+<!-- Edit Return -->
+<div class="modal fade" id="editReturnModal" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="fa-solid fa-pen me-2" style="color:var(--warning)"></i>Edit Return Record</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div id="editRetMsg" class="alert" style="display:none"></div>
+        <input type="hidden" id="editRetId">
+        <div class="mb-3">
+          <label class="form-label">Returned By</label>
+          <select id="editRetRecipient" class="form-select">
+            <option value="">— Select recipient —</option>
+            <?php foreach ($allRecipients as $r): ?>
+            <option value="<?= $r['id'] ?>"><?= clean($r['name']) ?><?= !$r['is_active'] ? ' (Inactive)' : '' ?></option>
+            <?php endforeach; ?>
+          </select>
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Amount (₱)</label>
+          <input type="number" id="editRetAmount" class="form-control" placeholder="0.00" min="0.01" step="0.01">
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Date</label>
+          <input type="date" id="editRetDate" class="form-control">
+        </div>
+        <div class="mb-0">
+          <label class="form-label">Notes <span class="text-muted">(optional)</span></label>
+          <textarea id="editRetNotes" class="form-control" rows="2"></textarea>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button class="btn btn-warning" onclick="saveEditReturn()"><i class="fa-solid fa-check me-1"></i>Save Changes</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <?php ob_start(); ?>
 <script>
 <?php $chartJson = json_encode($chartByUser, JSON_UNESCAPED_UNICODE); ?>
@@ -829,6 +877,17 @@ const distributionModal = new bootstrap.Modal(document.getElementById('distribut
 const recipientsModal   = new bootstrap.Modal(document.getElementById('recipientsModal'));
 const editDistModal     = new bootstrap.Modal(document.getElementById('editDistModal'));
 const returnModal       = new bootstrap.Modal(document.getElementById('returnModal'));
+const editReturnModal   = new bootstrap.Modal(document.getElementById('editReturnModal'));
+
+// ── Embedded page data (no AJAX needed to read these) ────────
+<?php
+$distMap  = [];
+foreach ($distributions  as $d)   { $distMap[$d['id']]  = $d; }
+$retMap   = [];
+foreach ($returnRecords  as $ret)  { $retMap[$ret['id']] = $ret; }
+?>
+const DIST_DATA = <?= json_encode($distMap,  JSON_UNESCAPED_UNICODE) ?>;
+const RET_DATA  = <?= json_encode($retMap,   JSON_UNESCAPED_UNICODE) ?>;
 
 // ── Chart ────────────────────────────────────────────────────
 const CHART_COLORS = ['#1a3a8f','#0ea5e9','#15803d','#d97706','#7c3aed','#dc2626','#0891b2','#be185d'];
@@ -1039,30 +1098,42 @@ function deleteRemittance(id) {
 function deleteDistribution(id) {
   confirmDelete('Delete this distribution? This cannot be undone.', () => {
     apiPost('../admin/vault.php', {action:'delete_distribution', id}, (err, res) => {
-      if (!res.success){ showToast(res.error,'error'); return; }
-      showToast(res.msg,'success'); loadLogs();
-      setTimeout(()=>location.reload(), 900);
+      if (!res || !res.success){ showToast((res&&res.error)||'Delete failed.','error'); return; }
+      showToast(res.msg,'success');
+      const row = document.querySelector(`tr[data-dist-id="${id}"]`);
+      if (row) row.remove();
+      delete DIST_DATA[id];
+      const total = Object.values(DIST_DATA).reduce((s,d)=>s+parseFloat(d.amount||0),0);
+      const el = document.getElementById('distTotal');
+      if (el) el.textContent = '₱'+total.toLocaleString('en-PH',{minimumFractionDigits:2});
+      loadLogs();
     });
   });
 }
 
 // ── Recipients modal ─────────────────────────────────────────
 function openRecipientsModal() {
+  cancelEditRecipient();
+  recipientsModal.show();
+}
+
+function cancelEditRecipient() {
   document.getElementById('recipId').value    = '';
   document.getElementById('recipName').value  = '';
   document.getElementById('recipNotes').value = '';
-  document.getElementById('recipFormTitle').textContent = 'Add New Recipient';
-  document.getElementById('recipMsg').style.display = 'none';
-  recipientsModal.show();
+  document.getElementById('recipFormTitle').textContent    = 'Add New Recipient';
+  document.getElementById('recipEditBanner').style.display = 'none';
+  document.getElementById('recipMsg').style.display        = 'none';
 }
 
 function editRecipient(id, name, notes) {
   document.getElementById('recipId').value    = id;
   document.getElementById('recipName').value  = name;
   document.getElementById('recipNotes').value = notes||'';
-  document.getElementById('recipFormTitle').textContent = 'Edit Recipient';
-  document.getElementById('recipMsg').style.display = 'none';
-  // Scroll modal body to top so the edit form is visible
+  document.getElementById('recipFormTitle').textContent    = 'Edit Recipient';
+  document.getElementById('recipEditName').textContent     = name;
+  document.getElementById('recipEditBanner').style.display = '';
+  document.getElementById('recipMsg').style.display        = 'none';
   const modalBody = document.querySelector('#recipientsModal .modal-body');
   if (modalBody) modalBody.scrollTop = 0;
   document.getElementById('recipName').focus();
@@ -1101,19 +1172,17 @@ function deleteRecipient(id) {
   });
 }
 
-// ── Edit Distribution ────────────────────────────────────────
+// ── Edit Distribution (reads embedded DIST_DATA — no AJAX needed) ──
 function openEditDist(id) {
+  const d = DIST_DATA[id];
+  if (!d) { showToast('Distribution not found.','error'); return; }
+  document.getElementById('editDistId').value        = d.id;
+  document.getElementById('editDistRecipient').value = d.recipient_id;
+  document.getElementById('editDistAmount').value    = parseFloat(d.amount);
+  document.getElementById('editDistDate').value      = d.distribution_date;
+  document.getElementById('editDistNotes').value     = d.notes || '';
   document.getElementById('editDistMsg').style.display = 'none';
-  apiPost('../admin/vault.php', {action:'get_distribution', id}, (err, res) => {
-    if (!res || !res.success){ showToast(res.error||'Could not load distribution.','error'); return; }
-    const d = res.distribution;
-    document.getElementById('editDistId').value         = d.id;
-    document.getElementById('editDistRecipient').value  = d.recipient_id;
-    document.getElementById('editDistAmount').value     = parseFloat(d.amount);
-    document.getElementById('editDistDate').value       = d.distribution_date;
-    document.getElementById('editDistNotes').value      = d.notes || '';
-    editDistModal.show();
-  });
+  editDistModal.show();
 }
 
 function saveEditDistribution() {
@@ -1127,9 +1196,39 @@ function saveEditDistribution() {
     notes: document.getElementById('editDistNotes').value
   }, (err, res) => {
     el.style.display = '';
-    if (!res.success){ el.className='alert alert-danger'; el.textContent=res.error; return; }
-    el.className = 'alert alert-success'; el.textContent = res.msg;
+    if (!res || !res.success){ el.className='alert alert-danger'; el.textContent=(res&&res.error)||'Save failed.'; return; }
+    el.className='alert alert-success'; el.textContent=res.msg;
     setTimeout(()=>{ editDistModal.hide(); location.reload(); }, 700);
+  });
+}
+
+// ── Edit Return ───────────────────────────────────────────────
+function openEditReturn(id) {
+  const r = RET_DATA[id];
+  if (!r) { showToast('Return record not found.','error'); return; }
+  document.getElementById('editRetId').value         = r.id;
+  document.getElementById('editRetRecipient').value  = r.recipient_id;
+  document.getElementById('editRetAmount').value     = parseFloat(r.amount);
+  document.getElementById('editRetDate').value       = r.return_date;
+  document.getElementById('editRetNotes').value      = r.notes || '';
+  document.getElementById('editRetMsg').style.display = 'none';
+  editReturnModal.show();
+}
+
+function saveEditReturn() {
+  const el = document.getElementById('editRetMsg');
+  apiPost('../admin/vault.php', {
+    action: 'edit_return',
+    id: document.getElementById('editRetId').value,
+    recipient_id: document.getElementById('editRetRecipient').value,
+    amount: document.getElementById('editRetAmount').value,
+    return_date: document.getElementById('editRetDate').value,
+    notes: document.getElementById('editRetNotes').value
+  }, (err, res) => {
+    el.style.display = '';
+    if (!res || !res.success){ el.className='alert alert-danger'; el.textContent=(res&&res.error)||'Save failed.'; return; }
+    el.className='alert alert-success'; el.textContent=res.msg;
+    setTimeout(()=>{ editReturnModal.hide(); location.reload(); }, 700);
   });
 }
 
@@ -1157,8 +1256,8 @@ function saveReturn() {
     notes: document.getElementById('retNotes').value
   }, (err, res) => {
     el.style.display = '';
-    if (!res.success){ el.className='alert alert-danger'; el.textContent=res.error; return; }
-    el.className = 'alert alert-success'; el.textContent = res.msg;
+    if (!res || !res.success){ el.className='alert alert-danger'; el.textContent=(res&&res.error)||'Save failed.'; return; }
+    el.className='alert alert-success'; el.textContent=res.msg;
     setTimeout(()=>{ returnModal.hide(); location.reload(); }, 700);
   });
 }
@@ -1166,9 +1265,15 @@ function saveReturn() {
 function deleteReturn(id) {
   confirmDelete('Delete this return record? This cannot be undone.', () => {
     apiPost('../admin/vault.php', {action:'delete_return', id}, (err, res) => {
-      if (!res.success){ showToast(res.error,'error'); return; }
-      showToast(res.msg,'success'); loadLogs();
-      setTimeout(()=>location.reload(), 900);
+      if (!res || !res.success){ showToast((res&&res.error)||'Delete failed.','error'); return; }
+      showToast(res.msg,'success');
+      const row = document.querySelector(`tr[data-ret-id="${id}"]`);
+      if (row) row.remove();
+      delete RET_DATA[id];
+      const total = Object.values(RET_DATA).reduce((s,r)=>s+parseFloat(r.amount||0),0);
+      const el = document.getElementById('retTotal');
+      if (el) el.textContent = '₱'+total.toLocaleString('en-PH',{minimumFractionDigits:2});
+      loadLogs();
     });
   });
 }
