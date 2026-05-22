@@ -305,7 +305,7 @@ include '../includes/header.php';
 <div class="card mb-3" style="background:linear-gradient(135deg,#1a3a8f 0%,#3b5bdb 100%);border:none;border-radius:var(--radius-lg);">
   <div class="card-body py-4 text-center text-white">
     <div style="font-size:11px;letter-spacing:3px;text-transform:uppercase;opacity:.7;margin-bottom:6px;">Current Vault Balance</div>
-    <div style="font-size:46px;font-weight:800;letter-spacing:-1px;line-height:1.1"><?= money($vaultBalance) ?></div>
+    <div id="vaultBalanceDisplay" style="font-size:46px;font-weight:800;letter-spacing:-1px;line-height:1.1"><?= money($vaultBalance) ?></div>
     <div style="opacity:.55;font-size:12px;margin-top:6px;"><?= date('F j, Y') ?></div>
   </div>
 </div>
@@ -326,7 +326,7 @@ include '../includes/header.php';
       <div class="stat-icon" style="background:var(--success-bg)"><i class="fa-solid fa-hand-holding-dollar" style="color:var(--success)"></i></div>
       <div class="stat-body">
         <div class="stat-label">Total Distributed</div>
-        <div class="stat-value"><?= money($totalDistrib) ?></div>
+        <div id="statDistTotal" class="stat-value"><?= money($totalDistrib) ?></div>
       </div>
     </div>
   </div>
@@ -335,7 +335,7 @@ include '../includes/header.php';
       <div class="stat-icon" style="background:var(--warning-bg)"><i class="fa-solid fa-rotate-left" style="color:var(--warning)"></i></div>
       <div class="stat-body">
         <div class="stat-label">Total Returned</div>
-        <div class="stat-value"><?= money($totalReturned) ?></div>
+        <div id="statRetTotal" class="stat-value"><?= money($totalReturned) ?></div>
       </div>
     </div>
   </div>
@@ -886,8 +886,21 @@ foreach ($distributions  as $d)   { $distMap[$d['id']]  = $d; }
 $retMap   = [];
 foreach ($returnRecords  as $ret)  { $retMap[$ret['id']] = $ret; }
 ?>
-const DIST_DATA = <?= json_encode($distMap,  JSON_UNESCAPED_UNICODE) ?>;
-const RET_DATA  = <?= json_encode($retMap,   JSON_UNESCAPED_UNICODE) ?>;
+const DIST_DATA      = <?= json_encode($distMap,  JSON_UNESCAPED_UNICODE) ?>;
+const RET_DATA       = <?= json_encode($retMap,   JSON_UNESCAPED_UNICODE) ?>;
+const TOTAL_REMITTED = <?= $totalRemitted ?>;
+
+function recalcVaultBalance() {
+  const distTotal = Object.values(DIST_DATA).reduce((s,d)=>s+parseFloat(d.amount||0),0);
+  const retTotal  = Object.values(RET_DATA).reduce((s,r)=>s+parseFloat(r.amount||0),0);
+  const balance   = TOTAL_REMITTED - distTotal + retTotal;
+  const fmt = v => '₱'+v.toLocaleString('en-PH',{minimumFractionDigits:2,maximumFractionDigits:2});
+  document.getElementById('vaultBalanceDisplay').textContent = fmt(balance);
+  document.getElementById('statDistTotal').textContent       = fmt(distTotal);
+  document.getElementById('statRetTotal').textContent        = fmt(retTotal);
+  const dt = document.getElementById('distTotal'); if (dt) dt.textContent = fmt(distTotal);
+  const rt = document.getElementById('retTotal');  if (rt) rt.textContent = fmt(retTotal);
+}
 
 // ── Chart ────────────────────────────────────────────────────
 const CHART_COLORS = ['#1a3a8f','#0ea5e9','#15803d','#d97706','#7c3aed','#dc2626','#0891b2','#be185d'];
@@ -1103,9 +1116,7 @@ function deleteDistribution(id) {
       const row = document.querySelector(`tr[data-dist-id="${id}"]`);
       if (row) row.remove();
       delete DIST_DATA[id];
-      const total = Object.values(DIST_DATA).reduce((s,d)=>s+parseFloat(d.amount||0),0);
-      const el = document.getElementById('distTotal');
-      if (el) el.textContent = '₱'+total.toLocaleString('en-PH',{minimumFractionDigits:2});
+      recalcVaultBalance();
       loadLogs();
     });
   });
@@ -1270,9 +1281,7 @@ function deleteReturn(id) {
       const row = document.querySelector(`tr[data-ret-id="${id}"]`);
       if (row) row.remove();
       delete RET_DATA[id];
-      const total = Object.values(RET_DATA).reduce((s,r)=>s+parseFloat(r.amount||0),0);
-      const el = document.getElementById('retTotal');
-      if (el) el.textContent = '₱'+total.toLocaleString('en-PH',{minimumFractionDigits:2});
+      recalcVaultBalance();
       loadLogs();
     });
   });
