@@ -230,6 +230,68 @@ SQL2
         ok "unit_rate_history table exists."
     fi
 
+    # Ensure dividend_recipients / dividend_distributions tables exist
+    for TBL in dividend_recipients dividend_distributions; do
+        TBL_EXISTS=$(mysql -u root -N -e \
+            "SELECT COUNT(*) FROM information_schema.tables
+             WHERE table_schema='${DB_NAME}' AND table_name='${TBL}';" 2>/dev/null || echo "0")
+        if [[ "$TBL_EXISTS" -eq 0 ]]; then
+            warn "${TBL} table missing — creating it now..."
+            if [[ "$TBL" == "dividend_recipients" ]]; then
+                mysql -u root "${DB_NAME}" <<SQL3
+CREATE TABLE IF NOT EXISTS dividend_recipients (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    name VARCHAR(100) NOT NULL,
+    notes TEXT DEFAULT NULL,
+    is_active TINYINT(1) NOT NULL DEFAULT 1,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+SQL3
+            else
+                mysql -u root "${DB_NAME}" <<SQL4
+CREATE TABLE IF NOT EXISTS dividend_distributions (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    recipient_id INT NOT NULL,
+    amount DECIMAL(12,2) NOT NULL,
+    distribution_date DATE NOT NULL,
+    notes TEXT DEFAULT NULL,
+    created_by INT DEFAULT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (recipient_id) REFERENCES dividend_recipients(id),
+    FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+SQL4
+            fi
+            ok "${TBL} table created."
+        else
+            ok "${TBL} table exists."
+        fi
+    done
+
+    # Ensure dividend_returns table exists (added in vault update)
+    DIVRET_TBL=$(mysql -u root -N -e \
+        "SELECT COUNT(*) FROM information_schema.tables
+         WHERE table_schema='${DB_NAME}' AND table_name='dividend_returns';" 2>/dev/null || echo "0")
+    if [[ "$DIVRET_TBL" -eq 0 ]]; then
+        warn "dividend_returns table missing — creating it now..."
+        mysql -u root "${DB_NAME}" <<SQL5
+CREATE TABLE IF NOT EXISTS dividend_returns (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    recipient_id INT NOT NULL,
+    amount DECIMAL(12,2) NOT NULL,
+    return_date DATE NOT NULL,
+    notes TEXT DEFAULT NULL,
+    created_by INT DEFAULT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (recipient_id) REFERENCES dividend_recipients(id),
+    FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+SQL5
+        ok "dividend_returns table created."
+    else
+        ok "dividend_returns table exists."
+    fi
+
     # Ensure master_password setting exists (may be missing on older installs)
     MASTER_SET=$(mysql -u root -N -e \
         "SELECT COUNT(*) FROM settings WHERE setting_key='master_password';" "${DB_NAME}" 2>/dev/null || echo "0")
