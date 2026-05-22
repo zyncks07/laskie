@@ -68,10 +68,8 @@ if (!in_array($selectedYear, $years)) $years[] = $selectedYear;
 rsort($years);
 
 // ─── Unit payment status for current month ───────────────────
-// Only computed when viewing the current year (same gate as the summary card)
 $unitStatusData = [];
 if ($selectedYear === $curYear) {
-    // Tenant info + current-month rent paid — one query for all units
     $usStmt = $pdo->prepare("
         SELECT ru.id, ru.unit_name, ru.monthly_rate, ru.due_day, ru.status,
                t.full_name AS tenant_name, t.contract_start,
@@ -91,22 +89,26 @@ if ($selectedYear === $curYear) {
     $usStmt->execute([$curMonth, $curYear]);
     $unitStatusData = $usStmt->fetchAll();
 
-    // Count distinct paid rent periods before current month (per unit)
-    $prevStmt = $pdo->prepare("
-        SELECT unit_id, COUNT(DISTINCT CONCAT(period_year,'-',period_month)) AS periods
-        FROM payments
-        WHERE payment_type = 'rent' AND deleted_at IS NULL AND status != 'voided'
-          AND period_month IS NOT NULL AND period_year IS NOT NULL
-          AND (period_year < ? OR (period_year = ? AND period_month < ?))
-        GROUP BY unit_id
-    ");
-    $prevStmt->execute([$curYear, $curYear, $curMonth]);
-    $prevPaidPeriods = array_column($prevStmt->fetchAll(), 'periods', 'unit_id');
+    $today = (int)date('j');
 }
 
 logActivity($pdo, 'VIEW_DASHBOARD', 'Dashboard', "Viewed annual dashboard for $selectedYear");
 include 'includes/header.php';
 ?>
+<style>
+/* ── Dashboard compact overrides ─────────────────────────── */
+.page-header           { margin-bottom: 10px; }
+.db-row                { margin-bottom: 10px; }
+.db-card .card-header  { padding: 7px 13px; }
+.db-card .card-body    { padding: 10px 12px; }
+.db-stat               { padding: 10px 12px; gap: 10px; }
+.db-stat .stat-icon    { width: 36px; height: 36px; font-size: 15px; border-radius: 8px; }
+.db-stat .stat-value   { font-size: 16px; }
+.db-stat .stat-label   { font-size: 11px; }
+.db-stat .stat-sub     { font-size: 10.5px; margin-top: 1px; }
+.db-tbl td, .db-tbl th { padding: 5px 10px !important; font-size: 12.5px; }
+.db-chart              { position: relative; height: 195px; }
+</style>
 
 <div class="page-header">
   <h1 class="page-title"><i class="fa-solid fa-gauge-high me-2 text-primary-custom"></i>Annual Dashboard</h1>
@@ -120,40 +122,40 @@ include 'includes/header.php';
   </form>
 </div>
 
-<!-- Stat Cards -->
-<div class="row g-3 mb-3">
+<!-- ── Row 1: Stat Cards ───────────────────────────────────── -->
+<div class="row g-2 db-row">
   <div class="col-6 col-md-3">
-    <div class="stat-card">
+    <div class="stat-card db-stat">
       <div class="stat-icon blue"><i class="fa-solid fa-coins"></i></div>
       <div class="stat-body">
         <div class="stat-label">Total Revenue</div>
-        <div class="stat-value" style="font-size:17px"><?= money($totalRev) ?></div>
+        <div class="stat-value"><?= money($totalRev) ?></div>
         <div class="stat-sub"><?= $selectedYear ?></div>
       </div>
     </div>
   </div>
   <div class="col-6 col-md-3">
-    <div class="stat-card">
+    <div class="stat-card db-stat">
       <div class="stat-icon red"><i class="fa-solid fa-file-invoice-dollar"></i></div>
       <div class="stat-body">
         <div class="stat-label">Total Expenses</div>
-        <div class="stat-value" style="font-size:17px"><?= money($totalExp) ?></div>
+        <div class="stat-value"><?= money($totalExp) ?></div>
         <div class="stat-sub"><?= $selectedYear ?></div>
       </div>
     </div>
   </div>
   <div class="col-6 col-md-3">
-    <div class="stat-card">
+    <div class="stat-card db-stat">
       <div class="stat-icon green"><i class="fa-solid fa-chart-line"></i></div>
       <div class="stat-body">
         <div class="stat-label">Net Income</div>
-        <div class="stat-value" style="font-size:17px;color:<?= $totalNet>=0?'var(--success)':'var(--danger)' ?>"><?= money($totalNet) ?></div>
+        <div class="stat-value" style="color:<?= $totalNet>=0?'var(--success)':'var(--danger)' ?>"><?= money($totalNet) ?></div>
         <div class="stat-sub"><?= $selectedYear ?></div>
       </div>
     </div>
   </div>
   <div class="col-6 col-md-3">
-    <div class="stat-card">
+    <div class="stat-card db-stat">
       <div class="stat-icon teal"><i class="fa-solid fa-door-open"></i></div>
       <div class="stat-body">
         <div class="stat-label">Units Occupied</div>
@@ -165,167 +167,164 @@ include 'includes/header.php';
 </div>
 
 <?php if ($selectedYear === $curYear): ?>
-<!-- Current Month Card -->
-<div class="row g-3 mb-3">
-  <div class="col-12">
-    <div class="card" style="border-left:4px solid var(--primary)">
+<!-- ── Row 2: Month summary + Unit status | Bar chart ─────── -->
+<div class="row g-2 db-row">
+
+  <div class="col-lg-5 d-flex flex-column gap-2">
+
+    <!-- Month-to-date -->
+    <div class="card db-card" style="border-left:3px solid var(--primary)">
       <div class="card-header">
-        <span class="card-header-title"><i class="fa-solid fa-calendar-day me-2"></i><?= date('F Y') ?> — Month to Date</span>
+        <span class="card-header-title"><i class="fa-solid fa-calendar-day me-1"></i><?= date('F Y') ?> — Month to Date</span>
       </div>
-      <div class="card-body py-2">
-        <div class="row g-3 text-center">
-          <div class="col-4">
-            <div class="text-muted small">Revenue</div>
-            <div class="fw-bold fs-5" style="color:var(--primary)"><?= money($cmRev) ?></div>
+      <div class="card-body py-1">
+        <div class="row g-0 text-center">
+          <div class="col-4 border-end">
+            <div class="text-muted" style="font-size:11px">Revenue</div>
+            <div class="fw-bold" style="font-size:14px;color:var(--primary)"><?= money($cmRev) ?></div>
+          </div>
+          <div class="col-4 border-end">
+            <div class="text-muted" style="font-size:11px">Expenses</div>
+            <div class="fw-bold" style="font-size:14px;color:var(--danger)"><?= money($cmExp) ?></div>
           </div>
           <div class="col-4">
-            <div class="text-muted small">Expenses</div>
-            <div class="fw-bold fs-5" style="color:var(--danger)"><?= money($cmExp) ?></div>
-          </div>
-          <div class="col-4">
-            <div class="text-muted small">Net Income</div>
-            <div class="fw-bold fs-5" style="color:<?= $cmNet >= 0 ? 'var(--success)' : 'var(--danger)' ?>"><?= money($cmNet) ?></div>
+            <div class="text-muted" style="font-size:11px">Net Income</div>
+            <div class="fw-bold" style="font-size:14px;color:<?= $cmNet>=0?'var(--success)':'var(--danger)' ?>"><?= money($cmNet) ?></div>
           </div>
         </div>
       </div>
     </div>
-  </div>
-</div>
-<?php endif; ?>
 
-<?php if ($selectedYear === $curYear && !empty($unitStatusData)): ?>
-<!-- Current Month Unit Status -->
-<div class="row g-3 mb-3">
-  <div class="col-12">
-    <div class="card">
+    <!-- Unit payment status -->
+    <?php if (!empty($unitStatusData)): ?>
+    <div class="card db-card" style="flex:1 1 0;min-height:0">
       <div class="card-header">
-        <span class="card-header-title"><i class="fa-solid fa-building me-2"></i><?= date('F Y') ?> — Unit Payment Status</span>
+        <span class="card-header-title"><i class="fa-solid fa-building me-1"></i><?= date('F Y') ?> — Unit Status</span>
       </div>
-      <div class="table-responsive">
-        <table class="table table-sm mb-0">
-          <thead><tr>
-            <th>Unit</th>
-            <th>Tenant</th>
-            <th class="text-end">Rate</th>
-            <th>Status</th>
-          </tr></thead>
+      <div style="overflow-y:auto;max-height:340px">
+        <table class="table db-tbl mb-0">
+          <thead style="position:sticky;top:0;background:#f9fafb;z-index:1">
+            <tr><th>Unit</th><th>Tenant</th><th>Status</th></tr>
+          </thead>
           <tbody>
           <?php foreach ($unitStatusData as $u):
-            if ($u['status'] === 'vacant'):
-          ?>
+            if ($u['status'] === 'vacant'): ?>
             <tr>
               <td class="fw-600"><?= clean($u['unit_name']) ?></td>
               <td class="text-muted">—</td>
-              <td class="text-end text-muted">—</td>
-              <td><span class="badge" style="background:#e2e8f0;color:#64748b">Vacant</span></td>
+              <td><span class="badge" style="background:#e2e8f0;color:#64748b;font-size:10px">Vacant</span></td>
             </tr>
           <?php else:
-              $rate     = getRateForMonth($pdo, (int)$u['id'], (float)$u['monthly_rate'], $curMonth, $curYear);
-              $expected = prorateFirstMonth($rate, (int)$u['due_day'], $u['contract_start'] ?? null, $curMonth, $curYear);
-              $curPaid  = (float)$u['cur_paid'];
-
-              // Expected months from contract_start up to (not including) current month
-              $hasArrears = false;
-              if ($u['contract_start']) {
-                  $cs = new DateTime($u['contract_start']);
-                  $csY = (int)$cs->format('Y'); $csM = (int)$cs->format('n');
-                  $expectedPrior = 0;
-                  $iy = $csY; $im = $csM;
-                  while ($iy < $curYear || ($iy === $curYear && $im < $curMonth)) {
-                      $expectedPrior++;
-                      $im++; if ($im > 12) { $im = 1; $iy++; }
-                  }
-                  $paidPrior = (int)($prevPaidPeriods[$u['id']] ?? 0);
-                  $hasArrears = $expectedPrior > 0 && $paidPrior < $expectedPrior;
-              }
-
+              $rate         = getRateForMonth($pdo, (int)$u['id'], (float)$u['monthly_rate'], $curMonth, $curYear);
+              $expected     = prorateFirstMonth($rate, (int)$u['due_day'], $u['contract_start'] ?? null, $curMonth, $curYear);
+              $curPaid      = (float)$u['cur_paid'];
               $curMonthPaid = $expected > 0 && $curPaid >= $expected;
-
-              if (!$curMonthPaid && $expected > 0):
-                  // Red — current month unpaid
-                  $amountDue = $expected - $curPaid;
+              $isLate       = !$curMonthPaid && $expected > 0 && $today > ((int)$u['due_day'] + 10);
+              $amountDue    = max(0.0, $expected - $curPaid);
           ?>
             <tr>
               <td class="fw-600"><?= clean($u['unit_name']) ?></td>
-              <td><?= clean($u['tenant_name'] ?? '—') ?></td>
-              <td class="text-end"><?= money($expected) ?></td>
-              <td style="color:var(--danger);font-weight:600"><i class="fa-solid fa-circle-xmark me-1"></i>Due <?= money($amountDue) ?></td>
+              <td style="max-width:100px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><?= clean($u['tenant_name'] ?? '—') ?></td>
+              <td>
+                <?php if ($curMonthPaid): ?>
+                  <span style="color:var(--success);font-weight:600;font-size:12px"><i class="fa-solid fa-circle-check me-1"></i>Paid</span>
+                <?php else: ?>
+                  <span style="color:var(--danger);font-weight:600;font-size:12px"><i class="fa-solid fa-circle-xmark me-1"></i><?= money($amountDue) ?></span>
+                  <?php if ($isLate): ?>
+                  <br><span style="color:var(--warning);font-size:11px"><i class="fa-solid fa-triangle-exclamation me-1"></i>Late fee applies</span>
+                  <?php endif; ?>
+                <?php endif; ?>
+              </td>
             </tr>
-          <?php elseif ($curMonthPaid && $hasArrears): ?>
-            <tr>
-              <td class="fw-600"><?= clean($u['unit_name']) ?></td>
-              <td><?= clean($u['tenant_name'] ?? '—') ?></td>
-              <td class="text-end"><?= money($expected) ?></td>
-              <td style="color:var(--warning);font-weight:600"><i class="fa-solid fa-triangle-exclamation me-1"></i>Has prior arrears</td>
-            </tr>
-          <?php else: ?>
-            <tr>
-              <td class="fw-600"><?= clean($u['unit_name']) ?></td>
-              <td><?= clean($u['tenant_name'] ?? '—') ?></td>
-              <td class="text-end"><?= money($expected) ?></td>
-              <td style="color:var(--success);font-weight:600"><i class="fa-solid fa-circle-check me-1"></i>Paid</td>
-            </tr>
-          <?php endif; ?>
           <?php endif; ?>
           <?php endforeach; ?>
           </tbody>
         </table>
       </div>
     </div>
+    <?php endif; ?>
+
+  </div><!-- /col-lg-5 -->
+
+  <div class="col-lg-7">
+    <div class="card db-card h-100">
+      <div class="card-header">
+        <span class="card-header-title"><i class="fa-solid fa-chart-bar me-1"></i>Revenue vs Expenses by Unit</span>
+      </div>
+      <div class="card-body db-chart">
+        <canvas id="unitChart"></canvas>
+      </div>
+    </div>
+  </div>
+
+</div><!-- /row 2 -->
+
+<!-- ── Row 3 (current year): Monthly chart | Category pie ─── -->
+<div class="row g-2 db-row">
+  <div class="col-lg-8">
+    <div class="card db-card">
+      <div class="card-header">
+        <span class="card-header-title"><i class="fa-solid fa-chart-line me-1"></i>Monthly Revenue & Net Income — <?= $selectedYear ?></span>
+      </div>
+      <div class="card-body db-chart"><canvas id="monthlyChart"></canvas></div>
+    </div>
+  </div>
+  <div class="col-lg-4">
+    <div class="card db-card h-100">
+      <div class="card-header">
+        <span class="card-header-title"><i class="fa-solid fa-chart-pie me-1"></i>Expenses by Category</span>
+      </div>
+      <div class="card-body db-chart"><canvas id="catChart"></canvas></div>
+    </div>
+  </div>
+</div>
+
+<?php else: ?>
+<!-- ── Row 2 (other years): Bar chart | Category pie ─────── -->
+<div class="row g-2 db-row">
+  <div class="col-lg-8">
+    <div class="card db-card">
+      <div class="card-header">
+        <span class="card-header-title"><i class="fa-solid fa-chart-bar me-1"></i>Revenue vs Expenses by Unit</span>
+      </div>
+      <div class="card-body db-chart"><canvas id="unitChart"></canvas></div>
+    </div>
+  </div>
+  <div class="col-lg-4">
+    <div class="card db-card h-100">
+      <div class="card-header">
+        <span class="card-header-title"><i class="fa-solid fa-chart-pie me-1"></i>Expenses by Category</span>
+      </div>
+      <div class="card-body db-chart"><canvas id="catChart"></canvas></div>
+    </div>
+  </div>
+</div>
+
+<!-- ── Row 3 (other years): Monthly chart ─────────────────── -->
+<div class="row g-2 db-row">
+  <div class="col-12">
+    <div class="card db-card">
+      <div class="card-header">
+        <span class="card-header-title"><i class="fa-solid fa-chart-line me-1"></i>Monthly Revenue & Net Income — <?= $selectedYear ?></span>
+      </div>
+      <div class="card-body db-chart"><canvas id="monthlyChart"></canvas></div>
+    </div>
   </div>
 </div>
 <?php endif; ?>
 
-<!-- Charts Row -->
-<div class="row g-3 mb-3">
-  <div class="col-lg-8">
-    <div class="card">
+<!-- ── Row 4: Monthly summary | Per-unit summary ──────────── -->
+<div class="row g-2 db-row">
+  <div class="col-lg-5">
+    <div class="card db-card">
       <div class="card-header">
-        <span class="card-header-title"><i class="fa-solid fa-chart-bar me-2"></i>Revenue vs Expenses by Unit</span>
-      </div>
-      <div class="card-body">
-        <div class="chart-wrap"><canvas id="unitChart"></canvas></div>
-      </div>
-    </div>
-  </div>
-  <div class="col-lg-4">
-    <div class="card h-100">
-      <div class="card-header">
-        <span class="card-header-title"><i class="fa-solid fa-chart-pie me-2"></i>Expenses by Category</span>
-      </div>
-      <div class="card-body">
-        <div class="chart-wrap"><canvas id="catChart"></canvas></div>
-      </div>
-    </div>
-  </div>
-</div>
-
-<!-- Monthly Net Income Chart -->
-<div class="row g-3 mb-3">
-  <div class="col-12">
-    <div class="card">
-      <div class="card-header">
-        <span class="card-header-title"><i class="fa-solid fa-chart-line me-2"></i>Monthly Revenue & Net Income — <?= $selectedYear ?></span>
-      </div>
-      <div class="card-body">
-        <div class="chart-wrap"><canvas id="monthlyChart"></canvas></div>
-      </div>
-    </div>
-  </div>
-</div>
-
-<!-- Annual Summary Table -->
-<div class="row g-3 mb-3">
-  <div class="col-12">
-    <div class="card">
-      <div class="card-header">
-        <span class="card-header-title"><i class="fa-solid fa-table me-2"></i>Monthly Summary — <?= $selectedYear ?></span>
+        <span class="card-header-title"><i class="fa-solid fa-table me-1"></i>Monthly Summary — <?= $selectedYear ?></span>
         <button class="btn btn-sm btn-outline-secondary no-print" onclick="window.print()"><i class="fa-solid fa-print me-1"></i>Print</button>
       </div>
       <div class="table-responsive">
-        <table class="table">
+        <table class="table db-tbl">
           <thead><tr>
-            <th>Month</th><th class="text-end">Revenue</th><th class="text-end">Expenses</th><th class="text-end">Net Income</th>
+            <th>Month</th><th class="text-end">Revenue</th><th class="text-end">Expenses</th><th class="text-end">Net</th>
           </tr></thead>
           <tbody>
           <?php
@@ -337,8 +336,8 @@ include 'includes/header.php';
           ?>
           <tr<?= $isCurrent ? ' style="background:#eff6ff;"' : '' ?>>
             <td>
-              <?= date('F', mktime(0,0,0,$m,1)) ?>
-              <?php if ($isCurrent): ?><span class="badge ms-1" style="background:var(--primary);font-size:10px">Current</span><?php endif; ?>
+              <?= date('M', mktime(0,0,0,$m,1)) ?>
+              <?php if ($isCurrent): ?><span class="badge ms-1" style="background:var(--primary);font-size:9px">Now</span><?php endif; ?>
             </td>
             <td class="text-end"><?= money($r) ?></td>
             <td class="text-end"><?= money($e) ?></td>
@@ -347,7 +346,7 @@ include 'includes/header.php';
           <?php } ?>
           </tbody>
           <tfoot><tr style="background:#f9fafb;font-weight:700">
-            <td>TOTAL <?= $selectedYear ?></td>
+            <td>Total</td>
             <td class="text-end"><?= money($sumRev) ?></td>
             <td class="text-end"><?= money($sumExp) ?></td>
             <td class="text-end" style="color:<?= ($sumRev-$sumExp)>=0?'var(--success)':'var(--danger)' ?>"><?= money($sumRev-$sumExp) ?></td>
@@ -356,19 +355,16 @@ include 'includes/header.php';
       </div>
     </div>
   </div>
-</div>
 
-<!-- Per-Unit Summary Table -->
-<div class="row g-3 mb-3">
-  <div class="col-12">
-    <div class="card">
+  <div class="col-lg-7">
+    <div class="card db-card">
       <div class="card-header">
-        <span class="card-header-title"><i class="fa-solid fa-building me-2"></i>Revenue, Expenses & Net Income per Unit — <?= $selectedYear ?></span>
+        <span class="card-header-title"><i class="fa-solid fa-building me-1"></i>Revenue, Expenses & Net per Unit — <?= $selectedYear ?></span>
       </div>
       <div class="table-responsive">
-        <table class="table">
+        <table class="table db-tbl">
           <thead><tr>
-            <th>Unit</th><th>Type</th><th class="text-end">Revenue</th><th class="text-end">Expenses</th><th class="text-end">Net Income</th>
+            <th>Unit</th><th>Type</th><th class="text-end">Revenue</th><th class="text-end">Expenses</th><th class="text-end">Net</th>
           </tr></thead>
           <tbody>
           <?php foreach($units as $u): $net=$unitRevenue[$u['id']]-$unitExpenses[$u['id']]; ?>
@@ -382,7 +378,7 @@ include 'includes/header.php';
           <?php endforeach; ?>
           </tbody>
           <tfoot><tr style="background:#f9fafb;font-weight:700">
-            <td colspan="2">TOTAL</td>
+            <td colspan="2">Total</td>
             <td class="text-end"><?= money($totalRev) ?></td>
             <td class="text-end"><?= money($totalExp) ?></td>
             <td class="text-end" style="color:<?= $totalNet>=0?'var(--success)':'var(--danger)' ?>"><?= money($totalNet) ?></td>
@@ -405,7 +401,6 @@ var CHART_DATA = {
   monthNet:    <?= json_encode(array_map(fn($m) => $monthlyRev[$m] - $monthlyExp[$m], range(1,12))) ?>
 };
 </script>
-
 <script>
 document.addEventListener('DOMContentLoaded', function() {
   var d = CHART_DATA;
@@ -417,16 +412,16 @@ document.addEventListener('DOMContentLoaded', function() {
     data: {
       labels: d.unitLabels,
       datasets: [
-        { label: 'Revenue',  data: d.unitRev, backgroundColor: '#3b5bdb', borderRadius: 4 },
-        { label: 'Expenses', data: d.unitExp, backgroundColor: '#ef4444', borderRadius: 4 }
+        { label: 'Revenue',  data: d.unitRev, backgroundColor: '#3b5bdb', borderRadius: 3 },
+        { label: 'Expenses', data: d.unitExp, backgroundColor: '#ef4444', borderRadius: 3 }
       ]
     },
     options: {
-      responsive: true, maintainAspectRatio: true,
-      plugins: { legend: { position: 'top', labels: { font: { size: 12, family: 'DM Sans' } } } },
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { position: 'top', labels: { font: { size: 11, family: 'DM Sans' }, boxWidth: 10, padding: 8 } } },
       scales: {
-        y: { beginAtZero: true, ticks: { callback: phpFmt, font: { size: 11 } }, grid: { color: '#f3f4f6' } },
-        x: { grid: { display: false }, ticks: { font: { size: 11 } } }
+        y: { beginAtZero: true, ticks: { callback: phpFmt, font: { size: 10 } }, grid: { color: '#f3f4f6' } },
+        x: { grid: { display: false }, ticks: { font: { size: 10 } } }
       }
     }
   });
@@ -439,11 +434,11 @@ document.addEventListener('DOMContentLoaded', function() {
     type: 'doughnut',
     data: {
       labels: catFiltered.labels,
-      datasets: [{ data: catFiltered.data, backgroundColor: pallette, hoverOffset: 8, borderWidth: 2 }]
+      datasets: [{ data: catFiltered.data, backgroundColor: pallette, hoverOffset: 6, borderWidth: 2 }]
     },
     options: {
-      responsive: true, cutout: '62%',
-      plugins: { legend: { position: 'bottom', labels: { font: { size: 11, family: 'DM Sans' }, padding: 10, boxWidth: 12 } } }
+      responsive: true, maintainAspectRatio: false, cutout: '60%',
+      plugins: { legend: { position: 'bottom', labels: { font: { size: 10, family: 'DM Sans' }, padding: 8, boxWidth: 10 } } }
     }
   });
 
@@ -452,16 +447,16 @@ document.addEventListener('DOMContentLoaded', function() {
     data: {
       labels: d.monthLabels,
       datasets: [
-        { type: 'bar',  label: 'Revenue',    data: d.monthRev, backgroundColor: 'rgba(59,91,219,.25)', borderRadius: 4, yAxisID: 'y' },
-        { type: 'line', label: 'Net Income', data: d.monthNet, borderColor: '#15803d', backgroundColor: 'rgba(21,128,61,.08)', borderWidth: 2, pointRadius: 4, tension: .3, fill: true, yAxisID: 'y' }
+        { type: 'bar',  label: 'Revenue',    data: d.monthRev, backgroundColor: 'rgba(59,91,219,.25)', borderRadius: 3, yAxisID: 'y' },
+        { type: 'line', label: 'Net Income', data: d.monthNet, borderColor: '#15803d', backgroundColor: 'rgba(21,128,61,.08)', borderWidth: 2, pointRadius: 3, tension: .3, fill: true, yAxisID: 'y' }
       ]
     },
     options: {
-      responsive: true, maintainAspectRatio: true,
-      plugins: { legend: { position: 'top', labels: { font: { size: 12, family: 'DM Sans' } } } },
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { position: 'top', labels: { font: { size: 11, family: 'DM Sans' }, boxWidth: 10, padding: 8 } } },
       scales: {
-        y: { beginAtZero: true, ticks: { callback: phpFmt, font: { size: 11 } }, grid: { color: '#f3f4f6' } },
-        x: { grid: { display: false }, ticks: { font: { size: 11 } } }
+        y: { beginAtZero: true, ticks: { callback: phpFmt, font: { size: 10 } }, grid: { color: '#f3f4f6' } },
+        x: { grid: { display: false }, ticks: { font: { size: 10 } } }
       }
     }
   });
