@@ -227,7 +227,46 @@ $deletes    = count(array_filter($logRows, fn($r)=>str_starts_with($r['action'],
         <td><?php if($log['role']): ?><span class="badge badge-<?= $log['role'] ?>"><?= ucfirst($log['role'] ?? '') ?></span><?php else: ?>—<?php endif; ?></td>
         <td><span class="badge log-action <?= logActionBadge($log['action']) ?>"><?= clean($log['action']) ?></span></td>
         <td><span class="text-muted" style="font-size:12px"><?= clean($log['module'] ?? '—') ?></span></td>
-        <td class="log-details"><?= clean($log['details'] ?? '—') ?></td>
+        <td class="log-details">
+          <?php
+            $det = $log['details'] ?? '';
+            $diffData = null;
+            if ($det !== '' && $det[0] === '{') {
+                $parsed = json_decode($det, true);
+                if ($parsed && isset($parsed['before'], $parsed['after'])) $diffData = $parsed;
+            }
+            if ($diffData):
+              $before  = $diffData['before'];
+              $after   = $diffData['after'];
+              $allKeys = array_unique(array_merge(array_keys($before), array_keys($after)));
+              sort($allKeys);
+              $changed = array_filter($allKeys, fn($k) => (string)($before[$k] ?? '') !== (string)($after[$k] ?? ''));
+          ?>
+          <button class="btn btn-outline-secondary btn-sm py-0 px-2" style="font-size:11px" onclick="toggleDiff(this)">
+            <i class="fa-solid fa-code-compare fa-xs me-1"></i>Diff (<?= count($changed) ?> change<?= count($changed) !== 1 ? 's' : '' ?>)
+          </button>
+          <div class="log-diff-table" style="display:none;margin-top:6px;overflow-x:auto;max-width:100%">
+            <table style="font-size:11px;border-collapse:collapse;width:100%;min-width:320px">
+              <thead><tr>
+                <th style="padding:3px 7px;background:#f3f4f6;border:1px solid var(--border)">Field</th>
+                <th style="padding:3px 7px;background:#fef2f2;border:1px solid var(--border);color:var(--danger)">Before</th>
+                <th style="padding:3px 7px;background:#f0fdf4;border:1px solid var(--border);color:var(--success)">After</th>
+              </tr></thead>
+              <tbody>
+              <?php foreach ($changed as $k): ?>
+              <tr>
+                <td style="padding:3px 7px;border:1px solid var(--border);font-weight:600;white-space:nowrap"><?= clean($k) ?></td>
+                <td style="padding:3px 7px;border:1px solid var(--border);color:var(--danger)"><?= clean((string)($before[$k] ?? '—')) ?></td>
+                <td style="padding:3px 7px;border:1px solid var(--border);color:var(--success)"><?= clean((string)($after[$k]  ?? '—')) ?></td>
+              </tr>
+              <?php endforeach; ?>
+              </tbody>
+            </table>
+          </div>
+          <?php else: ?>
+          <?= clean($det ?: '—') ?>
+          <?php endif; ?>
+        </td>
         <td>
           <?php if($log['ip_address']): ?>
           <a href="?<?= http_build_query(array_merge($_GET,['ip'=>$log['ip_address']])) ?>" class="ip-badge" title="Filter by this IP"><?= clean($log['ip_address']) ?></a>
@@ -287,6 +326,18 @@ $(document).ready(function(){
     }
   });
 });
+
+function toggleDiff(btn) {
+  var table = btn.nextElementSibling;
+  var isHidden = table.style.display === 'none';
+  table.style.display = isHidden ? '' : 'none';
+  btn.innerHTML = isHidden
+    ? '<i class="fa-solid fa-chevron-up fa-xs me-1"></i>Hide'
+    : btn.innerHTML.replace('Hide', btn.getAttribute('data-label') || 'Diff');
+  if (isHidden && !btn.getAttribute('data-label')) {
+    btn.setAttribute('data-label', btn.textContent.trim().replace('Hide','').trim() || 'Diff');
+  }
+}
 </script>
 <style>
 /* Fix DataTable length/filter overlap */

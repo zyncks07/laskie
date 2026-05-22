@@ -116,8 +116,8 @@ include '../includes/header.php';
       <?php foreach($tenants as $t): ?>
       <tr data-status="<?= $t['status'] ?>">
         <td>
-          <div class="fw-600"><?= clean($t['full_name']) ?></div>
-          <?php if($t['email']): ?><div style="font-size:11.5px;color:var(--text-muted)"><?= clean($t['email']) ?></div><?php endif; ?>
+          <div class="fw-600 cell-trunc"><?= clean($t['full_name']) ?></div>
+          <?php if($t['email']): ?><div class="cell-trunc" style="font-size:11.5px;color:var(--text-muted)"><?= clean($t['email']) ?></div><?php endif; ?>
         </td>
         <td><?= clean($t['unit_name'] ?? '—') ?></td>
         <td>
@@ -143,7 +143,7 @@ include '../includes/header.php';
 
 <!-- Tenant Modal -->
 <div class="modal fade" id="tenantModal" tabindex="-1">
-  <div class="modal-dialog modal-xl">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable">
     <div class="modal-content">
       <div class="modal-header">
         <h5 class="modal-title" id="tModalTitle">Add Tenant</h5>

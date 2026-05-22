@@ -415,7 +415,7 @@ include '../includes/header.php';
       ?>
       <tr class="<?=$trClass?>">
         <td data-order="<?=$row['date']?>" style="white-space:nowrap;font-size:12.5px"><?=fmtDate($row['date'],'M j, Y')?></td>
-        <td style="font-size:12.5px">
+        <td class="cell-trunc-lg" style="font-size:12.5px">
           <?php if($row['type']==='charge'): ?>
             <i class="fa-solid fa-file-invoice fa-xs me-1 text-muted"></i><?=clean($row['description'])?>
           <?php elseif($isSvcChg): ?>

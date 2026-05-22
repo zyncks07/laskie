@@ -83,6 +83,14 @@ include 'includes/header.php';
           <?php endforeach; ?>
         </select>
       </div>
+      <div class="col-6 col-md-2">
+        <label class="form-label">From Date</label>
+        <input type="date" id="fDateFrom" class="form-control form-control-sm" title="Overrides Month/Year when set">
+      </div>
+      <div class="col-6 col-md-2">
+        <label class="form-label">To Date</label>
+        <input type="date" id="fDateTo" class="form-control form-control-sm" title="Overrides Month/Year when set">
+      </div>
       <div class="col-auto d-flex gap-2">
         <button class="btn btn-primary btn-sm" onclick="loadExpenses()"><i class="fa-solid fa-search me-1"></i>Filter</button>
         <button class="btn btn-outline-secondary btn-sm" onclick="resetFilters()"><i class="fa-solid fa-rotate me-1"></i>Reset</button>
@@ -145,13 +153,14 @@ include 'includes/header.php';
     <table class="table">
       <thead>
         <tr>
+          <?php if(isAdmin()): ?><th class="no-print" style="width:32px"><input type="checkbox" id="expSelectAll" title="Select all"></th><?php endif; ?>
           <th>Date</th><th>Description</th><th>Category</th><th>Unit</th>
           <th class="text-end">Amount</th><th>Recorded By</th><th>Notes</th>
           <th class="text-center">Receipt</th><th class="text-center no-print">Actions</th>
         </tr>
       </thead>
       <tbody id="expBody">
-        <tr><td colspan="9" class="text-center py-4">
+        <tr><td colspan="<?=isAdmin()?10:9?>" class="text-center py-4">
           <span class="spinner-border spinner-border-sm text-primary me-2"></span>Loading...
         </td></tr>
       </tbody>
@@ -159,6 +168,17 @@ include 'includes/header.php';
     </table>
   </div>
 </div>
+
+<?php if(isAdmin()): ?>
+<!-- Bulk action bar (shown when expenses are selected) -->
+<div id="expBulkBar" class="d-none" style="position:fixed;bottom:24px;left:50%;transform:translateX(-50%);z-index:1050;background:#fff;border:1px solid var(--border);border-radius:8px;padding:10px 20px;box-shadow:0 4px 20px rgba(0,0,0,.18)">
+  <div class="d-flex align-items-center gap-3">
+    <span class="fw-600" id="expBulkCount"></span>
+    <button class="btn btn-danger btn-sm" onclick="bulkDeleteExpenses()"><i class="fa-solid fa-trash me-1"></i>Delete Selected</button>
+    <button class="btn btn-secondary btn-sm" onclick="clearExpSelection()">Cancel</button>
+  </div>
+</div>
+<?php endif; ?>
 
 <!-- Record Expense Modal -->
 <div class="modal fade" id="expenseModal" tabindex="-1">
@@ -287,6 +307,7 @@ include 'includes/header.php';
 </div>
 
 <script>
+var IS_ADMIN  = <?=isAdmin()?'true':'false'?>;
 var expModal = null;
 document.addEventListener('DOMContentLoaded', function() {
   expModal = new bootstrap.Modal(document.getElementById('expenseModal'));
@@ -299,11 +320,13 @@ function loadExpenses() {
   var unit     = document.getElementById('fUnit').value;
   var category = document.getElementById('fCategory').value;
   var recorder = document.getElementById('fRecorder').value;
+  var dateFrom = document.getElementById('fDateFrom').value;
+  var dateTo   = document.getElementById('fDateTo').value;
 
   document.getElementById('expBody').innerHTML = '<tr><td colspan="9" class="text-center py-4"><span class="spinner-border spinner-border-sm text-primary me-2"></span>Loading...</td></tr>';
   document.getElementById('expFoot').innerHTML = '';
 
-  apiPost('api/expenses_api.php', {action:'list_expenses', month:month, year:year, unit_id:unit, category_id:category, recorded_by:recorder}, function(err, res) {
+  apiPost('api/expenses_api.php', {action:'list_expenses', month:month, year:year, unit_id:unit, category_id:category, recorded_by:recorder, date_from:dateFrom, date_to:dateTo}, function(err, res) {
     if (!res || !res.success) {
       document.getElementById('expBody').innerHTML = '<tr><td colspan="9" class="text-center text-danger py-3">Failed to load expenses.</td></tr>';
       return;
@@ -352,8 +375,9 @@ function loadExpenses() {
         : '<span class="text-muted">&#8212;</span>';
 
       html += '<tr>';
+      if (IS_ADMIN) html += '<td class="no-print"><input type="checkbox" class="exp-chk" value="' + parseInt(ex.id) + '" onclick="updateExpBulkBar()"></td>';
       html += '<td style="white-space:nowrap;font-size:12.5px">' + ex.expense_date + '</td>';
-      html += '<td class="fw-600" style="font-size:12.5px">' + ex.description + '</td>';
+      html += '<td class="fw-600 cell-trunc-lg" style="font-size:12.5px">' + ex.description + '</td>';
       html += '<td>' + catBadge + '</td>';
       html += '<td>' + unitLabel + '</td>';
       html += '<td class="text-end fw-600" style="color:var(--danger)">' + fmt(ex.amount) + '</td>';
@@ -361,18 +385,27 @@ function loadExpenses() {
       html += '<td>' + notesHtml + '</td>';
       html += '<td class="text-center">' + receipt + '</td>';
       html += '<td class="text-center no-print">';
-      html += '<button class="btn-icon" title="Edit" onclick="editExpense(' + parseInt(ex.id) + ')"><i class="fa-solid fa-pen fa-xs"></i></button> ';
-      html += '<button class="btn-icon danger" title="Delete" onclick="deleteExpense(' + parseInt(ex.id) + ',\'' + ex.description.replace(/\'/g, "\\'") + '\')"><i class="fa-solid fa-trash fa-xs"></i></button>';
+      if (IS_ADMIN) {
+        html += '<button class="btn-icon" title="Edit" onclick="editExpense(' + parseInt(ex.id) + ')"><i class="fa-solid fa-pen fa-xs"></i></button> ';
+        html += '<button class="btn-icon danger" title="Delete" onclick="deleteExpense(' + parseInt(ex.id) + ',\'' + ex.description.replace(/\'/g, "\\'") + '\')"><i class="fa-solid fa-trash fa-xs"></i></button>';
+      } else {
+        html += '<span class="text-muted">&#8212;</span>';
+      }
       html += '</td></tr>';
     }
 
-    if (!html) html = '<tr><td colspan="9" class="text-center py-5 text-muted"><i class="fa-solid fa-inbox fa-2x d-block mb-2 mt-2"></i>No expense records found.</td></tr>';
+    // Reset select-all and bulk bar when table reloads
+    var saEl = document.getElementById('expSelectAll');
+    if (saEl) saEl.checked = false;
+    updateExpBulkBar();
+
+    if (!html) html = '<tr><td colspan="' + (IS_ADMIN ? 10 : 9) + '" class="text-center py-5 text-muted"><i class="fa-solid fa-inbox fa-2x d-block mb-2 mt-2"></i>No expense records found.</td></tr>';
     document.getElementById('expBody').innerHTML = html;
 
     if (exps.length > 0) {
       document.getElementById('expFoot').innerHTML =
         '<tr style="background:#f9fafb;font-weight:700;border-top:2px solid var(--border)">' +
-        '<td colspan="4">TOTAL (' + exps.length + ' records)</td>' +
+        '<td colspan="' + (IS_ADMIN ? 5 : 4) + '">TOTAL (' + exps.length + ' records)</td>' +
         '<td class="text-end" style="color:var(--danger)">' + fmt(res.total) + '</td>' +
         '<td colspan="4"></td></tr>';
     }
@@ -462,12 +495,57 @@ function deleteExpense(id, desc) {
   });
 }
 
+// ── Bulk select / delete (admin only) ────────────────────────
+function updateExpBulkBar() {
+  if (!IS_ADMIN) return;
+  var checked = document.querySelectorAll('.exp-chk:checked');
+  var bar = document.getElementById('expBulkBar');
+  if (!bar) return;
+  if (checked.length > 0) {
+    document.getElementById('expBulkCount').textContent = checked.length + ' selected';
+    bar.classList.remove('d-none');
+  } else {
+    bar.classList.add('d-none');
+  }
+}
+
+function clearExpSelection() {
+  document.querySelectorAll('.exp-chk').forEach(function(cb) { cb.checked = false; });
+  var sa = document.getElementById('expSelectAll');
+  if (sa) sa.checked = false;
+  updateExpBulkBar();
+}
+
+function bulkDeleteExpenses() {
+  var ids = Array.from(document.querySelectorAll('.exp-chk:checked')).map(function(cb) { return parseInt(cb.value); });
+  if (!ids.length) return;
+  confirmDelete('Delete ' + ids.length + ' expense(s)? Their cash records will also be removed. This cannot be undone.', function() {
+    apiPost('api/expenses_api.php', {action: 'bulk_delete_expenses', ids: JSON.stringify(ids)}, function(err, res) {
+      if (!res || !res.success) { showToast((res && res.error) || 'Bulk delete failed.', 'error'); return; }
+      showToast(res.msg, 'success');
+      loadExpenses();
+    });
+  });
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+  var sa = document.getElementById('expSelectAll');
+  if (sa) {
+    sa.addEventListener('change', function() {
+      document.querySelectorAll('.exp-chk').forEach(function(cb) { cb.checked = sa.checked; });
+      updateExpBulkBar();
+    });
+  }
+});
+
 function resetFilters() {
   document.getElementById('fMonth').value    = new Date().getMonth() + 1;
   document.getElementById('fYear').value     = new Date().getFullYear();
   document.getElementById('fUnit').value     = 0;
   document.getElementById('fCategory').value = 0;
   document.getElementById('fRecorder').value = 0;
+  document.getElementById('fDateFrom').value = '';
+  document.getElementById('fDateTo').value   = '';
   loadExpenses();
 }
 

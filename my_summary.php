@@ -64,7 +64,7 @@ $payRows = $pdo->prepare("
     LEFT JOIN rental_units ru ON p.unit_id=ru.id
     LEFT JOIN tenants t       ON p.tenant_id=t.id
     LEFT JOIN service_types st ON p.service_type_id=st.id
-    WHERE p.received_by=? AND MONTH(p.payment_date)=? AND YEAR(p.payment_date)=?
+    WHERE p.received_by=? AND MONTH(p.payment_date)=? AND YEAR(p.payment_date)=? AND p.status != 'voided' AND p.deleted_at IS NULL
     ORDER BY p.payment_date DESC
 ");
 $payRows->execute([$myId,$selMonth,$selYear]);
@@ -200,7 +200,7 @@ include 'includes/header.php';
         <td style="font-size:12.5px"><?= clean($p['tenant_name']??'—') ?></td>
         <td><?= $p['payment_type']==='rent'?'<span class="badge badge-rent">Rent</span>':'<span class="badge badge-service">'.clean($p['service_name']??'Service').'</span>' ?></td>
         <td class="text-end fw-600" style="color:var(--success)"><?= money((float)$p['amount']) ?></td>
-        <td style="font-size:12px;color:var(--text-muted)"><?= clean($p['notes']??'—') ?></td>
+        <td class="cell-trunc-lg" style="font-size:12px;color:var(--text-muted)"><?= clean($p['notes']??'—') ?></td>
       </tr>
       <?php endforeach; ?>
       </tbody>
@@ -233,7 +233,7 @@ include 'includes/header.php';
       <tr>
         <td style="font-size:12.5px"><?= clean($r['transaction_date']) ?></td>
         <td class="text-end fw-600" style="color:var(--info)"><?= money((float)$r['amount']) ?></td>
-        <td style="font-size:12px;color:var(--text-muted)"><?= clean($r['notes']??'—') ?></td>
+        <td class="cell-trunc-lg" style="font-size:12px;color:var(--text-muted)"><?= clean($r['notes']??'—') ?></td>
         <td class="text-center">
           <?php if($r['doc_path']): ?>
             <a href="<?= clean($r['doc_path']) ?>" target="_blank" class="btn-icon" title="View file"><i class="fa-solid fa-paperclip fa-xs"></i></a>
@@ -301,8 +301,8 @@ include 'includes/header.php';
           <?php foreach($myExpenses as $e): ?>
           <tr>
             <td style="white-space:nowrap"><?= clean($e['expense_date']) ?></td>
-            <td><?= clean($e['description']) ?>
-              <?php if($e['notes']): ?><br><small class="text-muted"><?= clean(substr($e['notes'],0,50)) ?></small><?php endif; ?>
+            <td class="cell-trunc-lg"><?= clean($e['description']) ?>
+              <?php if($e['notes']): ?><br><small class="text-muted cell-trunc"><?= clean(substr($e['notes'],0,60)) ?></small><?php endif; ?>
             </td>
             <td><?= clean($e['unit_name']??'General') ?></td>
             <td class="text-end fw-600" style="color:var(--danger)"><?= money((float)$e['amount']) ?></td>

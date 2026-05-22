@@ -313,6 +313,7 @@ var unitDetailModal = null;
 var refundModal     = null;
 var chargeModal     = null;
 var currentUnitDetail = {};
+var IS_ADMIN = <?=isAdmin()?'true':'false'?>;
 var MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
 
 document.addEventListener('DOMContentLoaded', function() {
@@ -377,8 +378,8 @@ function loadSummary() {
       html +=
         '<tr>' +
           '<td>' + dot + '</td>' +
-          '<td><div class="fw-600">' + r.unit_name + '</div>' + statusBadge + '</td>' +
-          '<td>' + tenantCell + '</td>' +
+          '<td><div class="fw-600 cell-trunc-sm">' + r.unit_name + '</div>' + statusBadge + '</td>' +
+          '<td class="cell-trunc">' + tenantCell + '</td>' +
           '<td class="text-end">' + fmt(rate) + '</td>' +
           '<td class="text-end">' + rentCell + '</td>' +
           '<td class="text-end">' + svcCell  + '</td>' +
@@ -561,6 +562,11 @@ function savePayment(andPrint) {
     showToast(res.msg, 'success');
     payModal.hide();
     loadSummary();
+    // Refresh unit detail if open so edited payment shows updated data
+    var udm = document.getElementById('unitDetailModal');
+    if (udm && udm.classList.contains('show') && currentUnitDetail.id) {
+      viewUnitPayments(currentUnitDetail.id, currentUnitDetail.name, currentUnitDetail.month, currentUnitDetail.year);
+    }
     if (andPrint && res.id) {
       window.open('../payments/invoice_print.php?id=' + res.id, '_blank');
     }
@@ -627,31 +633,64 @@ function viewUnitPayments(unitId, unitName, month, year) {
     if (!pays.length) {
       html += '<div class="empty-state"><i class="fa-solid fa-file-invoice"></i><p>No payments recorded for this period.</p></div>';
     } else {
+      // Date range filter bar
+      html += '<div class="d-flex align-items-end gap-2 mb-2" style="flex-wrap:wrap">' +
+        '<div><label style="font-size:11px;display:block;margin-bottom:2px">From</label>' +
+        '<input type="date" id="payDateFrom" class="form-control form-control-sm" style="width:140px" oninput="filterPaymentDates()"></div>' +
+        '<div><label style="font-size:11px;display:block;margin-bottom:2px">To</label>' +
+        '<input type="date" id="payDateTo" class="form-control form-control-sm" style="width:140px" oninput="filterPaymentDates()"></div>' +
+        '<button class="btn btn-outline-secondary btn-sm" onclick="clearPayDateFilter()" style="align-self:flex-end">' +
+        '<i class="fa-solid fa-rotate fa-xs me-1"></i>Clear</button>' +
+        '</div>';
+
+      // Bulk bar for admin
+      if (IS_ADMIN) {
+        html += '<div id="payBulkBar" style="display:none;margin-bottom:8px" class="d-flex align-items-center gap-2 bg-light border rounded px-3 py-2">' +
+          '<span class="fw-600" id="payBulkCount"></span>' +
+          '<button class="btn btn-danger btn-sm" onclick="bulkDeletePayments()"><i class="fa-solid fa-trash me-1"></i>Delete Selected</button>' +
+          '<button class="btn btn-secondary btn-sm" onclick="clearPaySelection()">Cancel</button>' +
+          '</div>';
+      }
+
       html +=
-        '<div class="table-responsive"><table class="table"><thead><tr>' +
+        '<div class="table-responsive"><table class="table" id="payDetailTable"><thead><tr>' +
+        (IS_ADMIN ? '<th class="no-print" style="width:32px"><input type="checkbox" id="paySelectAll" onclick="toggleAllPayments(this)"></th>' : '') +
         '<th>Date</th><th>Invoice</th><th>Type</th><th>Description</th>' +
         '<th class="text-end">Amount</th><th>Cashier</th><th class="text-center">Actions</th>' +
         '</tr></thead><tbody>';
 
       pays.forEach(function(p) {
-        totPaid += parseFloat(p.amount) || 0;
+        var isVoided = p.status === 'voided';
+        if (!isVoided) totPaid += parseFloat(p.amount) || 0;
         var typeLabel = p.payment_type === 'rent'
           ? '<span class="badge badge-rent">Rent</span>'
           : '<span class="badge badge-service">' + (p.service_name || 'Service') + '</span>';
         var statusBadge = '';
-        if (p.status === 'refunded') {
+        if (p.status === 'voided') {
+          statusBadge = ' <span class="badge bg-secondary" style="font-size:10px">Voided</span>';
+        } else if (p.status === 'refunded') {
           statusBadge = ' <span class="badge bg-danger" style="font-size:10px">Refunded</span>';
         } else if (p.status === 'partially_refunded') {
           statusBadge = ' <span class="badge bg-warning text-dark" style="font-size:10px">Partial Refund</span>';
         }
         var alreadyRefunded = parseFloat(p.refunded_total) || 0;
         var invEsc = (p.invoice_no || '').replace(/'/g, "\\'");
-        var refBtn = (p.status !== 'refunded')
+        var refBtn = (!isVoided && p.status !== 'refunded')
           ? '<button class="btn-icon" title="Process Refund" onclick="openRefundModal(' + p.id + ',\'' + invEsc + '\',' + p.amount + ',' + alreadyRefunded + ')">' +
               '<i class="fa-solid fa-rotate-left fa-xs" style="color:var(--danger)"></i></button> '
           : '';
+        var editBtn = (IS_ADMIN && !isVoided)
+          ? '<button class="btn-icon" title="Edit" onclick="editPayment(' + p.id + ')"><i class="fa-solid fa-pen fa-xs"></i></button> '
+          : '';
+        var voidRestoreBtn = '';
+        if (IS_ADMIN) {
+          voidRestoreBtn = isVoided
+            ? '<button class="btn-icon" title="Restore Payment" onclick="restorePayment(' + p.id + ')"><i class="fa-solid fa-rotate-right fa-xs" style="color:var(--success)"></i></button> '
+            : '<button class="btn-icon" title="Void Payment" onclick="voidPayment(' + p.id + ',\'' + invEsc + '\')"><i class="fa-solid fa-ban fa-xs" style="color:var(--warning)"></i></button> ';
+        }
         html +=
-          '<tr>' +
+          '<tr' + (isVoided ? ' style="opacity:0.55"' : '') + '>' +
+            (IS_ADMIN ? '<td class="no-print"><input type="checkbox" class="pay-chk" value="' + p.id + '" onclick="updatePayBulkBar()"></td>' : '') +
             '<td style="white-space:nowrap">' + p.payment_date + '</td>' +
             '<td class="mono" style="font-size:12px">' + (p.invoice_no || '—') + '</td>' +
             '<td>' + typeLabel + '</td>' +
@@ -662,6 +701,8 @@ function viewUnitPayments(unitId, unitName, month, year) {
               '<a href="../payments/invoice_print.php?id=' + p.id + '" target="_blank" class="btn-icon" title="Print Invoice">' +
                 '<i class="fa-solid fa-print fa-xs"></i></a> ' +
               refBtn +
+              editBtn +
+              voidRestoreBtn +
               '<button class="btn-icon danger" title="Delete" onclick="deletePayment(' + p.id + ')">' +
                 '<i class="fa-solid fa-trash fa-xs"></i></button>' +
             '</td>' +
@@ -670,7 +711,7 @@ function viewUnitPayments(unitId, unitName, month, year) {
 
       html +=
         '</tbody><tfoot><tr style="background:#f9fafb;font-weight:700">' +
-        '<td colspan="4">Total Paid</td><td class="text-end">' + fmt(totPaid) + '</td><td colspan="2"></td>' +
+        '<td colspan="' + (IS_ADMIN ? 5 : 4) + '">Total Paid</td><td class="text-end">' + fmt(totPaid) + '</td><td colspan="2"></td>' +
         '</tr></tfoot></table></div>';
     }
 
@@ -697,6 +738,150 @@ function deletePayment(id) {
       loadSummary();
       var detailModal = document.getElementById('unitDetailModal');
       if (detailModal.classList.contains('show')) unitDetailModal.hide();
+    });
+  });
+}
+
+function voidPayment(id, invoiceNo) {
+  confirmDelete('Void payment ' + (invoiceNo || '#' + id) + '? It will be excluded from totals but kept on record. Admins only.', function() {
+    apiPost('api_payment.php', {action: 'void_payment', id: id}, function(err, res) {
+      if (err || !res || !res.success) { showToast((res && res.error) || 'Failed.', 'error'); return; }
+      showToast(res.msg, 'success');
+      loadSummary();
+      var udm = document.getElementById('unitDetailModal');
+      if (udm && udm.classList.contains('show') && currentUnitDetail.id) {
+        viewUnitPayments(currentUnitDetail.id, currentUnitDetail.name, currentUnitDetail.month, currentUnitDetail.year);
+      }
+    });
+  });
+}
+
+function restorePayment(id) {
+  apiPost('api_payment.php', {action: 'restore_payment', id: id}, function(err, res) {
+    if (err || !res || !res.success) { showToast((res && res.error) || 'Failed.', 'error'); return; }
+    showToast(res.msg, 'success');
+    loadSummary();
+    var udm = document.getElementById('unitDetailModal');
+    if (udm && udm.classList.contains('show') && currentUnitDetail.id) {
+      viewUnitPayments(currentUnitDetail.id, currentUnitDetail.name, currentUnitDetail.month, currentUnitDetail.year);
+    }
+  });
+}
+
+function editPayment(id) {
+  apiPost('api_payment.php', {action: 'get_payment', id: id}, function(err, res) {
+    if (!res || !res.success) return showToast('Failed to load payment.', 'error');
+    var p = res.payment;
+
+    document.getElementById('payModalTitle').innerHTML = '<i class="fa-solid fa-pen me-2"></i>Edit Payment';
+    document.getElementById('payId').value          = p.id;
+    document.getElementById('payUnit').value        = p.unit_id;
+    document.getElementById('payType').value        = p.payment_type;
+    document.getElementById('payAmount').value      = p.amount;
+    document.getElementById('payDate').value        = p.payment_date;
+    document.getElementById('payDue').value         = p.due_date || '';
+    document.getElementById('payPeriodMonth').value = p.period_month;
+    document.getElementById('payPeriodYear').value  = p.period_year;
+    document.getElementById('payNotes').value       = p.notes || '';
+    document.getElementById('payMsg').style.display = 'none';
+    document.getElementById('prorateHint').style.display = 'none';
+
+    onPayTypeChange(p.payment_type);
+    if (p.payment_type === 'service') {
+      document.getElementById('payService').value = p.service_type_id || '';
+    }
+
+    // Show unit info bar from existing option data
+    var sel = document.getElementById('payUnit');
+    var opt = sel.options[sel.selectedIndex];
+    if (opt && opt.dataset.rate) {
+      var rate   = parseFloat(opt.dataset.rate) || 0;
+      var dueDay = opt.dataset.due || '5';
+      var tenant = opt.dataset.tenant || '';
+      var infoText = 'Monthly Rate: ' + fmt(rate) + ' \xb7 Due: ' + dueDay + 'th of each month';
+      if (tenant) infoText += ' \xb7 Tenant: ' + tenant;
+      document.getElementById('unitInfoBar').style.display = '';
+      document.getElementById('unitInfoText').textContent  = infoText;
+    }
+
+    // Load tenant dropdown then select the payment's tenant
+    apiPost('api_payment.php', {action: 'get_unit_tenants', unit_id: p.unit_id}, function(err2, res2) {
+      var sel2 = document.getElementById('payTenant');
+      sel2.innerHTML = '<option value="">— Select tenant —</option>';
+      if (res2 && res2.success && res2.tenants.length) {
+        res2.tenants.forEach(function(t) {
+          var o = document.createElement('option');
+          o.value = t.id; o.textContent = t.full_name;
+          sel2.appendChild(o);
+        });
+      }
+      if (p.tenant_id) sel2.value = p.tenant_id;
+    });
+
+    payModal.show();
+  });
+}
+
+// ── Bulk select / delete (admin only) ────────────────────────
+function toggleAllPayments(el) {
+  document.querySelectorAll('.pay-chk').forEach(function(cb) { cb.checked = el.checked; });
+  updatePayBulkBar();
+}
+
+function updatePayBulkBar() {
+  var checked = document.querySelectorAll('.pay-chk:checked');
+  var bar = document.getElementById('payBulkBar');
+  if (!bar) return;
+  if (checked.length > 0) {
+    document.getElementById('payBulkCount').textContent = checked.length + ' selected';
+    bar.style.display = 'flex';
+  } else {
+    bar.style.display = 'none';
+  }
+}
+
+function clearPaySelection() {
+  document.querySelectorAll('.pay-chk').forEach(function(cb) { cb.checked = false; });
+  var sa = document.getElementById('paySelectAll');
+  if (sa) sa.checked = false;
+  updatePayBulkBar();
+}
+
+function filterPaymentDates() {
+  var from = (document.getElementById('payDateFrom') || {}).value || '';
+  var to   = (document.getElementById('payDateTo')   || {}).value || '';
+  var table = document.getElementById('payDetailTable');
+  if (!table) return;
+  var rows = table.querySelectorAll('tbody tr');
+  rows.forEach(function(row) {
+    if (!from && !to) { row.style.display = ''; return; }
+    var dateCell = row.cells[IS_ADMIN ? 1 : 0];
+    if (!dateCell) { row.style.display = ''; return; }
+    var d = dateCell.textContent.trim();
+    var show = (!from || d >= from) && (!to || d <= to);
+    row.style.display = show ? '' : 'none';
+  });
+}
+
+function clearPayDateFilter() {
+  var f = document.getElementById('payDateFrom');
+  var t = document.getElementById('payDateTo');
+  if (f) f.value = '';
+  if (t) t.value = '';
+  filterPaymentDates();
+}
+
+function bulkDeletePayments() {
+  var ids = Array.from(document.querySelectorAll('.pay-chk:checked')).map(function(cb) { return parseInt(cb.value); });
+  if (!ids.length) return;
+  confirmDelete('Delete ' + ids.length + ' payment(s)? Their cash records will also be removed. This cannot be undone.', function() {
+    apiPost('api_payment.php', {action: 'bulk_delete_payments', ids: JSON.stringify(ids)}, function(err, res) {
+      if (!res || !res.success) { showToast((res && res.error) || 'Bulk delete failed.', 'error'); return; }
+      showToast(res.msg, 'success');
+      loadSummary();
+      if (currentUnitDetail.id) {
+        viewUnitPayments(currentUnitDetail.id, currentUnitDetail.name, currentUnitDetail.month, currentUnitDetail.year);
+      }
     });
   });
 }

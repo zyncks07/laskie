@@ -99,12 +99,12 @@ include '../includes/header.php';
       <?php foreach($users as $u): ?>
       <tr>
         <td>
-          <div class="fw-600"><?= clean($u['full_name']) ?></div>
-          <?php if($u['address']): ?><div class="text-muted" style="font-size:11px"><?= clean(substr($u['address'],0,40)) ?>...</div><?php endif; ?>
+          <div class="fw-600 cell-trunc"><?= clean($u['full_name']) ?></div>
+          <?php if($u['address']): ?><div class="text-muted cell-trunc" style="font-size:11px"><?= clean(substr($u['address'],0,50)) ?></div><?php endif; ?>
         </td>
         <td class="mono"><?= clean($u['username']) ?></td>
         <td><span class="badge badge-<?= $u['role'] ?>"><?= ucfirst($u['role']) ?></span></td>
-        <td><?= clean($u['email'] ?? '—') ?></td>
+        <td class="cell-trunc"><?= clean($u['email'] ?? '—') ?></td>
         <td><?= clean($u['phone'] ?? '—') ?></td>
         <td><span class="badge badge-<?= $u['status'] ?>"><?= ucfirst($u['status']) ?></span></td>
         <td class="text-center">
