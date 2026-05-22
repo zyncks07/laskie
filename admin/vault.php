@@ -234,6 +234,26 @@ $activeRecipients = array_values(array_filter($recipientStats, fn($r) => $r['is_
 // All recipients (including inactive) for edit distribution modal
 $allRecipients = $pdo->query("SELECT id, name, is_active FROM dividend_recipients ORDER BY name")->fetchAll();
 
+// All individual distribution records for the management table
+$distributions = $pdo->query("
+    SELECT dd.id, dd.recipient_id, dd.amount, dd.distribution_date, dd.notes,
+           dr.name AS recipient_name, u.full_name AS recorded_by
+    FROM dividend_distributions dd
+    LEFT JOIN dividend_recipients dr ON dr.id = dd.recipient_id
+    LEFT JOIN users u ON u.id = dd.created_by
+    ORDER BY dd.distribution_date DESC, dd.id DESC
+")->fetchAll();
+
+// All individual return records for the management table
+$returnRecords = $pdo->query("
+    SELECT dret.id, dret.recipient_id, dret.amount, dret.return_date, dret.notes,
+           dr.name AS recipient_name, u.full_name AS recorded_by
+    FROM dividend_returns dret
+    LEFT JOIN dividend_recipients dr ON dr.id = dret.recipient_id
+    LEFT JOIN users u ON u.id = dret.created_by
+    ORDER BY dret.return_date DESC, dret.id DESC
+")->fetchAll();
+
 // Chart: dividend distributions per recipient for selected div_year
 $divYear = (int)($_GET['div_year'] ?? date('Y'));
 $divChartStmt = $pdo->prepare("
@@ -420,6 +440,105 @@ include '../includes/header.php';
   </div>
 </div>
 
+<!-- Distribution Records -->
+<div class="card mb-4">
+  <div class="card-body">
+    <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+      <h6 class="mb-0 fw-600"><i class="fa-solid fa-money-bill-transfer me-2" style="color:var(--success)"></i>Distribution Records</h6>
+      <button class="btn btn-sm btn-success" onclick="openDistributionModal()"><i class="fa-solid fa-plus me-1"></i>Add Distribution</button>
+    </div>
+    <?php if (empty($distributions)): ?>
+    <div class="text-center text-muted py-4"><i class="fa-solid fa-inbox fa-2x mb-2 d-block" style="opacity:.2"></i>No distributions recorded yet.</div>
+    <?php else: ?>
+    <div class="table-responsive">
+      <table class="table table-sm table-hover mb-0">
+        <thead>
+          <tr>
+            <th>Date</th>
+            <th>Recipient</th>
+            <th class="text-end">Amount</th>
+            <th>Notes</th>
+            <th class="text-center" style="width:70px">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          <?php foreach ($distributions as $d): ?>
+          <tr>
+            <td style="white-space:nowrap;color:var(--text-secondary)"><?= fmtDate($d['distribution_date']) ?></td>
+            <td class="fw-600"><?= clean($d['recipient_name'] ?? '—') ?></td>
+            <td class="text-end fw-600 text-success"><?= money((float)$d['amount']) ?></td>
+            <td class="text-muted" style="font-size:12px"><?= $d['notes'] ? clean($d['notes']) : '—' ?></td>
+            <td class="text-center" style="white-space:nowrap">
+              <button class="btn-icon" title="Edit" onclick="openEditDist(<?= $d['id'] ?>)">
+                <i class="fa-solid fa-pen fa-xs"></i>
+              </button>
+              <button class="btn-icon danger" title="Delete" onclick="deleteDistribution(<?= $d['id'] ?>)">
+                <i class="fa-solid fa-trash fa-xs"></i>
+              </button>
+            </td>
+          </tr>
+          <?php endforeach; ?>
+        </tbody>
+        <tfoot>
+          <tr style="border-top:2px solid var(--border)">
+            <td colspan="2" class="fw-700">Total</td>
+            <td class="text-end fw-700"><?= money($totalDistrib) ?></td>
+            <td colspan="2"></td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+    <?php endif; ?>
+  </div>
+</div>
+
+<!-- Return Records -->
+<?php if (!empty($returnRecords)): ?>
+<div class="card mb-4">
+  <div class="card-body">
+    <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+      <h6 class="mb-0 fw-600"><i class="fa-solid fa-rotate-left me-2" style="color:var(--warning)"></i>Return Records</h6>
+      <button class="btn btn-sm btn-warning" onclick="openReturnModal()"><i class="fa-solid fa-plus me-1"></i>Add Return</button>
+    </div>
+    <div class="table-responsive">
+      <table class="table table-sm table-hover mb-0">
+        <thead>
+          <tr>
+            <th>Date</th>
+            <th>Returned By</th>
+            <th class="text-end">Amount</th>
+            <th>Notes</th>
+            <th class="text-center" style="width:50px">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          <?php foreach ($returnRecords as $ret): ?>
+          <tr>
+            <td style="white-space:nowrap;color:var(--text-secondary)"><?= fmtDate($ret['return_date']) ?></td>
+            <td class="fw-600"><?= clean($ret['recipient_name'] ?? '—') ?></td>
+            <td class="text-end fw-600" style="color:var(--warning)"><?= money((float)$ret['amount']) ?></td>
+            <td class="text-muted" style="font-size:12px"><?= $ret['notes'] ? clean($ret['notes']) : '—' ?></td>
+            <td class="text-center">
+              <button class="btn-icon danger" title="Delete" onclick="deleteReturn(<?= $ret['id'] ?>)">
+                <i class="fa-solid fa-trash fa-xs"></i>
+              </button>
+            </td>
+          </tr>
+          <?php endforeach; ?>
+        </tbody>
+        <tfoot>
+          <tr style="border-top:2px solid var(--border)">
+            <td colspan="2" class="fw-700">Total Returned</td>
+            <td class="text-end fw-700" style="color:var(--warning)"><?= money($totalReturned) ?></td>
+            <td colspan="2"></td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+  </div>
+</div>
+<?php endif; ?>
+
 <!-- Transaction Logs -->
 <div class="card">
   <div class="card-body">
@@ -589,7 +708,7 @@ include '../includes/header.php';
                   <?php endif; ?>
                 </td>
                 <td class="text-center" style="white-space:nowrap">
-                  <button class="btn-icon" title="Edit" onclick="editRecipient(<?= $r['id'] ?>, <?= json_encode($r['name']) ?>, <?= json_encode($r['notes']??'') ?>)">
+                  <button class="btn-icon" title="Edit" onclick="editRecipient(<?= $r['id'] ?>, <?= htmlspecialchars(json_encode($r['name']), ENT_QUOTES) ?>, <?= htmlspecialchars(json_encode($r['notes']??''), ENT_QUOTES) ?>)">
                     <i class="fa-solid fa-pen fa-xs"></i>
                   </button>
                   <button class="btn-icon <?= $r['is_active'] ? 'warning' : '' ?>" title="<?= $r['is_active'] ? 'Deactivate' : 'Activate' ?>"
@@ -943,6 +1062,9 @@ function editRecipient(id, name, notes) {
   document.getElementById('recipNotes').value = notes||'';
   document.getElementById('recipFormTitle').textContent = 'Edit Recipient';
   document.getElementById('recipMsg').style.display = 'none';
+  // Scroll modal body to top so the edit form is visible
+  const modalBody = document.querySelector('#recipientsModal .modal-body');
+  if (modalBody) modalBody.scrollTop = 0;
   document.getElementById('recipName').focus();
 }
 
