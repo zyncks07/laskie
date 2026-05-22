@@ -108,6 +108,8 @@ include 'includes/header.php';
 .db-stat .stat-sub     { font-size: 10.5px; margin-top: 1px; }
 .db-tbl td, .db-tbl th { padding: 5px 10px !important; font-size: 12.5px; }
 .db-chart              { position: relative; height: 195px; }
+.db-card-fill          { display: flex; flex-direction: column; }
+.db-chart-grow         { position: relative; flex: 1; min-height: 200px; }
 </style>
 
 <div class="page-header">
@@ -201,7 +203,7 @@ include 'includes/header.php';
       <div class="card-header">
         <span class="card-header-title"><i class="fa-solid fa-building me-1"></i><?= date('F Y') ?> — Unit Status</span>
       </div>
-      <div style="overflow-y:auto;max-height:340px">
+      <div style="overflow-y:auto;max-height:680px">
         <table class="table db-tbl mb-0">
           <thead style="position:sticky;top:0;background:#f9fafb;z-index:1">
             <tr><th>Unit</th><th>Tenant</th><th>Status</th></tr>
@@ -247,11 +249,11 @@ include 'includes/header.php';
   </div><!-- /col-lg-5 -->
 
   <div class="col-lg-7">
-    <div class="card db-card h-100">
+    <div class="card db-card db-card-fill h-100">
       <div class="card-header">
         <span class="card-header-title"><i class="fa-solid fa-chart-bar me-1"></i>Revenue vs Expenses by Unit</span>
       </div>
-      <div class="card-body db-chart">
+      <div class="card-body db-chart-grow">
         <canvas id="unitChart"></canvas>
       </div>
     </div>
