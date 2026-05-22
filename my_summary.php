@@ -32,8 +32,6 @@ $totals = $pdo->prepare("
 ");
 $totals->execute([$myId,$selMonth,$selYear]);
 $tot = $totals->fetch();
-$netCash = (float)$tot['total_received'] - (float)$tot['total_remitted'] - (float)$tot['total_expenses'];
-
 // ── Expenses breakdown ────────────────────────────────────────
 $expBreak = $pdo->prepare("
     SELECT ec.name AS category, COALESCE(SUM(e.amount),0) AS total, COUNT(*) AS count
@@ -157,20 +155,6 @@ include 'includes/header.php';
         <div class="stat-label">Expenses</div>
         <div class="stat-value" style="font-size:17px"><?= money((float)$tot['total_expenses']) ?></div>
         <div class="stat-sub"><?= count($myExpenses) ?> record<?= count($myExpenses)!=1?'s':'' ?></div>
-      </div>
-    </div>
-  </div>
-  <div class="col-6 col-md-3">
-    <div class="stat-card">
-      <div class="stat-icon <?= $netCash > 0 ? 'amber' : ($netCash < 0 ? 'red' : 'green') ?>">
-        <i class="fa-solid fa-hand-holding-dollar"></i>
-      </div>
-      <div class="stat-body">
-        <div class="stat-label">Net Cash on Hand</div>
-        <div class="stat-value" style="font-size:17px;color:<?= $netCash>0?'var(--warning)':($netCash<0?'var(--danger)':'var(--success)') ?>">
-          <?= money($netCash) ?>
-        </div>
-        <div class="stat-sub">Received – Remitted – Expenses</div>
       </div>
     </div>
   </div>
