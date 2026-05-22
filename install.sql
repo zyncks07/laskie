@@ -115,6 +115,8 @@ CREATE TABLE IF NOT EXISTS payments (
     due_date DATE,
     received_by INT,
     notes TEXT,
+    status ENUM('paid','refunded','partially_refunded','voided') NOT NULL DEFAULT 'paid',
+    deleted_at TIMESTAMP NULL DEFAULT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (unit_id) REFERENCES rental_units(id) ON DELETE SET NULL,
     FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE SET NULL,
@@ -134,6 +136,7 @@ CREATE TABLE IF NOT EXISTS expenses (
     receipt_path VARCHAR(500),
     receipt_url VARCHAR(1000),
     recorded_by INT,
+    deleted_at TIMESTAMP NULL DEFAULT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (unit_id) REFERENCES rental_units(id) ON DELETE SET NULL,
     FOREIGN KEY (category_id) REFERENCES expense_categories(id) ON DELETE SET NULL,
@@ -185,6 +188,41 @@ CREATE TABLE IF NOT EXISTS system_logs (
     INDEX idx_user_id (user_id),
     INDEX idx_created_at (created_at),
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
+);
+
+-- Dividend Recipients
+CREATE TABLE IF NOT EXISTS dividend_recipients (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    name VARCHAR(100) NOT NULL,
+    notes TEXT DEFAULT NULL,
+    is_active TINYINT(1) NOT NULL DEFAULT 1,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Dividend Distributions
+CREATE TABLE IF NOT EXISTS dividend_distributions (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    recipient_id INT NOT NULL,
+    amount DECIMAL(12,2) NOT NULL,
+    distribution_date DATE NOT NULL,
+    notes TEXT DEFAULT NULL,
+    created_by INT DEFAULT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (recipient_id) REFERENCES dividend_recipients(id),
+    FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
+);
+
+-- Dividend Returns (money returned to vault by a recipient)
+CREATE TABLE IF NOT EXISTS dividend_returns (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    recipient_id INT NOT NULL,
+    amount DECIMAL(12,2) NOT NULL,
+    return_date DATE NOT NULL,
+    notes TEXT DEFAULT NULL,
+    created_by INT DEFAULT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (recipient_id) REFERENCES dividend_recipients(id),
+    FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
 );
 
 -- System Settings

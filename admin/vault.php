@@ -57,6 +57,58 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         jsonOk(['msg'=>'Distribution deleted.']);
     }
 
+    if ($action === 'get_distribution') {
+        $id = (int)($_POST['id'] ?? 0);
+        $row = $pdo->prepare("SELECT id, recipient_id, amount, distribution_date, notes FROM dividend_distributions WHERE id=?");
+        $row->execute([$id]);
+        $dist = $row->fetch();
+        if (!$dist) jsonErr('Distribution not found.');
+        jsonOk(['distribution' => $dist]);
+    }
+
+    if ($action === 'edit_distribution') {
+        $id          = (int)($_POST['id'] ?? 0);
+        $recipientId = (int)($_POST['recipient_id'] ?? 0);
+        $amount      = (float)($_POST['amount'] ?? 0);
+        $date        = trim($_POST['distribution_date'] ?? '');
+        $notes       = nullOrStr($_POST['notes'] ?? '');
+        if (!$id) jsonErr('Distribution ID required.');
+        if (!$recipientId) jsonErr('Please select a recipient.');
+        if ($amount <= 0) jsonErr('Amount must be greater than zero.');
+        if (!$date || !strtotime($date)) jsonErr('Valid date required.');
+        $chk = $pdo->prepare("SELECT id FROM dividend_distributions WHERE id=?");
+        $chk->execute([$id]);
+        if (!$chk->fetch()) jsonErr('Distribution not found.');
+        $pdo->prepare("UPDATE dividend_distributions SET recipient_id=?,amount=?,distribution_date=?,notes=? WHERE id=?")
+            ->execute([$recipientId,$amount,$date,$notes,$id]);
+        logActivity($pdo,'EDIT_DIVIDEND_DIST','Vault',"Edited distribution #$id (₱$amount to recipient #$recipientId)");
+        jsonOk(['msg'=>'Distribution updated.']);
+    }
+
+    if ($action === 'add_return') {
+        $recipientId = (int)($_POST['recipient_id'] ?? 0);
+        $amount      = (float)($_POST['amount'] ?? 0);
+        $date        = trim($_POST['return_date'] ?? '');
+        $notes       = nullOrStr($_POST['notes'] ?? '');
+        if (!$recipientId) jsonErr('Please select a recipient.');
+        if ($amount <= 0) jsonErr('Amount must be greater than zero.');
+        if (!$date || !strtotime($date)) jsonErr('Valid date required.');
+        $pdo->prepare("INSERT INTO dividend_returns (recipient_id,amount,return_date,notes,created_by) VALUES (?,?,?,?,?)")
+            ->execute([$recipientId,$amount,$date,$notes,$_SESSION['user']['id']]);
+        logActivity($pdo,'DIVIDEND_RETURN','Vault',"Return ₱$amount from recipient #$recipientId");
+        jsonOk(['msg'=>'Return to vault recorded.']);
+    }
+
+    if ($action === 'delete_return') {
+        $id = (int)($_POST['id'] ?? 0);
+        $chk = $pdo->prepare("SELECT id FROM dividend_returns WHERE id=?");
+        $chk->execute([$id]);
+        if (!$chk->fetch()) jsonErr('Return record not found.');
+        $pdo->prepare("DELETE FROM dividend_returns WHERE id=?")->execute([$id]);
+        logActivity($pdo,'DELETE_DIVIDEND_RETURN','Vault',"Deleted return #$id");
+        jsonOk(['msg'=>'Return deleted.']);
+    }
+
     if ($action === 'save_recipient') {
         $id    = (int)($_POST['id'] ?? 0);
         $name  = trim($_POST['name'] ?? '');
@@ -96,7 +148,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             SELECT 'remittance' AS log_type, ct.id, ct.transaction_date AS log_date,
                    CONVERT(u.full_name USING utf8mb4) COLLATE utf8mb4_general_ci AS person_name,
                    CAST(NULL AS CHAR) COLLATE utf8mb4_general_ci AS recipient_name,
-                   ct.amount, ct.notes
+                   ct.amount, ct.notes,
+                   CAST(0 AS UNSIGNED) AS recipient_id
             FROM cash_transactions ct
             LEFT JOIN users u ON u.id = ct.user_id
             WHERE ct.transaction_type='remitted'
@@ -105,14 +158,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             SELECT 'distribution', dd.id, dd.distribution_date,
                    CONVERT(u.full_name USING utf8mb4) COLLATE utf8mb4_general_ci,
                    CONVERT(dr.name USING utf8mb4) COLLATE utf8mb4_general_ci,
-                   dd.amount, dd.notes
+                   dd.amount, dd.notes,
+                   dd.recipient_id
             FROM dividend_distributions dd
             LEFT JOIN dividend_recipients dr ON dr.id = dd.recipient_id
             LEFT JOIN users u ON u.id = dd.created_by
             WHERE YEAR(dd.distribution_date)=? AND (?=0 OR MONTH(dd.distribution_date)=?)
+            UNION ALL
+            SELECT 'return', dret.id, dret.return_date,
+                   CONVERT(u.full_name USING utf8mb4) COLLATE utf8mb4_general_ci,
+                   CONVERT(dr.name USING utf8mb4) COLLATE utf8mb4_general_ci,
+                   dret.amount, dret.notes,
+                   dret.recipient_id
+            FROM dividend_returns dret
+            LEFT JOIN dividend_recipients dr ON dr.id = dret.recipient_id
+            LEFT JOIN users u ON u.id = dret.created_by
+            WHERE YEAR(dret.return_date)=? AND (?=0 OR MONTH(dret.return_date)=?)
             ORDER BY log_date DESC, log_type
         ");
-        $rows->execute([$yr,$mo,$mo,$yr,$mo,$mo]);
+        $rows->execute([$yr,$mo,$mo,$yr,$mo,$mo,$yr,$mo,$mo]);
         jsonOk(['logs'=>$rows->fetchAll()]);
     }
 
@@ -123,7 +187,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 $selectedYear  = (int)($_GET['year'] ?? date('Y'));
 $totalRemitted = (float)$pdo->query("SELECT COALESCE(SUM(amount),0) FROM cash_transactions WHERE transaction_type='remitted'")->fetchColumn();
 $totalDistrib  = (float)$pdo->query("SELECT COALESCE(SUM(amount),0) FROM dividend_distributions")->fetchColumn();
-$vaultBalance  = $totalRemitted - $totalDistrib;
+$totalReturned = (float)$pdo->query("SELECT COALESCE(SUM(amount),0) FROM dividend_returns")->fetchColumn();
+$vaultBalance  = $totalRemitted - $totalDistrib + $totalReturned;
 
 // Chart: monthly remittances per user for selected year
 $cr = $pdo->prepare("
@@ -150,14 +215,24 @@ $allUsers = $pdo->query("SELECT id, full_name FROM users WHERE status='active' O
 // Recipient stats
 $recipientStats = $pdo->query("
     SELECT dr.id, dr.name, dr.notes, dr.is_active,
-           COALESCE(SUM(dd.amount),0) AS total_received,
-           COUNT(dd.id) AS dist_count
+           COALESCE(d.total_received, 0) AS total_received,
+           COALESCE(d.dist_count, 0)     AS dist_count,
+           COALESCE(r.total_returned, 0) AS total_returned
     FROM dividend_recipients dr
-    LEFT JOIN dividend_distributions dd ON dd.recipient_id=dr.id
-    GROUP BY dr.id, dr.name, dr.notes, dr.is_active
+    LEFT JOIN (
+        SELECT recipient_id, SUM(amount) AS total_received, COUNT(id) AS dist_count
+        FROM dividend_distributions GROUP BY recipient_id
+    ) d ON d.recipient_id = dr.id
+    LEFT JOIN (
+        SELECT recipient_id, SUM(amount) AS total_returned
+        FROM dividend_returns GROUP BY recipient_id
+    ) r ON r.recipient_id = dr.id
     ORDER BY dr.name
 ")->fetchAll();
 $activeRecipients = array_values(array_filter($recipientStats, fn($r) => $r['is_active']));
+
+// All recipients (including inactive) for edit distribution modal
+$allRecipients = $pdo->query("SELECT id, name, is_active FROM dividend_recipients ORDER BY name")->fetchAll();
 
 // Chart: dividend distributions per recipient for selected div_year
 $divYear = (int)($_GET['div_year'] ?? date('Y'));
@@ -176,6 +251,7 @@ $dbYears = $pdo->query("
     SELECT DISTINCT yr FROM (
         SELECT YEAR(transaction_date) AS yr FROM cash_transactions WHERE transaction_type='remitted'
         UNION SELECT YEAR(distribution_date) FROM dividend_distributions
+        UNION SELECT YEAR(return_date) FROM dividend_returns
     ) t ORDER BY yr DESC
 ")->fetchAll(PDO::FETCH_COLUMN);
 $years = array_unique(array_merge([date('Y'), $selectedYear, $divYear], (array)$dbYears));
@@ -190,6 +266,7 @@ include '../includes/header.php';
   <div class="d-flex gap-2 flex-wrap">
     <button class="btn btn-primary btn-sm" onclick="openRemittanceModal()"><i class="fa-solid fa-arrow-down-to-line me-1"></i>Record Remittance</button>
     <button class="btn btn-success btn-sm" onclick="openDistributionModal()"><i class="fa-solid fa-money-bill-transfer me-1"></i>Distribute Dividend</button>
+    <button class="btn btn-warning btn-sm" onclick="openReturnModal()"><i class="fa-solid fa-rotate-left me-1"></i>Return to Vault</button>
     <button class="btn btn-outline-secondary btn-sm" onclick="openRecipientsModal()"><i class="fa-solid fa-users me-1"></i>Recipients</button>
   </div>
 </div>
@@ -205,7 +282,7 @@ include '../includes/header.php';
 
 <!-- Stat Cards -->
 <div class="row g-3 mb-4">
-  <div class="col-sm-4">
+  <div class="col-6 col-sm-3">
     <div class="stat-card">
       <div class="stat-icon blue"><i class="fa-solid fa-arrow-down-to-line"></i></div>
       <div class="stat-body">
@@ -214,7 +291,7 @@ include '../includes/header.php';
       </div>
     </div>
   </div>
-  <div class="col-sm-4">
+  <div class="col-6 col-sm-3">
     <div class="stat-card">
       <div class="stat-icon" style="background:var(--success-bg)"><i class="fa-solid fa-hand-holding-dollar" style="color:var(--success)"></i></div>
       <div class="stat-body">
@@ -223,7 +300,16 @@ include '../includes/header.php';
       </div>
     </div>
   </div>
-  <div class="col-sm-4">
+  <div class="col-6 col-sm-3">
+    <div class="stat-card">
+      <div class="stat-icon" style="background:var(--warning-bg)"><i class="fa-solid fa-rotate-left" style="color:var(--warning)"></i></div>
+      <div class="stat-body">
+        <div class="stat-label">Total Returned</div>
+        <div class="stat-value"><?= money($totalReturned) ?></div>
+      </div>
+    </div>
+  </div>
+  <div class="col-6 col-sm-3">
     <div class="stat-card">
       <div class="stat-icon" style="background:var(--warning-bg)"><i class="fa-solid fa-users" style="color:var(--warning)"></i></div>
       <div class="stat-body">
@@ -296,11 +382,14 @@ include '../includes/header.php';
           <tr>
             <th>Recipient</th>
             <th class="text-center">Distributions</th>
-            <th class="text-end">Total Received</th>
+            <th class="text-end">Distributed</th>
+            <th class="text-end">Returned</th>
+            <th class="text-end">Net Received</th>
           </tr>
         </thead>
         <tbody>
           <?php foreach ($recipientStats as $r): ?>
+          <?php $net = (float)$r['total_received'] - (float)$r['total_returned']; ?>
           <tr>
             <td>
               <?= clean($r['name']) ?>
@@ -310,7 +399,9 @@ include '../includes/header.php';
               <?php if ($r['notes']): ?><div class="text-muted" style="font-size:11px"><?= clean($r['notes']) ?></div><?php endif; ?>
             </td>
             <td class="text-center text-muted"><?= (int)$r['dist_count'] ?>×</td>
-            <td class="text-end fw-600 text-success"><?= money((float)$r['total_received']) ?></td>
+            <td class="text-end text-success"><?= money((float)$r['total_received']) ?></td>
+            <td class="text-end" style="color:var(--warning)"><?= $r['total_returned'] > 0 ? money((float)$r['total_returned']) : '—' ?></td>
+            <td class="text-end fw-600 text-success"><?= money($net) ?></td>
           </tr>
           <?php endforeach; ?>
         </tbody>
@@ -319,6 +410,8 @@ include '../includes/header.php';
             <td class="fw-700">Total</td>
             <td></td>
             <td class="text-end fw-700"><?= money($totalDistrib) ?></td>
+            <td class="text-end fw-700" style="color:var(--warning)"><?= $totalReturned > 0 ? money($totalReturned) : '—' ?></td>
+            <td class="text-end fw-700"><?= money($totalDistrib - $totalReturned) ?></td>
           </tr>
         </tfoot>
       </table>
@@ -520,6 +613,94 @@ include '../includes/header.php';
   </div>
 </div>
 
+<!-- Edit Distribution -->
+<div class="modal fade" id="editDistModal" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="fa-solid fa-pen me-2 text-primary-custom"></i>Edit Distribution</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div id="editDistMsg" class="alert" style="display:none"></div>
+        <input type="hidden" id="editDistId">
+        <div class="mb-3">
+          <label class="form-label">Recipient</label>
+          <select id="editDistRecipient" class="form-select">
+            <option value="">— Select recipient —</option>
+            <?php foreach ($allRecipients as $r): ?>
+            <option value="<?= $r['id'] ?>"><?= clean($r['name']) ?><?= !$r['is_active'] ? ' (Inactive)' : '' ?></option>
+            <?php endforeach; ?>
+          </select>
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Amount (₱)</label>
+          <input type="number" id="editDistAmount" class="form-control" placeholder="0.00" min="0.01" step="0.01">
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Date</label>
+          <input type="date" id="editDistDate" class="form-control">
+        </div>
+        <div class="mb-0">
+          <label class="form-label">Notes <span class="text-muted">(optional)</span></label>
+          <textarea id="editDistNotes" class="form-control" rows="2"></textarea>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button class="btn btn-primary" onclick="saveEditDistribution()"><i class="fa-solid fa-check me-1"></i>Save Changes</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Return to Vault -->
+<div class="modal fade" id="returnModal" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="fa-solid fa-rotate-left me-2" style="color:var(--warning)"></i>Return to Vault</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div id="retMsg" class="alert" style="display:none"></div>
+        <p class="text-muted small mb-3">Record a dividend that was returned by a recipient back into the vault.</p>
+        <?php if (empty($activeRecipients)): ?>
+        <div class="alert alert-warning mb-0">No active recipients. Add one via <strong>Recipients</strong> first.</div>
+        <?php else: ?>
+        <div class="mb-3">
+          <label class="form-label">Returned By</label>
+          <select id="retRecipient" class="form-select">
+            <option value="">— Select recipient —</option>
+            <?php foreach ($activeRecipients as $r): ?>
+            <option value="<?= $r['id'] ?>"><?= clean($r['name']) ?></option>
+            <?php endforeach; ?>
+          </select>
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Amount (₱)</label>
+          <input type="number" id="retAmount" class="form-control" placeholder="0.00" min="0.01" step="0.01">
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Date</label>
+          <input type="date" id="retDate" class="form-control">
+        </div>
+        <div class="mb-0">
+          <label class="form-label">Notes <span class="text-muted">(optional)</span></label>
+          <textarea id="retNotes" class="form-control" rows="2" placeholder="e.g. Partial return of Q2 dividend"></textarea>
+        </div>
+        <?php endif; ?>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <?php if (!empty($activeRecipients)): ?>
+        <button class="btn btn-warning" onclick="saveReturn()"><i class="fa-solid fa-check me-1"></i>Record Return</button>
+        <?php endif; ?>
+      </div>
+    </div>
+  </div>
+</div>
+
 <?php ob_start(); ?>
 <script>
 <?php $chartJson = json_encode($chartByUser, JSON_UNESCAPED_UNICODE); ?>
@@ -527,6 +708,8 @@ include '../includes/header.php';
 const remittanceModal   = new bootstrap.Modal(document.getElementById('remittanceModal'));
 const distributionModal = new bootstrap.Modal(document.getElementById('distributionModal'));
 const recipientsModal   = new bootstrap.Modal(document.getElementById('recipientsModal'));
+const editDistModal     = new bootstrap.Modal(document.getElementById('editDistModal'));
+const returnModal       = new bootstrap.Modal(document.getElementById('returnModal'));
 
 // ── Chart ────────────────────────────────────────────────────
 const CHART_COLORS = ['#1a3a8f','#0ea5e9','#15803d','#d97706','#7c3aed','#dc2626','#0891b2','#be185d'];
@@ -627,26 +810,37 @@ function loadLogs() {
     let html = `<div class="table-responsive"><table class="table table-sm table-hover mb-0">
       <thead><tr>
         <th>Date</th><th>Type</th><th>Person / Recipient</th>
-        <th class="text-end">Amount</th><th>Notes</th><th class="text-center" style="width:50px"></th>
+        <th class="text-end">Amount</th><th>Notes</th><th class="text-center" style="width:70px"></th>
       </tr></thead><tbody>`;
     res.logs.forEach(r => {
-      const isRem = r.log_type === 'remittance';
-      const badge = isRem
-        ? `<span class="badge" style="background:#dbeafe;color:#1a3a8f;font-weight:600">Remittance</span>`
-        : `<span class="badge" style="background:#dcfce7;color:#15803d;font-weight:600">Dividend</span>`;
-      const person = isRem
-        ? esc(r.person_name||'—')
-        : `<span style="color:#15803d">→ ${esc(r.recipient_name||'—')}</span> <span class="text-muted" style="font-size:11px">via ${esc(r.person_name||'—')}</span>`;
-      const delBtn = isRem
-        ? `<button class="btn-icon danger" title="Delete" onclick="deleteRemittance(${r.id})"><i class="fa-solid fa-trash fa-xs"></i></button>`
-        : `<button class="btn-icon danger" title="Delete" onclick="deleteDistribution(${r.id})"><i class="fa-solid fa-trash fa-xs"></i></button>`;
+      const isRem  = r.log_type === 'remittance';
+      const isDist = r.log_type === 'distribution';
+      const isRet  = r.log_type === 'return';
+      let badge, person, amtColor, actions;
+      if (isRem) {
+        badge    = `<span class="badge" style="background:#dbeafe;color:#1a3a8f;font-weight:600">Remittance</span>`;
+        person   = esc(r.person_name||'—');
+        amtColor = 'var(--primary)';
+        actions  = `<button class="btn-icon danger" title="Delete" onclick="deleteRemittance(${r.id})"><i class="fa-solid fa-trash fa-xs"></i></button>`;
+      } else if (isDist) {
+        badge    = `<span class="badge" style="background:#dcfce7;color:#15803d;font-weight:600">Dividend</span>`;
+        person   = `<span style="color:#15803d">→ ${esc(r.recipient_name||'—')}</span> <span class="text-muted" style="font-size:11px">via ${esc(r.person_name||'—')}</span>`;
+        amtColor = 'var(--success)';
+        actions  = `<button class="btn-icon" title="Edit" onclick="openEditDist(${r.id})"><i class="fa-solid fa-pen fa-xs"></i></button>`
+                 + `<button class="btn-icon danger" title="Delete" onclick="deleteDistribution(${r.id})"><i class="fa-solid fa-trash fa-xs"></i></button>`;
+      } else {
+        badge    = `<span class="badge" style="background:#fef9c3;color:#92400e;font-weight:600">Return</span>`;
+        person   = `<span style="color:#92400e">← ${esc(r.recipient_name||'—')}</span> <span class="text-muted" style="font-size:11px">via ${esc(r.person_name||'—')}</span>`;
+        amtColor = '#d97706';
+        actions  = `<button class="btn-icon danger" title="Delete" onclick="deleteReturn(${r.id})"><i class="fa-solid fa-trash fa-xs"></i></button>`;
+      }
       html += `<tr>
         <td style="white-space:nowrap;color:var(--text-secondary)">${esc(r.log_date)}</td>
         <td>${badge}</td>
         <td>${person}</td>
-        <td class="text-end fw-600" style="color:${isRem?'var(--primary)':'var(--success)'}">₱${parseFloat(r.amount||0).toLocaleString('en-PH',{minimumFractionDigits:2})}</td>
+        <td class="text-end fw-600" style="color:${amtColor}">₱${parseFloat(r.amount||0).toLocaleString('en-PH',{minimumFractionDigits:2})}</td>
         <td class="text-muted" style="font-size:12px">${esc(r.notes)||'—'}</td>
-        <td class="text-center">${delBtn}</td>
+        <td class="text-center" style="white-space:nowrap">${actions}</td>
       </tr>`;
     });
     html += '</tbody></table></div>';
@@ -781,6 +975,78 @@ function deleteRecipient(id) {
       if (!res.success){ showToast(res.error,'error'); return; }
       showToast(res.msg,'success');
       setTimeout(()=>location.reload(), 700);
+    });
+  });
+}
+
+// ── Edit Distribution ────────────────────────────────────────
+function openEditDist(id) {
+  document.getElementById('editDistMsg').style.display = 'none';
+  apiPost('../admin/vault.php', {action:'get_distribution', id}, (err, res) => {
+    if (!res || !res.success){ showToast(res.error||'Could not load distribution.','error'); return; }
+    const d = res.distribution;
+    document.getElementById('editDistId').value         = d.id;
+    document.getElementById('editDistRecipient').value  = d.recipient_id;
+    document.getElementById('editDistAmount').value     = parseFloat(d.amount);
+    document.getElementById('editDistDate').value       = d.distribution_date;
+    document.getElementById('editDistNotes').value      = d.notes || '';
+    editDistModal.show();
+  });
+}
+
+function saveEditDistribution() {
+  const el = document.getElementById('editDistMsg');
+  apiPost('../admin/vault.php', {
+    action: 'edit_distribution',
+    id: document.getElementById('editDistId').value,
+    recipient_id: document.getElementById('editDistRecipient').value,
+    amount: document.getElementById('editDistAmount').value,
+    distribution_date: document.getElementById('editDistDate').value,
+    notes: document.getElementById('editDistNotes').value
+  }, (err, res) => {
+    el.style.display = '';
+    if (!res.success){ el.className='alert alert-danger'; el.textContent=res.error; return; }
+    el.className = 'alert alert-success'; el.textContent = res.msg;
+    setTimeout(()=>{ editDistModal.hide(); location.reload(); }, 700);
+  });
+}
+
+// ── Return to Vault ──────────────────────────────────────────
+function openReturnModal() {
+  const el = document.getElementById('retRecipient');
+  if (el) el.value = '';
+  const am = document.getElementById('retAmount');
+  if (am) am.value = '';
+  const dt = document.getElementById('retDate');
+  if (dt) dt.value = new Date().toISOString().slice(0,10);
+  const nt = document.getElementById('retNotes');
+  if (nt) nt.value = '';
+  document.getElementById('retMsg').style.display = 'none';
+  returnModal.show();
+}
+
+function saveReturn() {
+  const el = document.getElementById('retMsg');
+  apiPost('../admin/vault.php', {
+    action: 'add_return',
+    recipient_id: document.getElementById('retRecipient').value,
+    amount: document.getElementById('retAmount').value,
+    return_date: document.getElementById('retDate').value,
+    notes: document.getElementById('retNotes').value
+  }, (err, res) => {
+    el.style.display = '';
+    if (!res.success){ el.className='alert alert-danger'; el.textContent=res.error; return; }
+    el.className = 'alert alert-success'; el.textContent = res.msg;
+    setTimeout(()=>{ returnModal.hide(); location.reload(); }, 700);
+  });
+}
+
+function deleteReturn(id) {
+  confirmDelete('Delete this return record? This cannot be undone.', () => {
+    apiPost('../admin/vault.php', {action:'delete_return', id}, (err, res) => {
+      if (!res.success){ showToast(res.error,'error'); return; }
+      showToast(res.msg,'success'); loadLogs();
+      setTimeout(()=>location.reload(), 900);
     });
   });
 }
