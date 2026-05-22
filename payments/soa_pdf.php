@@ -84,6 +84,7 @@ $pdfServiceCharges = $sq->fetchAll();
 // ── Build Ledger ──────────────────────────────────────────────
 $ledger   = [];
 $baseRate = (float)$unit['monthly_rate'];
+$rate = $baseRate;
 $dueDay   = (int)$unit['due_day'];
 $multiOccupant = count($occupants) > 1;
 

@@ -18,7 +18,7 @@ $sessionId = session_id();
 session_write_close();
 
 $params = http_build_query(['year' => $year, 'month' => $month]);
-$auditUrl = 'http://localhost:8888/payments/audit_pdf.php?' . $params;
+$auditUrl = 'http://localhost:49200/payments/audit_pdf.php?' . $params;
 
 $ctx = stream_context_create([
     'http' => [
@@ -32,7 +32,7 @@ if ($html === false || strlen($html) < 100) {
     die('Could not fetch audit report page. Ensure the server is running on localhost:8888.');
 }
 
-$assetsBase = 'file:///home/patient0/apps/laskie/assets/vendor/';
+$assetsBase = 'file:///home/bulik/apps/laskie/assets/vendor/';
 $html = str_replace('../assets/vendor/', $assetsBase, $html);
 
 $tmpHtml = tempnam('/tmp', 'audit_') . '.html';

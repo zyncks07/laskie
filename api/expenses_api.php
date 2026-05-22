@@ -23,6 +23,7 @@ if ($action === 'save_expense') {
 
     if ($amount <= 0)   jsonErr('Amount must be greater than zero.');
     if (!$description)  jsonErr('Description is required.');
+    if (empty($_SESSION['user']['id'])) jsonErr('No logged-in user. Expenses must be recorded by a system user.');
 
     // Handle file upload
     if (!empty($_FILES['receipt_file']['name'])) {

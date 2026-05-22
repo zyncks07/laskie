@@ -6,7 +6,7 @@ require_once __DIR__ . '/../config/functions.php';
 requireLogin();
 
 $user = currentUser();
-$initials = implode('', array_map(fn($p) => strtoupper($p[0]), array_slice(explode(' ', $user['full_name']), 0, 2)));
+$initials = implode('', array_map(fn($p) => $p !== '' ? strtoupper($p[0]) : '', array_slice(explode(' ', $user['full_name'] ?? ''), 0, 2)));
 $appName = getSetting($pdo, 'app_name', 'Laskie Rental PMS');
 $currentPage = basename($_SERVER['PHP_SELF'], '.php');
 $currentDir  = basename(dirname($_SERVER['PHP_SELF']));
@@ -82,6 +82,9 @@ $depth = ($currentDir === 'laskie' || $currentDir === 'htdocs' || $currentDir ==
     </a>
     <a href="<?= $depth ?>admin/units.php" class="sidebar-nav-item <?= ($currentPage==='units')?'active':'' ?>">
       <i class="fa-solid fa-door-open"></i> Rental Units
+    </a>
+    <a href="<?= $depth ?>admin/vault.php" class="sidebar-nav-item <?= ($currentPage==='vault')?'active':'' ?>">
+      <i class="fa-solid fa-vault"></i> The Vault
     </a>
     <a href="<?= $depth ?>admin/logs.php" class="sidebar-nav-item <?= ($currentPage==='logs')?'active':'' ?>">
       <i class="fa-solid fa-scroll"></i> Audit Logs

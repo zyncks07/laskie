@@ -49,6 +49,18 @@ $totalNet = $totalRev - $totalExp;
 $totalUnits   = count($units);
 $occupiedUnits = count(array_filter($units, fn($u) => $u['status'] === 'occupied'));
 
+// ─── Current month stats ─────────────────────────────────────
+$curMonth = (int)date('n');
+$curYear  = (int)date('Y');
+$cmRev = $cmExp = 0.0;
+if ($selectedYear === $curYear) {
+    $s = $pdo->prepare("SELECT COALESCE(SUM(amount),0) FROM payments WHERE MONTH(payment_date)=? AND YEAR(payment_date)=?");
+    $s->execute([$curMonth, $curYear]); $cmRev = (float)$s->fetchColumn();
+    $s = $pdo->prepare("SELECT COALESCE(SUM(amount),0) FROM expenses WHERE MONTH(expense_date)=? AND YEAR(expense_date)=?");
+    $s->execute([$curMonth, $curYear]); $cmExp = (float)$s->fetchColumn();
+}
+$cmNet = $cmRev - $cmExp;
+
 // ─── Available years ──────────────────────────────────────────
 $years = $pdo->query("SELECT DISTINCT YEAR(payment_date) y FROM payments UNION SELECT DISTINCT YEAR(expense_date) FROM expenses ORDER BY y DESC")->fetchAll(PDO::FETCH_COLUMN);
 if (!in_array(date('Y'), $years)) array_unshift($years, (int)date('Y'));
@@ -115,6 +127,35 @@ include 'includes/header.php';
   </div>
 </div>
 
+<?php if ($selectedYear === $curYear): ?>
+<!-- Current Month Card -->
+<div class="row g-3 mb-3">
+  <div class="col-12">
+    <div class="card" style="border-left:4px solid var(--primary)">
+      <div class="card-header">
+        <span class="card-header-title"><i class="fa-solid fa-calendar-day me-2"></i><?= date('F Y') ?> — Month to Date</span>
+      </div>
+      <div class="card-body py-2">
+        <div class="row g-3 text-center">
+          <div class="col-4">
+            <div class="text-muted small">Revenue</div>
+            <div class="fw-bold fs-5" style="color:var(--primary)"><?= money($cmRev) ?></div>
+          </div>
+          <div class="col-4">
+            <div class="text-muted small">Expenses</div>
+            <div class="fw-bold fs-5" style="color:var(--danger)"><?= money($cmExp) ?></div>
+          </div>
+          <div class="col-4">
+            <div class="text-muted small">Net Income</div>
+            <div class="fw-bold fs-5" style="color:<?= $cmNet >= 0 ? 'var(--success)' : 'var(--danger)' ?>"><?= money($cmNet) ?></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<?php endif; ?>
+
 <!-- Charts Row -->
 <div class="row g-3 mb-3">
   <div class="col-lg-8">
@@ -172,9 +213,13 @@ include 'includes/header.php';
           for($m=1;$m<=12;$m++){
             $r=$monthlyRev[$m]; $e=$monthlyExp[$m]; $n=$r-$e;
             $sumRev+=$r; $sumExp+=$e;
+            $isCurrent = ($selectedYear === $curYear && $m === $curMonth);
           ?>
-          <tr>
-            <td><?= date('F', mktime(0,0,0,$m,1)) ?></td>
+          <tr<?= $isCurrent ? ' style="background:#eff6ff;"' : '' ?>>
+            <td>
+              <?= date('F', mktime(0,0,0,$m,1)) ?>
+              <?php if ($isCurrent): ?><span class="badge ms-1" style="background:var(--primary);font-size:10px">Current</span><?php endif; ?>
+            </td>
             <td class="text-end"><?= money($r) ?></td>
             <td class="text-end"><?= money($e) ?></td>
             <td class="text-end fw-bold" style="color:<?= $n>=0?'var(--success)':'var(--danger)' ?>"><?= money($n) ?></td>

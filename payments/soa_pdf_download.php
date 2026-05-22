@@ -29,7 +29,7 @@ $params = http_build_query([
     'date_from' => $dateFrom,
     'date_to'   => $dateTo,
 ]);
-$soaUrl = 'http://localhost:8888/payments/soa_pdf.php?' . $params;
+$soaUrl = 'http://localhost:49200/payments/soa_pdf.php?' . $params;
 
 $ctx = stream_context_create([
     'http' => [
@@ -44,7 +44,7 @@ if ($html === false || strlen($html) < 100) {
 }
 
 // Rewrite relative asset paths to absolute file:// paths so Chromium can load them
-$assetsBase = 'file:///home/patient0/apps/laskie/assets/vendor/';
+$assetsBase = 'file:///home/bulik/apps/laskie/assets/vendor/';
 $html = str_replace('../assets/vendor/', $assetsBase, $html);
 
 // Write HTML to a temp file

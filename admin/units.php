@@ -22,13 +22,35 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $status   = $_POST['status'] ?? 'vacant';
         if (!$name) jsonErr('Unit name is required.');
         if ($id) {
+            $oldRow = $pdo->prepare("SELECT monthly_rate FROM rental_units WHERE id=?");
+            $oldRow->execute([$id]);
+            $oldRate = (float)$oldRow->fetchColumn();
+
             $pdo->prepare("UPDATE rental_units SET unit_name=?,unit_type_id=?,description=?,floor_area=?,monthly_rate=?,due_day=?,status=? WHERE id=?")
                 ->execute([$name,$typeId,$desc,$area,$rate,$dueDay,$status,$id]);
+
+            if ($rate !== $oldRate) {
+                $latestHist = $pdo->prepare("SELECT id FROM unit_rate_history WHERE unit_id=? ORDER BY effective_date DESC, created_at DESC LIMIT 1");
+                $latestHist->execute([$id]);
+                $histId = $latestHist->fetchColumn();
+                if ($histId !== false) {
+                    $pdo->prepare("UPDATE unit_rate_history SET monthly_rate=? WHERE id=?")->execute([$rate, $histId]);
+                } else {
+                    // No history exists yet — seed an initial entry with the corrected rate
+                    $pdo->prepare("INSERT INTO unit_rate_history (unit_id,monthly_rate,effective_date,notes,created_by) VALUES (?,?,CURDATE(),'Initial rate (corrected)',?)")
+                        ->execute([$id, $rate, $_SESSION['user']['id']]);
+                }
+            }
+
             logActivity($pdo,'UPDATE_UNIT','Units',"Updated unit #$id ($name)");
             jsonOk(['msg'=>'Unit updated.']);
         } else {
             $pdo->prepare("INSERT INTO rental_units (unit_name,unit_type_id,description,floor_area,monthly_rate,due_day,status) VALUES (?,?,?,?,?,?,?)")
                 ->execute([$name,$typeId,$desc,$area,$rate,$dueDay,$status]);
+            $newUnitId = (int)$pdo->lastInsertId();
+            // Seed initial rate history so history is never empty
+            $pdo->prepare("INSERT INTO unit_rate_history (unit_id,monthly_rate,effective_date,notes,created_by) VALUES (?,?,CURDATE(),'Initial rate',?)")
+                ->execute([$newUnitId, $rate, $_SESSION['user']['id']]);
             logActivity($pdo,'CREATE_UNIT','Units',"Created unit $name");
             jsonOk(['msg'=>'Unit created.']);
         }
