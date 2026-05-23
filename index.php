@@ -9,12 +9,42 @@ require_once 'config/functions.php';
 
 $error = '';
 
+// ─── Brute-force defence parameters ──────────────────────────
+// Lockout fires when ≥THRESHOLD failures from the same IP OR same username
+// happened in the last WINDOW_MIN minutes. Reset on any LOGIN_SUCCESS row.
+const LOGIN_LOCKOUT_THRESHOLD = 5;
+const LOGIN_LOCKOUT_WINDOW_MIN = 15;
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $username = trim($_POST['username'] ?? '');
     $password = $_POST['password'] ?? '';
     $ip = trim(explode(',', $_SERVER['HTTP_X_FORWARDED_FOR'] ?? $_SERVER['REMOTE_ADDR'] ?? 'unknown')[0]);
 
-    if ($username && $password) {
+    // ── Lockout check: count recent failures since the last success ─
+    // For an IP/username pair, only failures AFTER the most recent
+    // LOGIN_SUCCESS count toward the lockout window.
+    $countRecentFailures = function(PDO $pdo, string $col, string $needle): int {
+        if ($needle === '') return 0;
+        $sql = "SELECT COUNT(*) FROM system_logs
+                WHERE action='LOGIN_FAILED' AND $col = ?
+                  AND created_at >= NOW() - INTERVAL " . LOGIN_LOCKOUT_WINDOW_MIN . " MINUTE
+                  AND created_at > COALESCE(
+                      (SELECT MAX(created_at) FROM system_logs
+                       WHERE action='LOGIN_SUCCESS' AND $col = ?), '1970-01-01')";
+        $s = $pdo->prepare($sql);
+        $s->execute([$needle, $needle]);
+        return (int)$s->fetchColumn();
+    };
+    $ipFails   = $countRecentFailures($pdo, 'ip_address', $ip);
+    $userFails = $countRecentFailures($pdo, 'username',   $username);
+    $maxFails  = max($ipFails, $userFails);
+
+    if ($maxFails >= LOGIN_LOCKOUT_THRESHOLD) {
+        // Log the locked-out attempt itself so fail2ban can see it too.
+        $pdo->prepare("INSERT INTO system_logs (user_id,username,action,module,details,ip_address) VALUES (?,?,?,?,?,?)")
+            ->execute([null, $username, 'LOGIN_LOCKED', 'Auth', "Lockout active (ip=$ipFails user=$userFails recent failures)", $ip]);
+        $error = 'Too many failed attempts. Try again in ' . LOGIN_LOCKOUT_WINDOW_MIN . ' minutes.';
+    } elseif ($username && $password) {
         $stmt = $pdo->prepare("SELECT * FROM users WHERE username=? AND status='active'");
         $stmt->execute([$username]);
         $user = $stmt->fetch();
@@ -31,14 +61,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 'email'       => $user['email'],
                 'avatar_path' => $user['avatar_path'] ?? null,
             ];
-            // Log success
+            // Log success — also resets the lockout window for this IP + username.
             $pdo->prepare("INSERT INTO system_logs (user_id,username,action,module,details,ip_address) VALUES (?,?,?,?,?,?)")
                 ->execute([$user['id'], $user['username'], 'LOGIN_SUCCESS', 'Auth', 'Successful login', $ip]);
             header('Location: dashboard.php');
             exit;
         } else {
+            // Progressive delay: each consecutive failure adds 250 ms,
+            // capped at 1.25 s. Slows scripted bursts; near-invisible to
+            // a human on the first or second attempt.
+            $delaySteps = min($maxFails + 1, 5);
+            usleep($delaySteps * 250_000);
+
             $error = 'Invalid username or password.';
-            // Log failed attempt
             $uid = $user['id'] ?? null;
             $pdo->prepare("INSERT INTO system_logs (user_id,username,action,module,details,ip_address) VALUES (?,?,?,?,?,?)")
                 ->execute([$uid, $username, 'LOGIN_FAILED', 'Auth', 'Failed login attempt', $ip]);

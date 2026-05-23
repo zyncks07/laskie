@@ -9,6 +9,9 @@ Options -Indexes +FollowSymLinks
     php_value session.cookie_httponly   1
     php_value session.use_strict_mode   1
     php_value session.cookie_samesite   Strict
+    # HTTPS-only since the vhost on port 49200 is now SSLEngine on.
+    # If you ever revert to HTTP, also flip this to 0 or sessions will silently break.
+    php_value session.cookie_secure     1
     php_value upload_max_filesize       10M
     php_value post_max_size             12M
     php_value max_execution_time        300

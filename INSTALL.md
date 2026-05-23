@@ -90,19 +90,64 @@ Or via phpMyAdmin: select `laskie_rental` → Import → choose `install.sql`.
 
 ---
 
-## STEP 4 — Configure Apache Virtual Host
+## STEP 4 — Generate self-signed TLS cert + configure Apache vhost
+
+The production deploy runs HTTPS only on a single port (49200 by default).
+We use a self-signed cert and accept the browser warning, since exposing
+port 80 (for Let's Encrypt HTTP-01) is not in scope here.
+
+### 4a. Generate the cert (one-time, valid 10 years)
 
 ```bash
-nano /etc/apache2/sites-available/laskie.conf
+# Replace ahastulog.duckdns.org with your hostname, and 192.168.x.y with
+# the LAN IP of the server. Add more IP:... SANs for any other addresses
+# clients will use to reach the box.
+sudo openssl req -x509 -newkey rsa:2048 -nodes -days 3650 \
+  -subj "/CN=ahastulog.duckdns.org" \
+  -addext "subjectAltName=DNS:ahastulog.duckdns.org,DNS:localhost,IP:127.0.0.1,IP:192.168.9.18" \
+  -addext "keyUsage=digitalSignature,keyEncipherment" \
+  -addext "extendedKeyUsage=serverAuth" \
+  -keyout /etc/ssl/private/laskie.key \
+  -out /etc/ssl/certs/laskie.crt
+
+sudo chmod 600 /etc/ssl/private/laskie.key
+sudo a2enmod ssl
 ```
 
-Paste this:
+### 4b. Trust the cert on each client device
+
+Because the cert is self-signed, every browser will show a warning on
+first visit. Either click through each time, or import the cert once
+per device:
+
+- **Linux / Chrome** — copy `/etc/ssl/certs/laskie.crt` to the device and
+  open `chrome://settings/certificates` → Authorities → Import.
+- **Android** — copy the `.crt` file to the phone, open it, choose
+  "VPN and apps" category. (Some Android versions: Settings → Security →
+  Install from storage.)
+- **Windows** — double-click the `.crt` → Install Certificate →
+  Local Machine → "Trusted Root Certification Authorities".
+- **macOS / iOS** — install via Keychain Access (macOS) or Profiles (iOS),
+  then mark "Always Trust" for `ahastulog.duckdns.org`.
+
+### 4c. Vhost config
+
+```bash
+sudo nano /etc/apache2/sites-available/laskie.conf
+```
 
 ```apache
-<VirtualHost *:80>
-    ServerName laskie.local
+<VirtualHost *:49200>
+    ServerName ahastulog.duckdns.org
     DocumentRoot /var/www/laskie
     DirectoryIndex index.php
+
+    SSLEngine on
+    SSLCertificateFile      /etc/ssl/certs/laskie.crt
+    SSLCertificateKeyFile   /etc/ssl/private/laskie.key
+    SSLProtocol             all -SSLv2 -SSLv3 -TLSv1 -TLSv1.1
+    SSLCipherSuite          ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256
+    SSLHonorCipherOrder     on
 
     <Directory /var/www/laskie>
         Options -Indexes +FollowSymLinks
@@ -122,6 +167,16 @@ Paste this:
     CustomLog ${APACHE_LOG_DIR}/laskie_access.log combined
 </VirtualHost>
 ```
+
+Also edit `/etc/apache2/ports.conf` to only listen on the single port:
+
+```
+Listen 49200
+```
+
+> **`.htaccess` already sets `session.cookie_secure 1`** — sessions will only
+> be sent over HTTPS. If you ever revert to plain HTTP, flip that back to 0
+> or logins will silently break.
 
 Enable the site:
 
@@ -268,18 +323,87 @@ UPDATE settings SET setting_value='email@yourdomain.com' WHERE setting_key='comp
 
 ---
 
-## STEP 10 — Secure with HTTPS (Optional but Recommended)
+## STEP 10 — Brute-force defences (3 layers)
+
+The login form has three independent throttles. Each works on its own; combined,
+they put a sharp cap on credential-stuffing.
+
+### 10a. App-level lockout (already shipped in `index.php`)
+
+After **5 failed attempts** from the same IP **or** the same username within a
+**15-minute window**, the form rejects further attempts with
+*"Too many failed attempts. Try again in 15 minutes."* The window resets on
+the next successful `LOGIN_SUCCESS` row for that IP/username.
+
+Both thresholds and the window are constants at the top of `index.php`:
+
+```php
+const LOGIN_LOCKOUT_THRESHOLD = 5;
+const LOGIN_LOCKOUT_WINDOW_MIN = 15;
+```
+
+### 10b. Progressive delay (already shipped in `index.php`)
+
+Each consecutive failure adds a 250 ms `usleep` to the response, capped at
+1.25 s. A human notices nothing on attempt #1; scripted bursts slow to a crawl.
+
+### 10c. OS-level ban via fail2ban
 
 ```bash
-# Install Certbot for Let's Encrypt (if you have a public domain)
-apt install certbot python3-certbot-apache -y
-certbot --apache -d yourdomain.com
+sudo apt install fail2ban -y
 
-# For local network only — use self-signed cert
-openssl req -x509 -nodes -days 3650 -newkey rsa:2048 \
-    -keyout /etc/ssl/private/laskie.key \
-    -out /etc/ssl/certs/laskie.crt \
-    -subj "/CN=laskie.local"
+# Filter — matches POST /index.php with HTTP 200 (failed logins re-render
+# the form with 200; successful logins return 302 and so are NOT counted).
+sudo tee /etc/fail2ban/filter.d/laskie-login.conf > /dev/null <<'EOF'
+[Definition]
+failregex = ^<HOST> .* "POST /index\.php HTTP/[\d.]+" 200
+ignoreregex =
+EOF
+
+# Jail — 10 failures in 10 minutes = 30-minute IP ban at iptables level.
+sudo tee /etc/fail2ban/jail.d/laskie.conf > /dev/null <<'EOF'
+[laskie-login]
+enabled  = true
+port     = 49200,http,https
+filter   = laskie-login
+logpath  = /var/log/apache2/laskie_access.log
+maxretry = 10
+findtime = 600
+bantime  = 1800
+backend  = auto
+EOF
+
+sudo systemctl restart fail2ban
+sudo fail2ban-client status laskie-login   # should show the jail active
+```
+
+### Verification
+
+```bash
+# Verify recent failed attempts are visible in system_logs
+mysql -u laskie_db_user -p laskie_rental \
+  -e "SELECT action, username, ip_address, created_at FROM system_logs WHERE action LIKE 'LOGIN%' ORDER BY id DESC LIMIT 10;"
+
+# Tail fail2ban activity
+sudo journalctl -u fail2ban -n 20 --no-pager
+
+# Show currently banned IPs (if any)
+sudo fail2ban-client status laskie-login
+```
+
+To manually unban an IP (e.g. you locked yourself out while testing):
+
+```bash
+sudo fail2ban-client set laskie-login unbanip 192.168.x.y
+```
+
+To clear the app-level lockout for yourself, log in successfully once from
+a clean IP, or insert a `LOGIN_SUCCESS` row directly:
+
+```sql
+INSERT INTO system_logs (user_id, username, action, module, details, ip_address)
+SELECT id, username, 'LOGIN_SUCCESS', 'Auth', 'Manual reset', '192.168.x.y'
+FROM users WHERE username='your_username';
 ```
 
 ---
