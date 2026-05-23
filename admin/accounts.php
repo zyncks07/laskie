@@ -66,12 +66,54 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
     if ($action === 'get') {
-        $row = $pdo->prepare("SELECT id,username,full_name,role,email,phone,phone2,address,status FROM users WHERE id=?");
+        $row = $pdo->prepare("SELECT id,username,full_name,role,email,phone,phone2,address,avatar_path,status FROM users WHERE id=?");
         $row->execute([(int)$_POST['id']]);
         $data = $row->fetch();
         if (!$data) jsonErr('User not found.');
         jsonOk(['user' => $data]);
     }
+
+    // Admin-side avatar management — same JPEG/3MB constraints as the self-service page.
+    if ($action === 'upload_avatar') {
+        $userId = (int)($_POST['user_id'] ?? 0);
+        if (!$userId) jsonErr('User ID required.');
+        $up = handleUpload('avatar_file', 'avatars', ['jpg','jpeg'], 3 * 1024 * 1024, true);
+        if ($up['error']) jsonErr($up['error']);
+        if (!$up['path']) jsonErr('Please choose a file to upload.');
+
+        $prev = $pdo->prepare("SELECT avatar_path FROM users WHERE id=?");
+        $prev->execute([$userId]);
+        $prevPath = $prev->fetchColumn();
+        if ($prevPath && str_starts_with((string)$prevPath, '/uploads/avatars/')) {
+            @unlink(__DIR__ . '/..' . $prevPath);
+        }
+
+        $pdo->prepare("UPDATE users SET avatar_path=? WHERE id=?")->execute([$up['path'], $userId]);
+        logActivity($pdo, 'UPLOAD_AVATAR_ADMIN', 'Accounts', "Uploaded avatar for user #$userId");
+        // If admin updated their own avatar, refresh session so the header reflects it.
+        if ($userId === (int)$_SESSION['user']['id']) {
+            $_SESSION['user']['avatar_path'] = $up['path'];
+        }
+        jsonOk(['msg' => 'Avatar updated.', 'avatar_path' => $up['path']]);
+    }
+
+    if ($action === 'remove_avatar') {
+        $userId = (int)($_POST['user_id'] ?? 0);
+        if (!$userId) jsonErr('User ID required.');
+        $r = $pdo->prepare("SELECT avatar_path FROM users WHERE id=?");
+        $r->execute([$userId]);
+        $prevPath = $r->fetchColumn();
+        if ($prevPath && str_starts_with((string)$prevPath, '/uploads/avatars/')) {
+            @unlink(__DIR__ . '/..' . $prevPath);
+        }
+        $pdo->prepare("UPDATE users SET avatar_path=NULL WHERE id=?")->execute([$userId]);
+        logActivity($pdo, 'REMOVE_AVATAR_ADMIN', 'Accounts', "Removed avatar for user #$userId");
+        if ($userId === (int)$_SESSION['user']['id']) {
+            $_SESSION['user']['avatar_path'] = null;
+        }
+        jsonOk(['msg' => 'Avatar removed.']);
+    }
+
     exit;
 }
 
@@ -97,11 +139,22 @@ include '../includes/header.php';
         <th>Email</th><th>Phone</th><th>Status</th><th class="text-center">Actions</th>
       </tr></thead>
       <tbody>
-      <?php foreach($users as $u): ?>
+      <?php foreach($users as $u):
+        $rowInitials = implode('', array_map(fn($p) => $p !== '' ? strtoupper($p[0]) : '', array_slice(explode(' ', $u['full_name']), 0, 2)));
+      ?>
       <tr>
         <td>
-          <div class="fw-600 cell-trunc"><?= clean($u['full_name']) ?></div>
-          <?php if($u['address']): ?><div class="text-muted cell-trunc" style="font-size:11px"><?= clean(substr($u['address'],0,50)) ?></div><?php endif; ?>
+          <div class="d-flex align-items-center gap-2">
+            <?php if (!empty($u['avatar_path'])): ?>
+              <img src="<?= clean($u['avatar_path']) ?>" alt="" style="width:34px;height:34px;border-radius:50%;object-fit:cover;flex-shrink:0">
+            <?php else: ?>
+              <div class="user-avatar-sm" style="flex-shrink:0"><?= clean($rowInitials) ?></div>
+            <?php endif; ?>
+            <div style="min-width:0">
+              <div class="fw-600 cell-trunc"><?= clean($u['full_name']) ?></div>
+              <?php if($u['address']): ?><div class="text-muted cell-trunc" style="font-size:11px"><?= clean(substr($u['address'],0,50)) ?></div><?php endif; ?>
+            </div>
+          </div>
         </td>
         <td class="mono"><?= clean($u['username']) ?></td>
         <td><span class="badge badge-<?= $u['role'] ?>"><?= ucfirst($u['role']) ?></span></td>
@@ -131,6 +184,22 @@ include '../includes/header.php';
       </div>
       <div class="modal-body">
         <input type="hidden" id="userId">
+
+        <!-- Avatar section — only meaningful when editing an existing user. -->
+        <div id="avatarSection" class="d-flex align-items-center gap-3 mb-3 p-3" style="background:#f9fafb;border-radius:var(--radius);display:none">
+          <div id="adminAvatarPreview" style="width:72px;height:72px;border-radius:50%;background:var(--primary-light);color:var(--primary);display:flex;align-items:center;justify-content:center;font-size:24px;font-weight:700;overflow:hidden;flex-shrink:0">—</div>
+          <div style="flex:1">
+            <div class="fw-600 mb-1" style="font-size:13px">Profile Picture</div>
+            <div class="text-muted mb-2" style="font-size:11.5px">JPEG only &middot; max 3 MB</div>
+            <div class="d-flex gap-2 align-items-center flex-wrap">
+              <input type="file" id="adminAvatarFile" accept="image/jpeg" class="form-control form-control-sm" style="max-width:280px">
+              <button type="button" class="btn btn-sm btn-primary" onclick="uploadAvatarFor()"><i class="fa-solid fa-upload me-1"></i>Upload</button>
+              <button type="button" class="btn btn-sm btn-outline-danger" id="adminAvatarRemoveBtn" onclick="removeAvatarFor()" style="display:none"><i class="fa-solid fa-trash me-1"></i>Remove</button>
+            </div>
+            <div id="adminAvatarMsg" class="mt-2" style="display:none;font-size:12px"></div>
+          </div>
+        </div>
+
         <div class="row g-3">
           <div class="col-md-6">
             <label class="form-label">Full Name *</label>
@@ -208,7 +277,21 @@ function openModal() {
   document.getElementById('urole').value = 'staff';
   document.getElementById('ustatus').value = 'active';
   document.getElementById('modalMsg').style.display = 'none';
+  // Hide the avatar section on Add — the user must exist before they can have an avatar.
+  document.getElementById('avatarSection').style.display = 'none';
   modal.show();
+}
+
+function setAdminAvatarPreview(avatarPath, fullName) {
+  const el = document.getElementById('adminAvatarPreview');
+  if (avatarPath) {
+    el.innerHTML = '<img src="' + avatarPath + '" style="width:100%;height:100%;object-fit:cover" alt="">';
+    document.getElementById('adminAvatarRemoveBtn').style.display = '';
+  } else {
+    const initials = (fullName || '').split(' ').slice(0,2).map(p => (p[0]||'').toUpperCase()).join('');
+    el.textContent = initials || '—';
+    document.getElementById('adminAvatarRemoveBtn').style.display = 'none';
+  }
 }
 
 function editUser(id) {
@@ -228,7 +311,53 @@ function editUser(id) {
     document.getElementById('upassword').value = '';
     document.getElementById('upassword2').value = '';
     document.getElementById('modalMsg').style.display = 'none';
+    // Show + populate the avatar section in edit mode.
+    document.getElementById('avatarSection').style.display = '';
+    document.getElementById('adminAvatarFile').value = '';
+    document.getElementById('adminAvatarMsg').style.display = 'none';
+    setAdminAvatarPreview(u.avatar_path, u.full_name);
     modal.show();
+  });
+}
+
+function setAvatarMsg(text, isErr) {
+  const m = document.getElementById('adminAvatarMsg');
+  m.style.display = '';
+  m.style.color = isErr ? 'var(--danger)' : 'var(--success)';
+  m.textContent = text;
+}
+
+function uploadAvatarFor() {
+  const uid = document.getElementById('userId').value;
+  if (!uid) return setAvatarMsg('Save the account first, then upload an avatar.', true);
+  const fileInput = document.getElementById('adminAvatarFile');
+  if (!fileInput.files.length) return setAvatarMsg('Choose a JPEG file first.', true);
+  const file = fileInput.files[0];
+  if (file.size > 3 * 1024 * 1024) return setAvatarMsg('File too large (max 3 MB).', true);
+  if (!/jpe?g$/i.test(file.name)) return setAvatarMsg('JPEG only.', true);
+  const fd = new FormData();
+  fd.append('action', 'upload_avatar');
+  fd.append('user_id', uid);
+  fd.append('avatar_file', file);
+  apiPost('accounts.php', fd, (err, res) => {
+    if (!res || !res.success) return setAvatarMsg((res && res.error) || 'Upload failed.', true);
+    setAvatarMsg(res.msg, false);
+    showToast(res.msg, 'success');
+    setAdminAvatarPreview(res.avatar_path, document.getElementById('fullName').value);
+    fileInput.value = '';
+  });
+}
+
+function removeAvatarFor() {
+  const uid = document.getElementById('userId').value;
+  if (!uid) return;
+  confirmDelete('Remove this user\'s profile picture?', () => {
+    apiPost('accounts.php', {action:'remove_avatar', user_id: uid}, (err, res) => {
+      if (!res || !res.success) return setAvatarMsg((res && res.error) || 'Failed.', true);
+      setAvatarMsg(res.msg, false);
+      showToast(res.msg, 'success');
+      setAdminAvatarPreview(null, document.getElementById('fullName').value);
+    });
   });
 }
 

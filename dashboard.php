@@ -409,7 +409,8 @@ var CHART_DATA = {
 document.addEventListener('DOMContentLoaded', function() {
   var d = CHART_DATA;
   var pallette = ['#1a3a8f','#3b5bdb','#15803d','#b91c1c','#b45309','#6d28d9','#0d9488','#d97706','#0369a1','#6b7280','#be185d','#c026d3'];
-  var phpFmt = function(v) { return '₱' + v.toLocaleString('en-PH'); };
+  // 2-decimal formatting; without this, 15,269.86 renders as ₱15,270 on chart axes.
+  var phpFmt = function(v) { return '₱' + parseFloat(v||0).toLocaleString('en-PH', {minimumFractionDigits:2, maximumFractionDigits:2}); };
 
   new Chart(document.getElementById('unitChart'), {
     type: 'bar',

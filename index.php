@@ -24,11 +24,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             session_regenerate_id(true);
             unset($_SESSION['csrf_token']);
             $_SESSION['user'] = [
-                'id'        => $user['id'],
-                'username'  => $user['username'],
-                'full_name' => $user['full_name'],
-                'role'      => $user['role'],
-                'email'     => $user['email'],
+                'id'          => $user['id'],
+                'username'    => $user['username'],
+                'full_name'   => $user['full_name'],
+                'role'        => $user['role'],
+                'email'       => $user['email'],
+                'avatar_path' => $user['avatar_path'] ?? null,
             ];
             // Log success
             $pdo->prepare("INSERT INTO system_logs (user_id,username,action,module,details,ip_address) VALUES (?,?,?,?,?,?)")

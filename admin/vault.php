@@ -2,7 +2,9 @@
 session_start();
 require_once '../config/db.php';
 require_once '../config/functions.php';
-requireAdmin();
+// The Vault is accessible to both admins and accountants. Within-page
+// destructive operations (recipient management, etc.) still gate on isAdmin().
+requireRole(['admin', 'accountant']);
 
 $pageTitle = 'The Vault';
 $depth = '../';

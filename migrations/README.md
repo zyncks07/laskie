@@ -32,3 +32,4 @@ done
 | 004 | `004_add_payment_idempotency.sql` | Add `payments.idempotency_key` (UUID, UNIQUE) so double-clicks / network retries don't double-record |
 | 005 | `005_add_composite_indexes.sql` | Composite indexes on `payments`, `expenses`, `cash_transactions`, `unit_charges` matching real WHERE patterns (audited, not guessed) |
 | 006 | `006_extend_cash_tx_enum_vault_return.sql` | Add `'vault_return'` to `cash_transactions.transaction_type` for the Vault → User return flow |
+| 007 | `007_add_user_avatar.sql` | Add `users.avatar_path` for uploaded profile pictures |

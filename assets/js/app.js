@@ -32,6 +32,10 @@ window.csrfHeaders = function() {
 };
 
 // ─── AJAX POST helper ─────────────────────────────────────────
+// Server endpoints return {success, error?, ...} as JSON even on validation
+// failures (HTTP 400) and CSRF rejections (HTTP 403). We parse the JSON body
+// regardless of status so the callback sees the real server-side error message
+// in res.error rather than a generic "Server error: 400".
 window.apiPost = function(url, data, cb) {
     let fd;
     if (data instanceof FormData) {
@@ -43,11 +47,19 @@ window.apiPost = function(url, data, cb) {
         });
     }
     fetch(url, { method: 'POST', body: fd, credentials: 'same-origin', headers: window.csrfHeaders() })
-        .then(r => {
-            if (!r.ok) throw new Error('Server error: ' + r.status);
-            return r.json();
+        .then(r => r.text().then(t => ({ status: r.status, body: t })))
+        .then(({ status, body }) => {
+            let parsed;
+            try { parsed = JSON.parse(body); } catch (_) {}
+            if (parsed && typeof parsed === 'object') {
+                // Pass the server's JSON straight through — page code reads res.success / res.error.
+                cb(null, parsed);
+            } else {
+                // Non-JSON body (network error mid-flight, PHP fatal before headers, etc.) — synthesize.
+                const msg = 'Server error: ' + status + (body ? ' — ' + body.slice(0, 80) : '');
+                cb(msg, { success: false, error: msg });
+            }
         })
-        .then(d => cb(null, d))
         .catch(e => cb(e.message, { success: false, error: e.message }));
 };
 

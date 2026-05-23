@@ -251,7 +251,17 @@ function generateInvoiceNo(PDO $pdo): string {
 }
 
 // ─── File Upload Handler ─────────────────────────────────────
-function handleUpload(string $fieldName, string $subDir): array {
+// $allowedExts (optional): override the default file-type whitelist
+// $maxBytes (optional):    override the default 10 MB size cap
+// $verifyImage (optional): when true, validates the file actually IS an image
+//                          via getimagesize() — defeats renamed-extension tricks
+function handleUpload(
+    string $fieldName,
+    string $subDir,
+    ?array $allowedExts = null,
+    ?int   $maxBytes = null,
+    bool   $verifyImage = false
+): array {
     if (!isset($_FILES[$fieldName]) || $_FILES[$fieldName]['error'] === UPLOAD_ERR_NO_FILE) {
         return ['path' => null, 'error' => null];
     }
@@ -266,13 +276,28 @@ function handleUpload(string $fieldName, string $subDir): array {
         ];
         return ['path' => null, 'error' => $uploadErrors[$file['error']] ?? 'Upload error code: ' . $file['error']];
     }
-    $allowed = ['jpg','jpeg','png','gif','pdf','doc','docx','xls','xlsx','zip'];
+    $allowed = $allowedExts ?? ['jpg','jpeg','png','gif','pdf','doc','docx','xls','xlsx','zip'];
     $ext = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
     if (!in_array($ext, $allowed)) {
-        return ['path' => null, 'error' => 'File type not allowed: .' . $ext];
+        return ['path' => null, 'error' => 'File type not allowed: .' . $ext . ' (expected: ' . implode(', ', $allowed) . ')'];
     }
-    if ($file['size'] > 10 * 1024 * 1024) {
-        return ['path' => null, 'error' => 'File too large (max 10MB). Your file: ' . round($file['size']/1048576,1) . 'MB'];
+    $cap = $maxBytes ?? (10 * 1024 * 1024);
+    if ($file['size'] > $cap) {
+        $capMb  = round($cap / 1048576, 1);
+        $fileMb = round($file['size'] / 1048576, 1);
+        return ['path' => null, 'error' => "File too large (max {$capMb}MB). Your file: {$fileMb}MB"];
+    }
+    if ($verifyImage) {
+        $info = @getimagesize($file['tmp_name']);
+        if ($info === false) {
+            return ['path' => null, 'error' => 'File is not a valid image.'];
+        }
+        // getimagesize returns mime type — restrict further if caller asked for JPEG only.
+        if (in_array('jpg', $allowed) || in_array('jpeg', $allowed)) {
+            if (!in_array($info['mime'], ['image/jpeg', 'image/pjpeg'])) {
+                return ['path' => null, 'error' => 'File is not a JPEG (got: ' . $info['mime'] . ').'];
+            }
+        }
     }
     $dir = UPLOAD_BASE . $subDir . '/';
     if (!is_dir($dir)) {

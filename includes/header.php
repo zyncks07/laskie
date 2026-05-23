@@ -7,6 +7,20 @@ requireLogin();
 
 $user = currentUser();
 $initials = implode('', array_map(fn($p) => $p !== '' ? strtoupper($p[0]) : '', array_slice(explode(' ', $user['full_name'] ?? ''), 0, 2)));
+// Lazy-load avatar_path into the session for older logins that pre-date the avatar column.
+if (!array_key_exists('avatar_path', $user)) {
+    try {
+        $av = $pdo->prepare("SELECT avatar_path FROM users WHERE id=?");
+        $av->execute([$user['id']]);
+        $_SESSION['user']['avatar_path'] = $av->fetchColumn() ?: null;
+        $user['avatar_path'] = $_SESSION['user']['avatar_path'];
+    } catch (Throwable $_) { $user['avatar_path'] = null; }
+}
+$userAvatar = $user['avatar_path'] ?? null;
+// If the avatar file was deleted from disk, fall back to initials gracefully.
+if ($userAvatar && !is_file(__DIR__ . '/..' . $userAvatar)) {
+    $userAvatar = null;
+}
 $appName = getSetting($pdo, 'app_name', 'Laskie Rental PMS');
 $currentPage = basename($_SERVER['PHP_SELF'], '.php');
 
@@ -74,7 +88,19 @@ if (!isset($depth)) {
     <a href="<?= $depth ?>my_summary.php" class="sidebar-nav-item <?= ($currentPage==='my_summary')?'active':'' ?>">
       <i class="fa-solid fa-user-tie"></i> My Summary
     </a>
+    <a href="<?= $depth ?>my_account.php" class="sidebar-nav-item <?= ($currentPage==='my_account')?'active':'' ?>">
+      <i class="fa-solid fa-user-circle"></i> My Account
+    </a>
   </div>
+
+<?php if (isAccountant() && !isAdmin()): ?>
+  <div class="sidebar-section">
+    <div class="sidebar-section-label">Accounting</div>
+    <a href="<?= $depth ?>admin/vault.php" class="sidebar-nav-item <?= ($currentPage==='vault')?'active':'' ?>">
+      <i class="fa-solid fa-vault"></i> The Vault
+    </a>
+  </div>
+<?php endif; ?>
 
 <?php if (isAdmin()): ?>
   <div class="sidebar-section">
@@ -104,13 +130,17 @@ if (!isset($depth)) {
 <?php endif; ?>
 
   <div class="sidebar-footer">
-    <div class="user-info">
-      <div class="user-avatar-sm"><?= clean($initials) ?></div>
+    <a href="<?= $depth ?>my_account.php" class="user-info text-decoration-none" style="color:inherit">
+      <?php if ($userAvatar): ?>
+        <img src="<?= clean($userAvatar) ?>" alt="" style="width:30px;height:30px;border-radius:50%;object-fit:cover;flex-shrink:0">
+      <?php else: ?>
+        <div class="user-avatar-sm"><?= clean($initials) ?></div>
+      <?php endif; ?>
       <div>
         <div class="user-name-sm"><?= clean($user['full_name']) ?></div>
         <div class="user-role-sm"><?= ucfirst(clean($user['role'])) ?></div>
       </div>
-    </div>
+    </a>
     <a href="<?= $depth ?>logout.php" class="sidebar-nav-item text-danger mt-1">
       <i class="fa-solid fa-right-from-bracket"></i> Sign Out
     </a>
@@ -124,13 +154,17 @@ if (!isset($depth)) {
   </button>
   <div class="topbar-title"><?= clean($pageTitle ?? 'Dashboard') ?></div>
   <div class="topbar-right">
-    <div class="topbar-user">
-      <div class="user-avatar"><?= clean($initials) ?></div>
+    <a href="<?= $depth ?>my_account.php" class="topbar-user text-decoration-none" style="color:inherit" title="My Account">
+      <?php if ($userAvatar): ?>
+        <img src="<?= clean($userAvatar) ?>" alt="" style="width:32px;height:32px;border-radius:50%;object-fit:cover">
+      <?php else: ?>
+        <div class="user-avatar"><?= clean($initials) ?></div>
+      <?php endif; ?>
       <div class="d-none d-sm-block">
         <div style="font-size:13px;font-weight:600;color:var(--text-primary)"><?= clean($user['full_name']) ?></div>
         <div style="font-size:11px;color:var(--text-muted)"><?= ucfirst(clean($user['role'])) ?></div>
       </div>
-    </div>
+    </a>
   </div>
 </div>
 

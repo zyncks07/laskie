@@ -17,6 +17,8 @@ CREATE TABLE IF NOT EXISTS users (
     phone VARCHAR(30),
     phone2 VARCHAR(30),
     address TEXT,
+    -- Web path to uploaded profile picture (NULL → fall back to initials in the avatar circle).
+    avatar_path VARCHAR(500) DEFAULT NULL,
     status ENUM('active','inactive') DEFAULT 'active',
     created_by INT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
