@@ -349,3 +349,4 @@ When editing this codebase:
 ---
 
 *Last updated: see `git log -- CLAUDE.md` · Project version: see `APP_VERSION` in `config/functions.php`.*
+
