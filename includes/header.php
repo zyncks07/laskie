@@ -91,6 +91,9 @@ if (!isset($depth)) {
     <a href="<?= $depth ?>my_account.php" class="sidebar-nav-item <?= ($currentPage==='my_account')?'active':'' ?>">
       <i class="fa-solid fa-user-circle"></i> My Account
     </a>
+    <a href="<?= $depth ?>logout.php" class="sidebar-nav-item text-danger">
+      <i class="fa-solid fa-right-from-bracket"></i> Sign Out
+    </a>
   </div>
 
 <?php if (isAccountant() && !isAdmin()): ?>
@@ -141,9 +144,6 @@ if (!isset($depth)) {
         <div class="user-role-sm"><?= ucfirst(clean($user['role'])) ?></div>
       </div>
     </a>
-    <a href="<?= $depth ?>logout.php" class="sidebar-nav-item text-danger mt-1">
-      <i class="fa-solid fa-right-from-bracket"></i> Sign Out
-    </a>
   </div>
 </nav>
 
@@ -164,6 +164,9 @@ if (!isset($depth)) {
         <div style="font-size:13px;font-weight:600;color:var(--text-primary)"><?= clean($user['full_name']) ?></div>
         <div style="font-size:11px;color:var(--text-muted)"><?= ucfirst(clean($user['role'])) ?></div>
       </div>
+    </a>
+    <a href="<?= $depth ?>logout.php" class="btn-icon danger ms-1" title="Sign Out" aria-label="Sign Out">
+      <i class="fa-solid fa-right-from-bracket"></i>
     </a>
   </div>
 </div>
