@@ -117,11 +117,33 @@ CREATE TABLE IF NOT EXISTS payments (
     notes TEXT,
     status ENUM('paid','refunded','partially_refunded','voided') NOT NULL DEFAULT 'paid',
     deleted_at TIMESTAMP NULL DEFAULT NULL,
+    -- Client-generated UUID to make save_payment INSERT replay-safe.
+    -- A duplicate submit (double-click / network retry) returns the existing row instead of inserting again.
+    idempotency_key VARCHAR(64) DEFAULT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY idempotency_key (idempotency_key),
+    INDEX idx_pay_unit_period (unit_id, period_year, period_month),
+    INDEX idx_pay_date (payment_date),
     FOREIGN KEY (unit_id) REFERENCES rental_units(id) ON DELETE SET NULL,
     FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE SET NULL,
     FOREIGN KEY (service_type_id) REFERENCES service_types(id) ON DELETE SET NULL,
     FOREIGN KEY (received_by) REFERENCES users(id) ON DELETE SET NULL
+);
+
+-- Refunds (one row per refund event against a payment).
+-- payments.status moves to 'partially_refunded' / 'refunded' depending
+-- on whether SUM(refunds.amount) covers payments.amount.
+CREATE TABLE IF NOT EXISTS refunds (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    payment_id INT NOT NULL,
+    amount DECIMAL(12,2) NOT NULL,
+    reason TEXT DEFAULT NULL,
+    refunded_by INT NOT NULL,
+    refunded_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    KEY payment_id  (payment_id),
+    KEY refunded_by (refunded_by),
+    FOREIGN KEY (payment_id)  REFERENCES payments(id) ON DELETE CASCADE,
+    FOREIGN KEY (refunded_by) REFERENCES users(id)
 );
 
 -- Expenses
@@ -138,16 +160,47 @@ CREATE TABLE IF NOT EXISTS expenses (
     recorded_by INT,
     deleted_at TIMESTAMP NULL DEFAULT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_exp_date (expense_date),
     FOREIGN KEY (unit_id) REFERENCES rental_units(id) ON DELETE SET NULL,
     FOREIGN KEY (category_id) REFERENCES expense_categories(id) ON DELETE SET NULL,
     FOREIGN KEY (recorded_by) REFERENCES users(id) ON DELETE SET NULL
+);
+
+-- Unit Charges (line-item billing per unit/period)
+-- Rows with payment_id IS NULL are outstanding; source distinguishes
+-- pre-issued bills from charges auto-created at payment time.
+CREATE TABLE IF NOT EXISTS unit_charges (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    unit_id INT NOT NULL,
+    tenant_id INT DEFAULT NULL,
+    service_type_id INT DEFAULT NULL,
+    amount DECIMAL(12,2) NOT NULL,
+    description VARCHAR(255) NOT NULL,
+    charge_date DATE NOT NULL,
+    period_month TINYINT UNSIGNED NOT NULL,
+    period_year SMALLINT UNSIGNED NOT NULL,
+    payment_id INT DEFAULT NULL,
+    source ENUM('pre_billed','auto_collected') NOT NULL DEFAULT 'auto_collected',
+    created_by INT DEFAULT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    KEY unit_id         (unit_id),
+    KEY tenant_id       (tenant_id),
+    KEY service_type_id (service_type_id),
+    KEY payment_id      (payment_id),
+    KEY created_by      (created_by),
+    INDEX idx_uc_unit_period (unit_id, period_year, period_month),
+    FOREIGN KEY (unit_id)         REFERENCES rental_units(id)  ON DELETE CASCADE,
+    FOREIGN KEY (tenant_id)       REFERENCES tenants(id)       ON DELETE SET NULL,
+    FOREIGN KEY (service_type_id) REFERENCES service_types(id) ON DELETE SET NULL,
+    FOREIGN KEY (payment_id)      REFERENCES payments(id)      ON DELETE SET NULL,
+    FOREIGN KEY (created_by)      REFERENCES users(id)         ON DELETE SET NULL
 );
 
 -- Cash on Hand Transactions
 CREATE TABLE IF NOT EXISTS cash_transactions (
     id INT AUTO_INCREMENT PRIMARY KEY,
     user_id INT NOT NULL,
-    transaction_type ENUM('received','remitted','expense') NOT NULL,
+    transaction_type ENUM('received','remitted','expense','refunded','vault_return') NOT NULL,
     amount DECIMAL(12,2) NOT NULL,
     reference_payment_id INT,
     reference_expense_id INT,
@@ -156,6 +209,7 @@ CREATE TABLE IF NOT EXISTS cash_transactions (
     doc_url VARCHAR(1000),
     transaction_date DATE NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_cash_user_date (user_id, transaction_date),
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
     FOREIGN KEY (reference_payment_id) REFERENCES payments(id) ON DELETE SET NULL,
     FOREIGN KEY (reference_expense_id) REFERENCES expenses(id) ON DELETE SET NULL

@@ -11,13 +11,14 @@ $depth = '';
 // ─── Fetch all rental units ───────────────────────────────────
 $units = $pdo->query("SELECT ru.*, ut.name as type_name FROM rental_units ru LEFT JOIN unit_types ut ON ru.unit_type_id=ut.id ORDER BY ru.unit_name")->fetchAll();
 
-// ─── Per-unit revenue & expenses (single query each) ─────────
-$revRows = $pdo->prepare("SELECT unit_id, COALESCE(SUM(amount),0) AS total FROM payments WHERE YEAR(payment_date)=? GROUP BY unit_id");
-$revRows->execute([$selectedYear]);
+// ─── Per-unit revenue & expenses (single query each, sargable ranges) ─────
+[$yrStart, $yrEnd] = yearRange($selectedYear);
+$revRows = $pdo->prepare("SELECT unit_id, COALESCE(SUM(amount),0) AS total FROM payments WHERE payment_date >= ? AND payment_date < ? GROUP BY unit_id");
+$revRows->execute([$yrStart, $yrEnd]);
 $unitRevenue = array_column($revRows->fetchAll(), 'total', 'unit_id');
 
-$expRows = $pdo->prepare("SELECT unit_id, COALESCE(SUM(amount),0) AS total FROM expenses WHERE YEAR(expense_date)=? GROUP BY unit_id");
-$expRows->execute([$selectedYear]);
+$expRows = $pdo->prepare("SELECT unit_id, COALESCE(SUM(amount),0) AS total FROM expenses WHERE expense_date >= ? AND expense_date < ? GROUP BY unit_id");
+$expRows->execute([$yrStart, $yrEnd]);
 $unitExpenses = array_column($expRows->fetchAll(), 'total', 'unit_id');
 
 foreach ($units as $u) {
@@ -27,19 +28,19 @@ foreach ($units as $u) {
 
 // ─── Monthly totals ───────────────────────────────────────────
 $monthlyRev = []; $monthlyExp = [];
+$revStmt = $pdo->prepare("SELECT COALESCE(SUM(amount),0) FROM payments WHERE payment_date >= ? AND payment_date < ?");
+$expStmt = $pdo->prepare("SELECT COALESCE(SUM(amount),0) FROM expenses WHERE expense_date >= ? AND expense_date < ?");
 for ($m = 1; $m <= 12; $m++) {
-    $r = $pdo->prepare("SELECT COALESCE(SUM(amount),0) FROM payments WHERE MONTH(payment_date)=? AND YEAR(payment_date)=?");
-    $r->execute([$m, $selectedYear]);
-    $monthlyRev[$m] = (float)$r->fetchColumn();
-
-    $e = $pdo->prepare("SELECT COALESCE(SUM(amount),0) FROM expenses WHERE MONTH(expense_date)=? AND YEAR(expense_date)=?");
-    $e->execute([$m, $selectedYear]);
-    $monthlyExp[$m] = (float)$e->fetchColumn();
+    [$mStart, $mEnd] = monthRange($m, $selectedYear);
+    $revStmt->execute([$mStart, $mEnd]);
+    $monthlyRev[$m] = (float)$revStmt->fetchColumn();
+    $expStmt->execute([$mStart, $mEnd]);
+    $monthlyExp[$m] = (float)$expStmt->fetchColumn();
 }
 
 // ─── Expense by category ─────────────────────────────────────
-$catExp = $pdo->prepare("SELECT ec.name, COALESCE(SUM(e.amount),0) as total FROM expense_categories ec LEFT JOIN expenses e ON e.category_id=ec.id AND YEAR(e.expense_date)=? GROUP BY ec.id ORDER BY total DESC");
-$catExp->execute([$selectedYear]);
+$catExp = $pdo->prepare("SELECT ec.name, COALESCE(SUM(e.amount),0) as total FROM expense_categories ec LEFT JOIN expenses e ON e.category_id=ec.id AND e.expense_date >= ? AND e.expense_date < ? GROUP BY ec.id ORDER BY total DESC");
+$catExp->execute([$yrStart, $yrEnd]);
 $catExpData = $catExp->fetchAll();
 
 // ─── Totals ───────────────────────────────────────────────────
@@ -54,10 +55,11 @@ $curMonth = (int)date('n');
 $curYear  = (int)date('Y');
 $cmRev = $cmExp = 0.0;
 if ($selectedYear === $curYear) {
-    $s = $pdo->prepare("SELECT COALESCE(SUM(amount),0) FROM payments WHERE MONTH(payment_date)=? AND YEAR(payment_date)=?");
-    $s->execute([$curMonth, $curYear]); $cmRev = (float)$s->fetchColumn();
-    $s = $pdo->prepare("SELECT COALESCE(SUM(amount),0) FROM expenses WHERE MONTH(expense_date)=? AND YEAR(expense_date)=?");
-    $s->execute([$curMonth, $curYear]); $cmExp = (float)$s->fetchColumn();
+    [$cmStart, $cmEnd] = monthRange($curMonth, $curYear);
+    $s = $pdo->prepare("SELECT COALESCE(SUM(amount),0) FROM payments WHERE payment_date >= ? AND payment_date < ?");
+    $s->execute([$cmStart, $cmEnd]); $cmRev = (float)$s->fetchColumn();
+    $s = $pdo->prepare("SELECT COALESCE(SUM(amount),0) FROM expenses WHERE expense_date >= ? AND expense_date < ?");
+    $s->execute([$cmStart, $cmEnd]); $cmExp = (float)$s->fetchColumn();
 }
 $cmNet = $cmRev - $cmExp;
 
@@ -203,7 +205,7 @@ include 'includes/header.php';
       <div class="card-header">
         <span class="card-header-title"><i class="fa-solid fa-building me-1"></i><?= date('F Y') ?> — Unit Status</span>
       </div>
-      <div style="overflow-y:auto;height:680px">
+      <div class="unit-status-scroll" style="overflow-y:auto;height:680px">
         <table class="table db-tbl mb-0">
           <thead style="position:sticky;top:0;background:#f9fafb;z-index:1">
             <tr><th>Unit</th><th>Tenant</th><th>Status</th></tr>
@@ -219,10 +221,10 @@ include 'includes/header.php';
           <?php else:
               $rate         = getRateForMonth($pdo, (int)$u['id'], (float)$u['monthly_rate'], $curMonth, $curYear);
               $expected     = prorateFirstMonth($rate, (int)$u['due_day'], $u['contract_start'] ?? null, $curMonth, $curYear);
-              $curPaid      = (float)$u['cur_paid'];
-              $curMonthPaid = $expected > 0 && $curPaid >= $expected;
-              $isLate       = !$curMonthPaid && $expected > 0 && $today > ((int)$u['due_day'] + 10);
-              $amountDue    = max(0.0, $expected - $curPaid);
+              $curPaid      = $u['cur_paid'];
+              $curMonthPaid = money_is_pos($expected) && money_gte($curPaid, $expected);
+              $isLate       = !$curMonthPaid && money_is_pos($expected) && $today > ((int)$u['due_day'] + 10);
+              $amountDue    = money_max('0.00', money_sub($expected, $curPaid));
           ?>
             <tr>
               <td class="fw-600"><?= clean($u['unit_name']) ?></td>

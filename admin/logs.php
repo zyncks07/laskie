@@ -170,7 +170,7 @@ include '../includes/header.php';
         <label class="form-label">Search</label>
         <input type="text" name="search" class="form-control form-control-sm" placeholder="Action, details, username..." value="<?=clean($search)?>">
       </div>
-      <div class="col-auto">
+      <div class="col-12 col-md-auto">
         <button type="submit" class="btn btn-primary btn-sm"><i class="fa-solid fa-search me-1"></i>Apply</button>
         <a href="logs.php" class="btn btn-outline-secondary btn-sm ms-1">Reset</a>
       </div>

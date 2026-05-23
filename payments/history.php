@@ -63,7 +63,7 @@ if ($selUnit) {
     ");
     $q->execute([$selUnit, $dateFrom, $dateTo]);
     $payments  = $q->fetchAll();
-    $totalPaid = array_sum(array_column($payments, 'amount'));
+    $totalPaid = money_sum(array_column($payments, 'amount'));
 }
 
 // ── Fetch Refunds for payments in this range ──────────────────
@@ -84,7 +84,7 @@ if ($payments) {
     $rq->execute($payIds);
     $refundRows = $rq->fetchAll();
     foreach ($refundRows as $r) {
-        $refundedMap[$r['payment_id']] = ($refundedMap[$r['payment_id']] ?? 0) + (float)$r['amount'];
+        $refundedMap[$r['payment_id']] = money_add($refundedMap[$r['payment_id']] ?? '0.00', $r['amount']);
     }
     $sq = $pdo->prepare("SELECT id, status FROM payments WHERE id IN ($in)");
     $sq->execute($payIds);
@@ -92,7 +92,7 @@ if ($payments) {
         $payStatusMap[$s['id']] = $s['status'];
     }
 }
-$totalRefunded = (float)array_sum(array_column($refundRows, 'amount'));
+$totalRefunded = money_sum(array_column($refundRows, 'amount'));
 
 // ── Fetch Service Charges (unit_charges) ──────────────────────
 $serviceCharges = [];
@@ -138,14 +138,14 @@ if ($selUnit && $unitInfo) {
             $charge  = prorateFirstMonth($rate, $dueDay, $contractStart, $m, $y);
             $dateStr = chargeDate($dueDay, $contractStart, $m, $y);
             $desc    = 'Rent — ' . $iter->format('F Y');
-            if ($charge < $rate)    $desc .= ' (prorated)';
-            if ($multiOccupant)     $desc .= ' [' . $occupant['full_name'] . ']';
+            if (money_lt($charge, $rate)) $desc .= ' (prorated)';
+            if ($multiOccupant)           $desc .= ' [' . $occupant['full_name'] . ']';
             $ledger[] = [
                 'date'        => $dateStr,
                 'description' => $desc,
                 'type'        => 'charge',
                 'debit'       => $charge,
-                'credit'      => 0,
+                'credit'      => '0.00',
             ];
             $iter->modify('+1 month');
         }
@@ -160,14 +160,14 @@ if ($selUnit && $unitInfo) {
             'date'             => $p['payment_date'],
             'description'      => $desc,
             'type'             => 'payment',
-            'debit'            => 0,
-            'credit'           => (float)$p['amount'],
+            'debit'            => '0.00',
+            'credit'           => $p['amount'],
             'invoice_no'       => $p['invoice_no']  ?? '',
             'cashier'          => $p['cashier_name'] ?? '',
             'pay_type'         => $p['payment_type'],
             'id'               => $p['id'],
             'pay_status'       => $payStatusMap[$p['id']] ?? 'paid',
-            'already_refunded' => $refundedMap[$p['id']] ?? 0,
+            'already_refunded' => $refundedMap[$p['id']] ?? '0.00',
         ];
     }
 
@@ -177,8 +177,8 @@ if ($selUnit && $unitInfo) {
             'date'        => date('Y-m-d', strtotime($r['refunded_at'])),
             'description' => 'Refund — ' . ($r['payment_invoice'] ?? '') . ': ' . ($r['reason'] ?? ''),
             'type'        => 'refund',
-            'debit'       => (float)$r['amount'],
-            'credit'      => 0,
+            'debit'       => $r['amount'],
+            'credit'      => '0.00',
             'invoice_no'  => '',
             'cashier'     => $r['refunded_by_name'] ?? '',
             'id'          => null,
@@ -193,8 +193,8 @@ if ($selUnit && $unitInfo) {
             'date'        => $c['charge_date'],
             'description' => $desc,
             'type'        => 'service_charge',
-            'debit'       => (float)$c['amount'],
-            'credit'      => 0,
+            'debit'       => $c['amount'],
+            'credit'      => '0.00',
             'invoice_no'  => '',
             'cashier'     => $c['billed_by_name'] ?? '',
             'id'          => (int)$c['id'],
@@ -212,18 +212,18 @@ usort($ledger, function($a,$b){
     return ($order[$a['type']]??2) - ($order[$b['type']]??2);
 });
 
-// Running balance
-$runBal = 0;
+// Running balance — cents math, no float drift.
+$runBal = '0.00';
 foreach ($ledger as &$row) {
-    $runBal     += $row['debit'] - $row['credit'];
+    $runBal = money_add($runBal, money_sub($row['debit'], $row['credit']));
     $row['balance'] = $runBal;
 }
 unset($row);
 
-$totalChargesDebit = array_sum(array_map(fn($r) => in_array($r['type'],['charge','service_charge']) ? $r['debit'] : 0, $ledger));
-$totalDebit        = array_sum(array_column($ledger, 'debit')); // all debits (charges + service charges + refunds)
-$totalCredit       = array_sum(array_column($ledger, 'credit'));
-$finalBal          = $totalDebit - $totalCredit;
+$totalChargesDebit = money_sum(array_map(fn($r) => in_array($r['type'],['charge','service_charge']) ? $r['debit'] : '0.00', $ledger));
+$totalDebit        = money_sum(array_column($ledger, 'debit'));
+$totalCredit       = money_sum(array_column($ledger, 'credit'));
+$finalBal          = money_sub($totalDebit, $totalCredit);
 
 logActivity($pdo, 'VIEW_SOA', 'SOA', "Viewed SOA unit #$selUnit ($dateFrom – $dateTo)");
 include '../includes/header.php';
@@ -270,7 +270,7 @@ include '../includes/header.php';
         <label class="form-label">Date To</label>
         <input type="date" name="date_to" class="form-control form-control-sm" value="<?=clean($dateTo)?>">
       </div>
-      <div class="col-auto d-flex gap-1">
+      <div class="col-12 col-md-auto d-flex gap-1">
         <button type="submit" class="btn btn-primary btn-sm"><i class="fa-solid fa-search me-1"></i>View</button>
         <a href="history.php" class="btn btn-outline-secondary btn-sm">Reset</a>
       </div>

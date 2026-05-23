@@ -8,6 +8,7 @@ $depth = '../';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     define('JSON_RESPONSE', true);
+    csrfRequirePost();
     $action = $_POST['action'] ?? '';
 
     // ── Rental Units ─────────────────────────────────────────
@@ -339,7 +340,7 @@ include '../includes/header.php';
 
 <!-- ── Modal: Rental Unit ───────────────────────────────────── -->
 <div class="modal fade" id="unitModal" tabindex="-1">
-  <div class="modal-dialog modal-lg">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable">
     <div class="modal-content">
       <div class="modal-header">
         <h5 class="modal-title" id="unitModalTitle">Add Rental Unit</h5>
@@ -445,7 +446,7 @@ include '../includes/header.php';
 
 <!-- ── Modal: Rate History ───────────────────────────────────── -->
 <div class="modal fade" id="rateHistoryModal" tabindex="-1">
-  <div class="modal-dialog modal-lg">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable">
     <div class="modal-content">
       <div class="modal-header">
         <h5 class="modal-title"><i class="fa-solid fa-chart-line me-2"></i>Rate History — <span id="rateUnitName"></span></h5>

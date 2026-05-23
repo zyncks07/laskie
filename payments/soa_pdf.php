@@ -109,9 +109,9 @@ foreach ($occupants as $occupant) {
         $charge  = prorateFirstMonth($rate, $dueDay, $contractStart, $m, $y);
         $dateStr = chargeDate($dueDay, $contractStart, $m, $y);
         $desc    = 'Rent — ' . $iter->format('F Y');
-        if ($charge < $rate)  $desc .= ' (prorated)';
-        if ($multiOccupant)   $desc .= ' [' . $occupant['full_name'] . ']';
-        $ledger[] = ['date'=>$dateStr,'description'=>$desc,'type'=>'charge','debit'=>$charge,'credit'=>0];
+        if (money_lt($charge, $rate)) $desc .= ' (prorated)';
+        if ($multiOccupant)           $desc .= ' [' . $occupant['full_name'] . ']';
+        $ledger[] = ['date'=>$dateStr,'description'=>$desc,'type'=>'charge','debit'=>$charge,'credit'=>'0.00'];
         $iter->modify('+1 month');
     }
 }
@@ -119,15 +119,15 @@ foreach ($payments as $p) {
     $desc = $p['payment_type']==='rent'
         ? 'Payment — '.date('F Y',mktime(0,0,0,(int)$p['period_month'],1,(int)$p['period_year']))
         : ($p['service_name']??'Service').' — '.date('F Y',mktime(0,0,0,(int)$p['period_month'],1,(int)$p['period_year']));
-    $ledger[] = ['date'=>$p['payment_date'],'description'=>$desc,'type'=>'payment','debit'=>0,'credit'=>(float)$p['amount'],'invoice_no'=>$p['invoice_no']??'','cashier'=>$p['cashier_name']??''];
+    $ledger[] = ['date'=>$p['payment_date'],'description'=>$desc,'type'=>'payment','debit'=>'0.00','credit'=>$p['amount'],'invoice_no'=>$p['invoice_no']??'','cashier'=>$p['cashier_name']??''];
 }
 foreach ($pdfRefunds as $r) {
     $ledger[] = [
         'date'        => date('Y-m-d', strtotime($r['refunded_at'])),
         'description' => 'Refund — ' . ($r['payment_invoice'] ?? '') . ': ' . ($r['reason'] ?? ''),
         'type'        => 'refund',
-        'debit'       => (float)$r['amount'],
-        'credit'      => 0,
+        'debit'       => $r['amount'],
+        'credit'      => '0.00',
         'invoice_no'  => '',
         'cashier'     => $r['refunded_by_name'] ?? '',
     ];
@@ -140,8 +140,8 @@ foreach ($pdfServiceCharges as $c) {
         'date'        => $c['charge_date'],
         'description' => $desc,
         'type'        => 'service_charge',
-        'debit'       => (float)$c['amount'],
-        'credit'      => 0,
+        'debit'       => $c['amount'],
+        'credit'      => '0.00',
         'invoice_no'  => '',
         'cashier'     => $c['billed_by_name'] ?? '',
     ];
@@ -153,15 +153,19 @@ usort($ledger, function($a,$b){
     $order = ['charge'=>0,'service_charge'=>1,'payment'=>2,'refund'=>3];
     return ($order[$a['type']]??2) - ($order[$b['type']]??2);
 });
-$runBal=0;
-foreach($ledger as &$row){ $runBal+=$row['debit']-$row['credit']; $row['balance']=$runBal; }
+// Running balance — cents math, no float drift.
+$runBal = '0.00';
+foreach ($ledger as &$row) {
+    $runBal = money_add($runBal, money_sub($row['debit'], $row['credit']));
+    $row['balance'] = $runBal;
+}
 unset($row);
 
-$totalChargesDebit = array_sum(array_map(fn($r) => in_array($r['type'],['charge','service_charge']) ? $r['debit'] : 0, $ledger));
-$totalRefunded     = (float)array_sum(array_column($pdfRefunds, 'amount'));
-$totalDebit        = array_sum(array_column($ledger,'debit'));
-$totalCredit       = array_sum(array_column($ledger,'credit'));
-$finalBal          = $totalDebit - $totalCredit;
+$totalChargesDebit = money_sum(array_map(fn($r) => in_array($r['type'],['charge','service_charge']) ? $r['debit'] : '0.00', $ledger));
+$totalRefunded     = money_sum(array_column($pdfRefunds, 'amount'));
+$totalDebit        = money_sum(array_column($ledger,'debit'));
+$totalCredit       = money_sum(array_column($ledger,'credit'));
+$finalBal          = money_sub($totalDebit, $totalCredit);
 
 // ── Company Settings ──────────────────────────────────────────
 $companyName    = getSetting($pdo,'company_name',   'Laskie Rental Properties');

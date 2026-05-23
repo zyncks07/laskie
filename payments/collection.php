@@ -49,7 +49,7 @@ include '../includes/header.php';
       <button class="btn btn-sm btn-outline-primary" onclick="loadSummary()">
         <i class="fa-solid fa-rotate me-1"></i>Refresh
       </button>
-      <div class="ms-auto d-flex align-items-center gap-3">
+      <div class="ms-auto d-none d-md-flex align-items-center gap-3">
         <span class="d-flex align-items-center gap-1" style="font-size:12px"><span class="status-dot green"></span> Paid</span>
         <span class="d-flex align-items-center gap-1" style="font-size:12px"><span class="status-dot amber"></span> Partial / Pending</span>
         <span class="d-flex align-items-center gap-1" style="font-size:12px"><span class="status-dot red"></span> Overdue</span>
@@ -97,7 +97,7 @@ include '../includes/header.php';
 
 <!-- Record Payment Modal -->
 <div class="modal fade" id="paymentModal" tabindex="-1">
-  <div class="modal-dialog modal-lg">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable">
     <div class="modal-content">
       <div class="modal-header">
         <h5 class="modal-title" id="payModalTitle"><i class="fa-solid fa-money-bill-wave me-2"></i>Record Payment</h5>
@@ -105,6 +105,7 @@ include '../includes/header.php';
       </div>
       <div class="modal-body">
         <input type="hidden" id="payId">
+        <input type="hidden" id="payIdempotencyKey">
         <div class="row g-3">
           <div class="col-md-6">
             <label class="form-label">Rental Unit *</label>
@@ -184,8 +185,8 @@ include '../includes/header.php';
       </div>
       <div class="modal-footer">
         <button class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
-        <button class="btn btn-outline-primary btn-sm" onclick="saveAndPrint()"><i class="fa-solid fa-print me-1"></i>Save &amp; Print Invoice</button>
-        <button class="btn btn-primary btn-sm" onclick="savePayment(false)"><i class="fa-solid fa-save me-1"></i>Save Payment</button>
+        <button class="btn btn-outline-primary btn-sm" id="payBtnSaveAndPrint" onclick="saveAndPrint()"><i class="fa-solid fa-print me-1"></i>Save &amp; Print Invoice</button>
+        <button class="btn btn-primary btn-sm" id="payBtnSave" onclick="savePayment(false)"><i class="fa-solid fa-save me-1"></i>Save Payment</button>
       </div>
     </div>
   </div>
@@ -193,7 +194,7 @@ include '../includes/header.php';
 
 <!-- Unit Detail / Payment List Modal -->
 <div class="modal fade" id="unitDetailModal" tabindex="-1">
-  <div class="modal-dialog modal-xl">
+  <div class="modal-dialog modal-xl modal-dialog-scrollable">
     <div class="modal-content">
       <div class="modal-header">
         <h5 class="modal-title" id="unitDetailTitle">Unit Payments</h5>
@@ -417,9 +418,22 @@ function loadSummary() {
   });
 }
 
+// Fresh UUID per modal-open so a double-click / network retry on the same
+// submission dedupes server-side. Falls back to a random hex when crypto.randomUUID
+// is unavailable (older browsers / non-secure contexts).
+function newIdempotencyKey() {
+  if (window.crypto && typeof window.crypto.randomUUID === 'function') {
+    return window.crypto.randomUUID();
+  }
+  var b = new Uint8Array(16);
+  (window.crypto || {}).getRandomValues ? window.crypto.getRandomValues(b) : b.forEach((_,i) => b[i] = Math.floor(Math.random()*256));
+  return Array.from(b, x => x.toString(16).padStart(2,'0')).join('');
+}
+
 function openPaymentModal() {
   document.getElementById('payModalTitle').innerHTML = '<i class="fa-solid fa-money-bill-wave me-2"></i>Record Payment';
   document.getElementById('payId').value          = '';
+  document.getElementById('payIdempotencyKey').value = newIdempotencyKey();
   document.getElementById('payUnit').value        = '';
   document.getElementById('payTenant').innerHTML  = '<option value="">— Auto from unit —</option>';
   document.getElementById('payType').value        = 'rent';
@@ -536,9 +550,19 @@ function onServiceChange() {
 }
 
 function savePayment(andPrint) {
+  var saveBtn   = document.getElementById('payBtnSave');
+  var printBtn  = document.getElementById('payBtnSaveAndPrint');
+  // Client-side belt: hard-lock both submit buttons until the response returns,
+  // so a double-click can't fire a second request even before the network round-trip.
+  // The idempotency_key is the server-side suspenders that catch retries from beyond JS.
+  if (saveBtn && saveBtn.disabled)  return;
+  if (saveBtn)  saveBtn.disabled  = true;
+  if (printBtn) printBtn.disabled = true;
+
   var data = {
     action:          'save_payment',
     id:              document.getElementById('payId').value,
+    idempotency_key: document.getElementById('payIdempotencyKey').value,
     unit_id:         document.getElementById('payUnit').value,
     tenant_id:       document.getElementById('payTenant').value,
     payment_type:    document.getElementById('payType').value,
@@ -552,6 +576,8 @@ function savePayment(andPrint) {
   };
 
   apiPost('api_payment.php', data, function(err, res) {
+    if (saveBtn)  saveBtn.disabled  = false;
+    if (printBtn) printBtn.disabled = false;
     if (err || !res || !res.success) {
       var el = document.getElementById('payMsg');
       el.style.display = '';
@@ -775,6 +801,8 @@ function editPayment(id) {
 
     document.getElementById('payModalTitle').innerHTML = '<i class="fa-solid fa-pen me-2"></i>Edit Payment';
     document.getElementById('payId').value          = p.id;
+    // Edits are naturally idempotent (UPDATE by id); no key needed.
+    document.getElementById('payIdempotencyKey').value = '';
     document.getElementById('payUnit').value        = p.unit_id;
     document.getElementById('payType').value        = p.payment_type;
     document.getElementById('payAmount').value      = p.amount;

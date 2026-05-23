@@ -114,6 +114,30 @@ if (!$showTrash && ((!$typeFilter || $typeFilter === 'remittance') && !$unitFilt
     $transactions = array_merge($transactions, $q->fetchAll());
 }
 
+// Vault-return rows (cash issued from the vault back to a user — admin-only flow).
+if (!$showTrash && ((!$typeFilter || $typeFilter === 'vault_return') && !$unitFilter)) {
+    $w = [
+        "ct.transaction_type = 'vault_return'",
+        "ct.transaction_date BETWEEN ? AND ?"
+    ];
+    $par = [$fromDate, $toDate];
+    if ($userFilter) { $w[] = 'ct.user_id=?'; $par[] = $userFilter; }
+    $q = $pdo->prepare("
+        SELECT ct.id, ct.transaction_date AS tx_date, 'vault_return' AS tx_type,
+               COALESCE(ct.notes, 'Vault → User') AS reference,
+               ct.notes AS tx_notes,
+               '—' AS unit_name, ct.amount, 'active' AS status, NULL AS deleted_at,
+               u.full_name AS recorded_by,
+               MONTH(ct.transaction_date) AS period_month, YEAR(ct.transaction_date) AS period_year, NULL AS unit_id
+        FROM cash_transactions ct
+        LEFT JOIN users u ON ct.user_id = u.id
+        WHERE " . implode(' AND ', $w) . "
+        ORDER BY ct.transaction_date DESC, ct.created_at DESC
+    ");
+    $q->execute($par);
+    $transactions = array_merge($transactions, $q->fetchAll());
+}
+
 usort($transactions, fn($a, $b) => strcmp($b['tx_date'], $a['tx_date']));
 $grandTotal = array_sum(array_column($transactions, 'amount'));
 
@@ -126,6 +150,7 @@ function typeBadge(string $type): string {
         'payment'    => '<span class="badge" style="background:var(--primary-light);color:var(--primary)">Payment</span>',
         'expense'    => '<span class="badge bg-danger">Expense</span>',
         'remittance' => '<span class="badge" style="background:#e0f2fe;color:#0369a1">Remittance</span>',
+        'vault_return' => '<span class="badge badge-vault-return">Vault&rarr;User</span>',
         default      => '<span class="badge bg-secondary">' . htmlspecialchars($type) . '</span>',
     };
 }
@@ -170,42 +195,43 @@ function statusBadge(string $type, string $status, ?string $deletedAt = null): s
 <div class="card mb-3">
   <div class="card-body py-2">
     <form method="GET" class="row g-2 align-items-end">
-      <div class="col-auto">
+      <div class="col-6 col-md-auto">
         <label class="form-label mb-1" style="font-size:12px">From</label>
         <input type="date" name="from" class="form-control form-control-sm" value="<?= clean($fromDate) ?>">
       </div>
-      <div class="col-auto">
+      <div class="col-6 col-md-auto">
         <label class="form-label mb-1" style="font-size:12px">To</label>
         <input type="date" name="to" class="form-control form-control-sm" value="<?= clean($toDate) ?>">
       </div>
-      <div class="col-auto">
+      <div class="col-6 col-md-auto">
         <label class="form-label mb-1" style="font-size:12px">Type</label>
-        <select name="type" class="form-select form-select-sm" style="min-width:130px">
+        <select name="type" class="form-select form-select-sm">
           <option value="">All Types</option>
           <option value="payment"    <?= $typeFilter==='payment'    ?'selected':'' ?>>Payments</option>
           <option value="expense"    <?= $typeFilter==='expense'    ?'selected':'' ?>>Expenses</option>
-          <option value="remittance" <?= $typeFilter==='remittance' ?'selected':'' ?>>Remittances</option>
+          <option value="remittance"   <?= $typeFilter==='remittance'   ?'selected':'' ?>>Remittances</option>
+          <option value="vault_return" <?= $typeFilter==='vault_return' ?'selected':'' ?>>Vault Returns to Users</option>
         </select>
       </div>
-      <div class="col-auto">
+      <div class="col-6 col-md-auto">
         <label class="form-label mb-1" style="font-size:12px">Unit</label>
-        <select name="unit_id" class="form-select form-select-sm" style="min-width:150px">
+        <select name="unit_id" class="form-select form-select-sm">
           <option value="">All Units</option>
           <?php foreach ($units as $u): ?>
           <option value="<?= $u['id'] ?>" <?= $unitFilter===$u['id']?'selected':'' ?>><?= clean($u['unit_name']) ?></option>
           <?php endforeach; ?>
         </select>
       </div>
-      <div class="col-auto">
+      <div class="col-6 col-md-auto">
         <label class="form-label mb-1" style="font-size:12px">Recorded By</label>
-        <select name="user_id" class="form-select form-select-sm" style="min-width:150px">
+        <select name="user_id" class="form-select form-select-sm">
           <option value="">All Users</option>
           <?php foreach ($users as $u): ?>
           <option value="<?= $u['id'] ?>" <?= $userFilter===$u['id']?'selected':'' ?>><?= clean($u['full_name']) ?></option>
           <?php endforeach; ?>
         </select>
       </div>
-      <div class="col-auto d-flex gap-2">
+      <div class="col-12 col-md-auto d-flex gap-2">
         <button type="submit" class="btn btn-primary btn-sm"><i class="fa-solid fa-filter me-1"></i>Apply</button>
         <a href="transactions.php" class="btn btn-secondary btn-sm">Reset</a>
       </div>
@@ -248,15 +274,21 @@ function statusBadge(string $type, string $status, ?string $deletedAt = null): s
         $isDeleted  = !empty($tx['deleted_at']);
         $isVoided   = $tx['tx_type'] === 'payment' && $tx['status'] === 'voided' && !$isDeleted;
         $rowStyle   = ($isVoided || $isDeleted) ? ' style="opacity:0.55"' : '';
-        $amtColor   = $tx['tx_type'] === 'expense' ? 'var(--danger)' : ($tx['tx_type'] === 'remittance' ? 'var(--info)' : 'var(--success)');
+        $amtColor   = match($tx['tx_type']) {
+            'expense'      => 'var(--danger)',
+            'remittance'   => 'var(--info)',
+            'vault_return' => 'var(--info)',
+            default        => 'var(--success)',
+        };
         $refEsc     = addslashes(clean($tx['reference'] ?? ''));
 
         // Navigate link to source page
         $navUrl = match($tx['tx_type']) {
-            'payment'    => '../payments/collection.php?month=' . (int)$tx['period_month'] . '&year=' . (int)$tx['period_year'],
-            'expense'    => '../expenses.php',
-            'remittance' => '../cash.php',
-            default      => '#',
+            'payment'      => '../payments/collection.php?month=' . (int)$tx['period_month'] . '&year=' . (int)$tx['period_year'],
+            'expense'      => '../expenses.php',
+            'remittance'   => '../cash.php',
+            'vault_return' => '../admin/vault.php',
+            default        => '#',
         };
       ?>
       <tr<?= $rowStyle ?> data-type="<?= $tx['tx_type'] ?>">
@@ -338,6 +370,10 @@ function deleteTx(txType, id) {
     apiUrl = '../api/expenses_api.php';
     action = 'delete_expense';
     msg    = 'Delete this expense? The linked cash record will also be removed.';
+  } else if (txType === 'vault_return') {
+    apiUrl = '../admin/vault.php';
+    action = 'delete_user_return';
+    msg    = 'Delete this vault-to-user return? The user\'s cash on hand will decrease by the amount.';
   } else {
     apiUrl = '../api/cash_api.php';
     action = 'delete_cash_tx';

@@ -1,5 +1,8 @@
 <?php
-// payments/soa_pdf_download.php — Server-side PDF generation via Chromium headless
+// payments/soa_pdf_download.php
+// Renders the Statement of Account as a real PDF via Chromium headless.
+// The HTML is generated in-process by including soa_pdf.php under output
+// buffering — no self-HTTP-call, no session forwarding, no port assumption.
 
 session_start();
 require_once '../config/db.php';
@@ -10,70 +13,38 @@ $unitId   = (int)($_GET['unit_id']   ?? 0);
 $dateFrom = $_GET['date_from'] ?? date('Y-01-01');
 $dateTo   = $_GET['date_to']   ?? date('Y-m-d');
 
-if (!$unitId) {
-    http_response_code(400);
-    die('Unit ID required.');
-}
+if (!$unitId) { http_response_code(400); die('Unit ID required.'); }
 
-// Fetch unit name for the filename
 $s = $pdo->prepare("SELECT unit_name FROM rental_units WHERE id=?");
 $s->execute([$unitId]);
 $unitName = $s->fetchColumn() ?: 'Unit';
 
-$sessionId = session_id();
-session_write_close(); // Release session lock before making internal HTTP request
+// Render the SoA HTML in-process. soa_pdf.php reads from $_GET (already set
+// above) and echoes a full HTML document. Output-buffer it instead of
+// streaming to the browser.
+ob_start();
+include __DIR__ . '/soa_pdf.php';
+$html = ob_get_clean();
 
-// Build the internal URL to fetch the rendered SOA HTML
-$params = http_build_query([
-    'unit_id'   => $unitId,
-    'date_from' => $dateFrom,
-    'date_to'   => $dateTo,
-]);
-$soaUrl = 'http://localhost:49200/payments/soa_pdf.php?' . $params;
-
-$ctx = stream_context_create([
-    'http' => [
-        'header'  => "Cookie: PHPSESSID=$sessionId\r\n",
-        'timeout' => 30,
-    ]
-]);
-$html = @file_get_contents($soaUrl, false, $ctx);
-if ($html === false || strlen($html) < 100) {
+if (!is_string($html) || strlen($html) < 100) {
     http_response_code(500);
-    die('Could not fetch SOA page. Ensure the server is running on localhost:8888.');
+    die('Statement of Account rendered empty — cannot generate PDF.');
 }
 
-// Rewrite relative asset paths to absolute file:// paths so Chromium can load them
-$assetsBase = 'file:///home/bulik/apps/laskie/assets/vendor/';
-$html = str_replace('../assets/vendor/', $assetsBase, $html);
+// Rewrite relative asset references so chromium can load them from disk
+// when rendering the temp HTML file. pdfAssetsBaseUrl() resolves to the
+// real path of assets/vendor/ — no hardcoded paths.
+$html = str_replace('../assets/vendor/', pdfAssetsBaseUrl(), $html);
 
-// Write HTML to a temp file
-$tmpHtml = tempnam('/tmp', 'soa_') . '.html';
-$tmpPdf  = sys_get_temp_dir() . '/soa_' . uniqid() . '.pdf';
-file_put_contents($tmpHtml, $html);
-
-// Run Chromium headless
-$cmd = sprintf(
-    '/usr/bin/chromium --headless --disable-gpu --no-sandbox --disable-dev-shm-usage'
-    . ' --print-to-pdf=%s --print-to-pdf-no-header %s 2>/dev/null',
-    escapeshellarg($tmpPdf),
-    escapeshellarg('file://' . $tmpHtml)
-);
-exec($cmd, $cmdOut, $exitCode);
-
-@unlink($tmpHtml);
-
-if ($exitCode !== 0 || !file_exists($tmpPdf) || filesize($tmpPdf) === 0) {
-    @unlink($tmpPdf);
+try {
+    $tmpPdf = renderHtmlToPdf($html);
+} catch (Throwable $e) {
     http_response_code(500);
-    die('PDF generation failed (Chromium exit code ' . $exitCode . '). '
-      . 'Check /usr/bin/chromium exists and is executable by www-data.');
+    die(htmlspecialchars($e->getMessage(), ENT_QUOTES, 'UTF-8'));
 }
 
-// Sanitize unit name for use in filename
-$safeName = preg_replace('/[^A-Za-z0-9\-_]/', '_', $unitName);
-$safeName = preg_replace('/_+/', '_', trim($safeName, '_'));
-$filename = 'SOA-' . $safeName . '-' . $dateFrom . '-to-' . $dateTo . '.pdf';
+$safeName = preg_replace('/_+/', '_', trim(preg_replace('/[^A-Za-z0-9\-_]/', '_', $unitName), '_'));
+$filename = "SOA-{$safeName}-{$dateFrom}-to-{$dateTo}.pdf";
 
 header('Content-Type: application/pdf');
 header('Content-Disposition: attachment; filename="' . $filename . '"');

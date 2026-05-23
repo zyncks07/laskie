@@ -21,26 +21,29 @@ $years = array_unique(array_column($periodRows,'y'));
 if (!in_array($curYear,$years)) array_unshift($years,$curYear);
 rsort($years);
 
+[$selStart, $selEnd] = monthRange($selMonth, $selYear);
+
 // ── Period totals ─────────────────────────────────────────────
 $totals = $pdo->prepare("
     SELECT
-        COALESCE(SUM(CASE WHEN transaction_type='received' THEN amount ELSE 0 END),0) AS total_received,
-        COALESCE(SUM(CASE WHEN transaction_type='remitted' THEN amount ELSE 0 END),0) AS total_remitted,
-        COALESCE(SUM(CASE WHEN transaction_type='expense'  THEN amount ELSE 0 END),0) AS total_expenses
+        COALESCE(SUM(CASE WHEN transaction_type='received'     THEN amount ELSE 0 END),0) AS total_received,
+        COALESCE(SUM(CASE WHEN transaction_type='remitted'     THEN amount ELSE 0 END),0) AS total_remitted,
+        COALESCE(SUM(CASE WHEN transaction_type='expense'      THEN amount ELSE 0 END),0) AS total_expenses,
+        COALESCE(SUM(CASE WHEN transaction_type='vault_return' THEN amount ELSE 0 END),0) AS total_vault_returns
     FROM cash_transactions
-    WHERE user_id=? AND MONTH(transaction_date)=? AND YEAR(transaction_date)=?
+    WHERE user_id=? AND transaction_date >= ? AND transaction_date < ?
 ");
-$totals->execute([$myId,$selMonth,$selYear]);
+$totals->execute([$myId,$selStart,$selEnd]);
 $tot = $totals->fetch();
 // ── Expenses breakdown ────────────────────────────────────────
 $expBreak = $pdo->prepare("
     SELECT ec.name AS category, COALESCE(SUM(e.amount),0) AS total, COUNT(*) AS count
     FROM expenses e
     LEFT JOIN expense_categories ec ON e.category_id=ec.id
-    WHERE e.recorded_by=? AND MONTH(e.expense_date)=? AND YEAR(e.expense_date)=?
+    WHERE e.recorded_by=? AND e.expense_date >= ? AND e.expense_date < ?
     GROUP BY ec.id ORDER BY total DESC
 ");
-$expBreak->execute([$myId,$selMonth,$selYear]);
+$expBreak->execute([$myId,$selStart,$selEnd]);
 $expBreakdown = $expBreak->fetchAll();
 
 // ── All expense rows ──────────────────────────────────────────
@@ -49,10 +52,10 @@ $expRows = $pdo->prepare("
     FROM expenses e
     LEFT JOIN expense_categories ec ON e.category_id=ec.id
     LEFT JOIN rental_units ru       ON e.unit_id=ru.id
-    WHERE e.recorded_by=? AND MONTH(e.expense_date)=? AND YEAR(e.expense_date)=?
+    WHERE e.recorded_by=? AND e.expense_date >= ? AND e.expense_date < ?
     ORDER BY e.expense_date DESC
 ");
-$expRows->execute([$myId,$selMonth,$selYear]);
+$expRows->execute([$myId,$selStart,$selEnd]);
 $myExpenses = $expRows->fetchAll();
 
 // ── Payments received ─────────────────────────────────────────
@@ -62,28 +65,28 @@ $payRows = $pdo->prepare("
     LEFT JOIN rental_units ru ON p.unit_id=ru.id
     LEFT JOIN tenants t       ON p.tenant_id=t.id
     LEFT JOIN service_types st ON p.service_type_id=st.id
-    WHERE p.received_by=? AND MONTH(p.payment_date)=? AND YEAR(p.payment_date)=? AND p.status != 'voided' AND p.deleted_at IS NULL
+    WHERE p.received_by=? AND p.payment_date >= ? AND p.payment_date < ? AND p.status != 'voided' AND p.deleted_at IS NULL
     ORDER BY p.payment_date DESC
 ");
-$payRows->execute([$myId,$selMonth,$selYear]);
+$payRows->execute([$myId,$selStart,$selEnd]);
 $myPayments = $payRows->fetchAll();
 
 // ── Remittances ───────────────────────────────────────────────
 $remitRows = $pdo->prepare("
     SELECT * FROM cash_transactions
-    WHERE user_id=? AND transaction_type='remitted' AND MONTH(transaction_date)=? AND YEAR(transaction_date)=?
+    WHERE user_id=? AND transaction_type='remitted' AND transaction_date >= ? AND transaction_date < ?
     ORDER BY transaction_date DESC
 ");
-$remitRows->execute([$myId,$selMonth,$selYear]);
+$remitRows->execute([$myId,$selStart,$selEnd]);
 $myRemits = $remitRows->fetchAll();
 
 // ── Raw logs ──────────────────────────────────────────────────
 $logRows = $pdo->prepare("
     SELECT * FROM system_logs
-    WHERE user_id=? AND MONTH(created_at)=? AND YEAR(created_at)=?
+    WHERE user_id=? AND created_at >= ? AND created_at < ?
     ORDER BY created_at DESC LIMIT 500
 ");
-$logRows->execute([$myId,$selMonth,$selYear]);
+$logRows->execute([$myId,$selStart,$selEnd]);
 $myLogs = $logRows->fetchAll();
 
 logActivity($pdo,'VIEW_MY_SUMMARY','MySummary',"Viewed own summary for $selMonth/$selYear");

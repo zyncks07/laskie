@@ -10,6 +10,7 @@ $depth = '../';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     define('JSON_RESPONSE', true);
+    csrfRequirePost();
     $action = $_POST['action'] ?? '';
 
     if ($action === 'save_tenant') {
@@ -191,7 +192,7 @@ include '../includes/header.php';
 
 <!-- Docs Modal -->
 <div class="modal fade" id="docsModal" tabindex="-1">
-  <div class="modal-dialog modal-lg">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable">
     <div class="modal-content">
       <div class="modal-header">
         <h5 class="modal-title" id="docsTitle">Documents</h5>
@@ -342,7 +343,7 @@ function uploadDoc() {
   fd.append('external_url', document.getElementById('dUrl').value);
   const fileInput = document.getElementById('dFile');
   if (fileInput.files[0]) fd.append('doc_file', fileInput.files[0]);
-  fetch('tenants.php', {method:'POST', body:fd, credentials:'same-origin'})
+  fetch('tenants.php', {method:'POST', body:fd, credentials:'same-origin', headers: window.csrfHeaders()})
     .then(r=>r.json())
     .then(res => {
       if (!res.success) { showToast(res.error,'error'); return; }

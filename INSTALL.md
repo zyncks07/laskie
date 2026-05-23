@@ -31,10 +31,27 @@ apt install php8.2 php8.2-mysql php8.2-mbstring php8.2-xml \
 # Install MySQL
 apt install mysql-server -y
 
+# Install Chromium — required for PDF generation
+# (Statement of Account, Audit Report downloads use chromium --headless --print-to-pdf)
+apt install chromium -y
+
+# Install Composer — required to run the PHPUnit test suite
+apt install composer -y
+
 # Enable Apache modules
 a2enmod rewrite headers expires deflate
 systemctl restart apache2
 ```
+
+> **PDF generator note:** the SoA / audit PDF downloads invoke `/usr/bin/chromium`
+> in-process. If your distro packages it under a different name (e.g.
+> `chromium-browser`, `google-chrome`) the app auto-falls-back to those paths.
+> To use a custom path, set `chromium_path` in the `settings` table:
+> ```sql
+> INSERT INTO settings (setting_key, setting_value)
+> VALUES ('chromium_path', '/usr/local/bin/chrome')
+> ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value);
+> ```
 
 ---
 
@@ -200,6 +217,32 @@ Then visit: `http://laskie.local/`
 
 > ⚠️ **Change the password immediately** after first login:  
 > Go to **Admin → Accounts → Edit your account → set new password**
+
+---
+
+## STEP 8.5 — Install Composer dependencies + run tests (developers only)
+
+Skip on production hosts that don't run the test suite.
+
+```bash
+cd /var/www/laskie
+composer install
+
+# Fast Unit suite — pure PHP, no DB needed (~50ms)
+vendor/bin/phpunit
+# Or via the composer script:
+composer test-unit
+
+# Integration suite — needs the DB connection from config/db.php (~2s)
+composer test-integration
+
+# Everything (Unit + Integration)
+vendor/bin/phpunit --testsuite Unit --testsuite Integration
+```
+
+Integration tests tag every row they insert with the marker
+`PHPUNIT_INTEGRATION_TEST` and clean them up in tearDown(), so the suite
+is safe to run repeatedly against the live DB without leaving residue.
 
 ---
 

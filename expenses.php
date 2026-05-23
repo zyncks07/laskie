@@ -91,7 +91,7 @@ include 'includes/header.php';
         <label class="form-label">To Date</label>
         <input type="date" id="fDateTo" class="form-control form-control-sm" title="Overrides Month/Year when set">
       </div>
-      <div class="col-auto d-flex gap-2">
+      <div class="col-12 col-md-auto d-flex gap-2">
         <button class="btn btn-primary btn-sm" onclick="loadExpenses()"><i class="fa-solid fa-search me-1"></i>Filter</button>
         <button class="btn btn-outline-secondary btn-sm" onclick="resetFilters()"><i class="fa-solid fa-rotate me-1"></i>Reset</button>
       </div>
@@ -182,7 +182,7 @@ include 'includes/header.php';
 
 <!-- Record Expense Modal -->
 <div class="modal fade" id="expenseModal" tabindex="-1">
-  <div class="modal-dialog modal-lg">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable">
     <div class="modal-content">
       <div class="modal-header">
         <h5 class="modal-title" id="expModalTitle"><i class="fa-solid fa-receipt me-2"></i>Record Expense</h5>
@@ -470,7 +470,7 @@ function saveExpense() {
   var file = document.getElementById('expReceiptFile').files[0];
   if (file) fd.append('receipt_file', file);
 
-  fetch('api/expenses_api.php', {method:'POST', body:fd, credentials:'same-origin'})
+  fetch('api/expenses_api.php', {method:'POST', body:fd, credentials:'same-origin', headers: window.csrfHeaders()})
     .then(function(r) { return r.json(); })
     .then(function(res) {
       if (!res.success) {

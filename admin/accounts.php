@@ -9,6 +9,7 @@ $depth = '../';
 // Handle actions
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     define('JSON_RESPONSE', true);
+    csrfRequirePost();
     header('Content-Type: application/json');
     $action = $_POST['action'] ?? '';
 

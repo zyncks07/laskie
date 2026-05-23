@@ -70,7 +70,7 @@ function verifyMaster() {
   var fd = new FormData();
   fd.append('action', 'verify_master');
   fd.append('password', pass);
-  fetch('../api/settings_api.php', {method:'POST', body:fd, credentials:'same-origin'})
+  fetch('../api/settings_api.php', {method:'POST', body:fd, credentials:'same-origin', headers: window.csrfHeaders()})
     .then(function(r) { return r.json(); })
     .then(function(res) {
       document.getElementById('lockSpinner').style.display = 'none';
@@ -434,7 +434,7 @@ function verifyMaster() {
 function lockSettings() {
   var fd = new FormData();
   fd.append('action', 'lock');
-  fetch('../api/settings_api.php', {method:'POST', body:fd, credentials:'same-origin'})
+  fetch('../api/settings_api.php', {method:'POST', body:fd, credentials:'same-origin', headers: window.csrfHeaders()})
     .then(function() { location.reload(); });
 }
 
@@ -495,7 +495,7 @@ function importDb() {
   fd.append('action', 'import_db');
   fd.append('sql_file', file);
   showImpMsg('success', 'Importing... this may take a moment.');
-  fetch('../api/settings_api.php', {method:'POST', body:fd, credentials:'same-origin'})
+  fetch('../api/settings_api.php', {method:'POST', body:fd, credentials:'same-origin', headers: window.csrfHeaders()})
     .then(function(r) { return r.json(); })
     .then(function(res) {
       if (res.success) {
@@ -512,7 +512,7 @@ function importReceipts() {
   var file = document.getElementById('zipFile').files[0];
   if (!file) { showImpMsg('error', 'Select a .zip file first.'); return; }
   var fd = new FormData(); fd.append('action','import_receipts'); fd.append('zip_file', file);
-  fetch('../api/settings_api.php', {method:'POST', body:fd, credentials:'same-origin'})
+  fetch('../api/settings_api.php', {method:'POST', body:fd, credentials:'same-origin', headers: window.csrfHeaders()})
     .then(function(r) { return r.json(); })
     .then(function(res) { showImpMsg(res.success ? 'success' : 'error', res.msg || res.error || 'Error'); })
     .catch(function(e) { showImpMsg('error', e.message); });
@@ -522,7 +522,7 @@ function importAccounts() {
   var file = document.getElementById('accountsFile').files[0];
   if (!file) { showImpMsg('error', 'Select a .json file first.'); return; }
   var fd = new FormData(); fd.append('action','import_accounts'); fd.append('json_file', file);
-  fetch('../api/settings_api.php', {method:'POST', body:fd, credentials:'same-origin'})
+  fetch('../api/settings_api.php', {method:'POST', body:fd, credentials:'same-origin', headers: window.csrfHeaders()})
     .then(function(r) { return r.json(); })
     .then(function(res) { showImpMsg(res.success ? 'success' : 'error', res.msg || res.error || 'Error'); })
     .catch(function(e) { showImpMsg('error', e.message); });
@@ -532,7 +532,7 @@ function importSettings() {
   var file = document.getElementById('settingsFile').files[0];
   if (!file) { showImpMsg('error', 'Select a .json file first.'); return; }
   var fd = new FormData(); fd.append('action','import_settings'); fd.append('json_file', file);
-  fetch('../api/settings_api.php', {method:'POST', body:fd, credentials:'same-origin'})
+  fetch('../api/settings_api.php', {method:'POST', body:fd, credentials:'same-origin', headers: window.csrfHeaders()})
     .then(function(r) { return r.json(); })
     .then(function(res) { showImpMsg(res.success ? 'success' : 'error', res.msg || res.error || 'Error'); })
     .catch(function(e) { showImpMsg('error', e.message); });
@@ -554,7 +554,7 @@ function doFactoryReset() {
   btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Resetting...';
 
   var fd = new FormData(); fd.append('action', 'factory_reset');
-  fetch('../api/settings_api.php', {method:'POST', body:fd, credentials:'same-origin'})
+  fetch('../api/settings_api.php', {method:'POST', body:fd, credentials:'same-origin', headers: window.csrfHeaders()})
     .then(function(r) { return r.json(); })
     .then(function(res) {
       var el = document.getElementById('resetMsg');

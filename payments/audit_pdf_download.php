@@ -1,5 +1,8 @@
 <?php
-// payments/audit_pdf_download.php — Server-side PDF generation via Chromium headless
+// payments/audit_pdf_download.php
+// Renders the admin audit report as a real PDF via Chromium headless.
+// HTML is generated in-process (no self-HTTP-call) — see soa_pdf_download.php
+// for the same pattern.
 
 session_start();
 require_once '../config/db.php';
@@ -14,45 +17,22 @@ if (empty($_SESSION['settings_unlocked'])) {
 $year  = (int)($_GET['year']  ?? date('Y'));
 $month = (int)($_GET['month'] ?? 0);
 
-$sessionId = session_id();
-session_write_close();
+ob_start();
+include __DIR__ . '/audit_pdf.php';
+$html = ob_get_clean();
 
-$params = http_build_query(['year' => $year, 'month' => $month]);
-$auditUrl = 'http://localhost:49200/payments/audit_pdf.php?' . $params;
-
-$ctx = stream_context_create([
-    'http' => [
-        'header'  => "Cookie: PHPSESSID=$sessionId\r\n",
-        'timeout' => 30,
-    ]
-]);
-$html = @file_get_contents($auditUrl, false, $ctx);
-if ($html === false || strlen($html) < 100) {
+if (!is_string($html) || strlen($html) < 100) {
     http_response_code(500);
-    die('Could not fetch audit report page. Ensure the server is running on localhost:8888.');
+    die('Audit report rendered empty — cannot generate PDF.');
 }
 
-$assetsBase = 'file:///home/bulik/apps/laskie/assets/vendor/';
-$html = str_replace('../assets/vendor/', $assetsBase, $html);
+$html = str_replace('../assets/vendor/', pdfAssetsBaseUrl(), $html);
 
-$tmpHtml = tempnam('/tmp', 'audit_') . '.html';
-$tmpPdf  = sys_get_temp_dir() . '/audit_' . uniqid() . '.pdf';
-file_put_contents($tmpHtml, $html);
-
-$cmd = sprintf(
-    '/usr/bin/chromium --headless --disable-gpu --no-sandbox --disable-dev-shm-usage'
-    . ' --print-to-pdf=%s --print-to-pdf-no-header %s 2>/dev/null',
-    escapeshellarg($tmpPdf),
-    escapeshellarg('file://' . $tmpHtml)
-);
-exec($cmd, $cmdOut, $exitCode);
-
-@unlink($tmpHtml);
-
-if ($exitCode !== 0 || !file_exists($tmpPdf) || filesize($tmpPdf) === 0) {
-    @unlink($tmpPdf);
+try {
+    $tmpPdf = renderHtmlToPdf($html);
+} catch (Throwable $e) {
     http_response_code(500);
-    die('PDF generation failed (Chromium exit code ' . $exitCode . ').');
+    die(htmlspecialchars($e->getMessage(), ENT_QUOTES, 'UTF-8'));
 }
 
 $period = $month > 0 ? sprintf('%04d-%02d', $year, $month) : (string)$year;

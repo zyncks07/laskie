@@ -2,11 +2,11 @@
 </div><!-- .page-content -->
 </div><!-- #main -->
 
-<script src="<?= $depth ?>assets/vendor/bootstrap.bundle.min.js"></script>
-<script src="<?= $depth ?>assets/vendor/jquery.min.js"></script>
-<script src="<?= $depth ?>assets/vendor/jquery.dataTables.min.js"></script>
-<script src="<?= $depth ?>assets/vendor/dataTables.bootstrap5.min.js"></script>
-<script src="<?= $depth ?>assets/vendor/chart.umd.min.js"></script>
+<?= vendorJsTag($depth, 'bootstrap.bundle.min.js') ?>
+<?= vendorJsTag($depth, 'jquery.min.js') ?>
+<?= vendorJsTag($depth, 'jquery.dataTables.min.js') ?>
+<?= vendorJsTag($depth, 'dataTables.bootstrap5.min.js') ?>
+<?= vendorJsTag($depth, 'chart.umd.min.js') ?>
 <script src="<?= $depth ?>assets/js/app.js"></script>
 
 <script>
@@ -31,18 +31,11 @@ function showToast(msg, type = 'success') {
     setTimeout(() => { t.classList.remove('show'); setTimeout(() => t.remove(), 300); }, 3500);
 }
 
-// AJAX helper
-function apiPost(url, data, cb) {
-    const fd = data instanceof FormData ? data : (() => {
-        const f = new FormData();
-        Object.entries(data).forEach(([k,v]) => v !== undefined && f.append(k, v));
-        return f;
-    })();
-    fetch(url, { method:'POST', body: fd, credentials:'same-origin' })
-        .then(r => r.json())
-        .then(d => cb(null, d))
-        .catch(e => cb(e.message, null));
-}
+// NOTE: apiPost is NOT redefined here. assets/js/app.js sets window.apiPost
+// with built-in CSRF handling — page-specific `apiPost(...)` calls resolve
+// to it via the window global. A previous duplicate inline definition that
+// re-assigned window.apiPost to a wrapper calling itself caused infinite
+// recursion (RangeError) and silent spinner hangs.
 
 // Confirm delete helper
 function confirmDelete(msg, cb) {

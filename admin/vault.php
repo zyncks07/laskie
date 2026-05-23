@@ -10,6 +10,7 @@ $depth = '../';
 // ── POST handlers ─────────────────────────────────────────────
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     define('JSON_RESPONSE', true);
+    csrfRequirePost();
     $action = $_POST['action'] ?? '';
 
     if ($action === 'add_remittance') {
@@ -119,6 +120,76 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         jsonOk(['msg'=>'Return updated.']);
     }
 
+    // ── Vault Returns to Users ───────────────────────────────────
+    // Admin-only flow: cash issued from the vault back to a user (admin,
+    // accountant, or staff) — fixes excessive remittances or funds a
+    // planned expense when the user has zero cash on hand by mistake.
+    // Stored as cash_transactions.transaction_type='vault_return': it
+    // INCREASES the user's cash_on_hand and DECREASES the vault balance.
+    if ($action === 'add_user_return') {
+        $userId = (int)($_POST['user_id'] ?? 0);
+        $amount = (float)($_POST['amount'] ?? 0);
+        $date   = trim($_POST['return_date'] ?? '');
+        $notes  = nullOrStr($_POST['notes'] ?? '');
+        if (!$userId)                  jsonErr('Please select a user.');
+        if (!money_is_pos($amount))    jsonErr('Amount must be greater than zero.');
+        if (!$date || !strtotime($date)) jsonErr('Valid date required.');
+        // Confirm the target user actually exists + is active
+        $u = $pdo->prepare("SELECT full_name FROM users WHERE id=? AND status='active'");
+        $u->execute([$userId]);
+        $name = $u->fetchColumn();
+        if (!$name) jsonErr('Selected user is not active or does not exist.');
+
+        $pdo->prepare(
+            "INSERT INTO cash_transactions (user_id,transaction_type,amount,transaction_date,notes)
+             VALUES (?,'vault_return',?,?,?)"
+        )->execute([$userId, $amount, $date, $notes]);
+        logActivity($pdo,'VAULT_USER_RETURN','Vault',"Issued " . money($amount) . " from vault to $name (user #$userId)");
+        jsonOk(['msg' => "Issued " . money($amount) . " from vault to $name."]);
+    }
+
+    if ($action === 'edit_user_return') {
+        $id     = (int)($_POST['id'] ?? 0);
+        $userId = (int)($_POST['user_id'] ?? 0);
+        $amount = (float)($_POST['amount'] ?? 0);
+        $date   = trim($_POST['return_date'] ?? '');
+        $notes  = nullOrStr($_POST['notes'] ?? '');
+        if (!$id)                      jsonErr('Return ID required.');
+        if (!$userId)                  jsonErr('Please select a user.');
+        if (!money_is_pos($amount))    jsonErr('Amount must be greater than zero.');
+        if (!$date || !strtotime($date)) jsonErr('Valid date required.');
+        $chk = $pdo->prepare("SELECT id FROM cash_transactions WHERE id=? AND transaction_type='vault_return'");
+        $chk->execute([$id]);
+        if (!$chk->fetch()) jsonErr('Vault return not found.');
+        $pdo->prepare(
+            "UPDATE cash_transactions SET user_id=?, amount=?, transaction_date=?, notes=?
+             WHERE id=? AND transaction_type='vault_return'"
+        )->execute([$userId, $amount, $date, $notes, $id]);
+        logActivity($pdo,'EDIT_VAULT_USER_RETURN','Vault',"Edited vault return #$id (" . money($amount) . " to user #$userId)");
+        jsonOk(['msg' => 'Vault return updated.']);
+    }
+
+    if ($action === 'delete_user_return') {
+        $id = (int)($_POST['id'] ?? 0);
+        if (!$id) jsonErr('Return ID required.');
+        $chk = $pdo->prepare("SELECT amount FROM cash_transactions WHERE id=? AND transaction_type='vault_return'");
+        $chk->execute([$id]);
+        $row = $chk->fetch();
+        if (!$row) jsonErr('Vault return not found.');
+        $pdo->prepare("DELETE FROM cash_transactions WHERE id=? AND transaction_type='vault_return'")->execute([$id]);
+        logActivity($pdo,'DELETE_VAULT_USER_RETURN','Vault',"Deleted vault return #$id (" . money($row['amount']) . ")");
+        jsonOk(['msg' => 'Vault return deleted.']);
+    }
+
+    if ($action === 'get_user_return') {
+        $id = (int)($_POST['id'] ?? 0);
+        $r  = $pdo->prepare("SELECT * FROM cash_transactions WHERE id=? AND transaction_type='vault_return'");
+        $r->execute([$id]);
+        $data = $r->fetch();
+        if (!$data) jsonErr('Vault return not found.');
+        jsonOk(['record' => $data]);
+    }
+
     if ($action === 'save_recipient') {
         $id    = (int)($_POST['id'] ?? 0);
         $name  = trim($_POST['name'] ?? '');
@@ -184,9 +255,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             LEFT JOIN dividend_recipients dr ON dr.id = dret.recipient_id
             LEFT JOIN users u ON u.id = dret.created_by
             WHERE YEAR(dret.return_date)=? AND (?=0 OR MONTH(dret.return_date)=?)
+            UNION ALL
+            SELECT 'user_return', ct2.id, ct2.transaction_date,
+                   CAST(NULL AS CHAR) COLLATE utf8mb4_general_ci,
+                   CONVERT(u2.full_name USING utf8mb4) COLLATE utf8mb4_general_ci,
+                   ct2.amount, ct2.notes,
+                   CAST(0 AS UNSIGNED)
+            FROM cash_transactions ct2
+            LEFT JOIN users u2 ON u2.id = ct2.user_id
+            WHERE ct2.transaction_type='vault_return'
+              AND YEAR(ct2.transaction_date)=? AND (?=0 OR MONTH(ct2.transaction_date)=?)
             ORDER BY log_date DESC, log_type
         ");
-        $rows->execute([$yr,$mo,$mo,$yr,$mo,$mo,$yr,$mo,$mo]);
+        $rows->execute([$yr,$mo,$mo,$yr,$mo,$mo,$yr,$mo,$mo,$yr,$mo,$mo]);
         jsonOk(['logs'=>$rows->fetchAll()]);
     }
 
@@ -195,10 +276,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 // ── Page data ─────────────────────────────────────────────────
 $selectedYear  = (int)($_GET['year'] ?? date('Y'));
-$totalRemitted = (float)$pdo->query("SELECT COALESCE(SUM(amount),0) FROM cash_transactions WHERE transaction_type='remitted'")->fetchColumn();
-$totalDistrib  = (float)$pdo->query("SELECT COALESCE(SUM(amount),0) FROM dividend_distributions")->fetchColumn();
-$totalReturned = (float)$pdo->query("SELECT COALESCE(SUM(amount),0) FROM dividend_returns")->fetchColumn();
-$vaultBalance  = $totalRemitted - $totalDistrib + $totalReturned;
+$totalRemitted     = (float)$pdo->query("SELECT COALESCE(SUM(amount),0) FROM cash_transactions WHERE transaction_type='remitted'")->fetchColumn();
+$totalDistrib      = (float)$pdo->query("SELECT COALESCE(SUM(amount),0) FROM dividend_distributions")->fetchColumn();
+$totalReturned     = (float)$pdo->query("SELECT COALESCE(SUM(amount),0) FROM dividend_returns")->fetchColumn();
+$totalUserReturned = (float)$pdo->query("SELECT COALESCE(SUM(amount),0) FROM cash_transactions WHERE transaction_type='vault_return'")->fetchColumn();
+// vault_return ⇒ cash leaves the vault back to a user, so it subtracts from the balance.
+$vaultBalance      = $totalRemitted - $totalDistrib + $totalReturned - $totalUserReturned;
 
 // Chart: monthly remittances per user for selected year
 $cr = $pdo->prepare("
@@ -221,6 +304,15 @@ $chartByUser = array_values($chartByUser);
 
 // All active users for remittance dropdown
 $allUsers = $pdo->query("SELECT id, full_name FROM users WHERE status='active' ORDER BY full_name")->fetchAll();
+
+// Vault → User return records (cash issued from vault back to a user)
+$userReturns = $pdo->query("
+    SELECT ct.id, ct.user_id, ct.amount, ct.transaction_date AS return_date, ct.notes, u.full_name, u.role
+    FROM cash_transactions ct
+    LEFT JOIN users u ON u.id = ct.user_id
+    WHERE ct.transaction_type='vault_return'
+    ORDER BY ct.transaction_date DESC, ct.id DESC
+")->fetchAll();
 
 // Recipient stats
 $recipientStats = $pdo->query("
@@ -297,6 +389,7 @@ include '../includes/header.php';
     <button class="btn btn-primary btn-sm" onclick="openRemittanceModal()"><i class="fa-solid fa-arrow-down-to-line me-1"></i>Record Remittance</button>
     <button class="btn btn-success btn-sm" onclick="openDistributionModal()"><i class="fa-solid fa-money-bill-transfer me-1"></i>Distribute Dividend</button>
     <button class="btn btn-warning btn-sm" onclick="openReturnModal()"><i class="fa-solid fa-rotate-left me-1"></i>Return to Vault</button>
+    <button class="btn btn-info btn-sm" onclick="openUserReturnModal()"><i class="fa-solid fa-hand-holding-dollar me-1"></i>Return to User</button>
     <button class="btn btn-outline-secondary btn-sm" onclick="openRecipientsModal()"><i class="fa-solid fa-users me-1"></i>Recipients</button>
   </div>
 </div>
@@ -433,6 +526,56 @@ include '../includes/header.php';
           <tr style="border-top:2px solid var(--border)">
             <td colspan="2" class="fw-700">Total Returned</td>
             <td class="text-end fw-700" id="retTotal" style="color:var(--warning)"><?= money($totalReturned) ?></td>
+            <td colspan="2"></td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+    <?php endif; ?>
+  </div>
+</div>
+
+<!-- Vault Returns to Users -->
+<div class="card mb-4">
+  <div class="card-body">
+    <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+      <div>
+        <h6 class="mb-0 fw-600"><i class="fa-solid fa-hand-holding-dollar me-2" style="color:var(--info)"></i>Returns to Users <span class="badge bg-info" style="font-size:10px;font-weight:600">admin only</span></h6>
+        <div class="text-muted" style="font-size:11.5px;margin-top:2px">Cash issued back from the vault to a user — corrects excess remittances or funds a planned expense.</div>
+      </div>
+      <button class="btn btn-sm btn-info text-white" onclick="openUserReturnModal()"><i class="fa-solid fa-plus me-1"></i>Issue Cash to User</button>
+    </div>
+    <?php if (empty($userReturns)): ?>
+    <div class="text-center text-muted py-3" style="font-size:13px">No vault returns to users yet.</div>
+    <?php else: ?>
+    <div class="table-responsive">
+      <table class="table table-sm table-hover mb-0" id="userRetTable">
+        <thead>
+          <tr>
+            <th>Date</th><th>Issued To</th><th>Role</th>
+            <th class="text-end">Amount</th><th>Notes</th>
+            <th class="text-center" style="width:70px">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          <?php foreach ($userReturns as $ur): ?>
+          <tr data-user-ret-id="<?= $ur['id'] ?>">
+            <td style="white-space:nowrap;color:var(--text-secondary)"><?= fmtDate($ur['return_date']) ?></td>
+            <td class="fw-600"><?= clean($ur['full_name'] ?? '—') ?></td>
+            <td><span class="badge badge-<?= clean($ur['role'] ?? 'staff') ?>"><?= ucfirst(clean($ur['role'] ?? '—')) ?></span></td>
+            <td class="text-end fw-600" style="color:var(--info)"><?= money((float)$ur['amount']) ?></td>
+            <td class="text-muted" style="font-size:12px"><?= $ur['notes'] ? clean($ur['notes']) : '—' ?></td>
+            <td class="text-center" style="white-space:nowrap">
+              <button class="btn-icon" title="Edit" onclick="openEditUserReturn(<?= $ur['id'] ?>)"><i class="fa-solid fa-pen fa-xs"></i></button>
+              <button class="btn-icon danger" title="Delete" onclick="deleteUserReturn(<?= $ur['id'] ?>)"><i class="fa-solid fa-trash fa-xs"></i></button>
+            </td>
+          </tr>
+          <?php endforeach; ?>
+        </tbody>
+        <tfoot>
+          <tr style="border-top:2px solid var(--border)">
+            <td colspan="3" class="fw-700">Total Issued to Users</td>
+            <td class="text-end fw-700" style="color:var(--info)"><?= money($totalUserReturned) ?></td>
             <td colspan="2"></td>
           </tr>
         </tfoot>
@@ -653,9 +796,55 @@ include '../includes/header.php';
   </div>
 </div>
 
+<!-- Return Cash from Vault to User (admin only) -->
+<div class="modal fade" id="userReturnModal" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="fa-solid fa-hand-holding-dollar me-2" style="color:var(--info)"></i><span id="userReturnTitle">Issue Cash from Vault to User</span></h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="userReturnId">
+        <div id="userReturnMsg" class="alert" style="display:none"></div>
+        <div class="alert alert-info py-2 mb-3" style="font-size:12.5px">
+          <i class="fa-solid fa-circle-info me-1"></i>
+          Use this to correct an over-remittance, or to advance cash for a planned expense when the user has none.
+          This INCREASES the user's cash on hand and DECREASES the vault balance.
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Issue To</label>
+          <select id="userReturnUser" class="form-select">
+            <option value="">— Select user —</option>
+            <?php foreach ($allUsers as $u): ?>
+            <option value="<?= $u['id'] ?>"><?= clean($u['full_name']) ?></option>
+            <?php endforeach; ?>
+          </select>
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Amount (₱)</label>
+          <input type="number" id="userReturnAmount" class="form-control" placeholder="0.00" min="0.01" step="0.01">
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Date</label>
+          <input type="date" id="userReturnDate" class="form-control" value="<?= date('Y-m-d') ?>">
+        </div>
+        <div class="mb-0">
+          <label class="form-label">Notes <span class="text-muted">(optional but recommended)</span></label>
+          <textarea id="userReturnNotes" class="form-control" rows="2" placeholder="e.g. Over-remitted by ₱500 on Apr 28; refund for upcoming repair"></textarea>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button class="btn btn-info text-white" id="userReturnSaveBtn" onclick="saveUserReturn()"><i class="fa-solid fa-check me-1"></i>Issue Cash</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- Manage Recipients -->
 <div class="modal fade" id="recipientsModal" tabindex="-1">
-  <div class="modal-dialog modal-dialog-centered modal-lg">
+  <div class="modal-dialog modal-dialog-centered modal-lg modal-dialog-scrollable">
     <div class="modal-content">
       <div class="modal-header">
         <h5 class="modal-title"><i class="fa-solid fa-users me-2 text-primary-custom"></i>Manage Dividend Recipients</h5>
@@ -1004,9 +1193,10 @@ function loadLogs() {
         <th class="text-end">Amount</th><th>Notes</th><th class="text-center" style="width:70px"></th>
       </tr></thead><tbody>`;
     res.logs.forEach(r => {
-      const isRem  = r.log_type === 'remittance';
-      const isDist = r.log_type === 'distribution';
-      const isRet  = r.log_type === 'return';
+      const isRem      = r.log_type === 'remittance';
+      const isDist     = r.log_type === 'distribution';
+      const isRet      = r.log_type === 'return';
+      const isUserRet  = r.log_type === 'user_return';
       let badge, person, amtColor, actions;
       if (isRem) {
         badge    = `<span class="badge" style="background:#dbeafe;color:#1a3a8f;font-weight:600">Remittance</span>`;
@@ -1019,11 +1209,17 @@ function loadLogs() {
         amtColor = 'var(--success)';
         actions  = `<button class="btn-icon" title="Edit" onclick="openEditDist(${r.id})"><i class="fa-solid fa-pen fa-xs"></i></button>`
                  + `<button class="btn-icon danger" title="Delete" onclick="deleteDistribution(${r.id})"><i class="fa-solid fa-trash fa-xs"></i></button>`;
-      } else {
+      } else if (isRet) {
         badge    = `<span class="badge" style="background:#fef9c3;color:#92400e;font-weight:600">Return</span>`;
         person   = `<span style="color:#92400e">← ${esc(r.recipient_name||'—')}</span> <span class="text-muted" style="font-size:11px">via ${esc(r.person_name||'—')}</span>`;
         amtColor = '#d97706';
         actions  = `<button class="btn-icon danger" title="Delete" onclick="deleteReturn(${r.id})"><i class="fa-solid fa-trash fa-xs"></i></button>`;
+      } else {  // user_return
+        badge    = `<span class="badge" style="background:#e0f2fe;color:#0369a1;font-weight:600">Vault→User</span>`;
+        person   = `<span style="color:#0369a1">→ ${esc(r.recipient_name||'—')}</span>`;
+        amtColor = 'var(--info)';
+        actions  = `<button class="btn-icon" title="Edit" onclick="openEditUserReturn(${r.id})"><i class="fa-solid fa-pen fa-xs"></i></button>`
+                 + `<button class="btn-icon danger" title="Delete" onclick="deleteUserReturn(${r.id})"><i class="fa-solid fa-trash fa-xs"></i></button>`;
       }
       html += `<tr>
         <td style="white-space:nowrap;color:var(--text-secondary)">${esc(r.log_date)}</td>
@@ -1283,6 +1479,82 @@ function deleteReturn(id) {
       delete RET_DATA[id];
       recalcVaultBalance();
       loadLogs();
+    });
+  });
+}
+
+// ── Vault Returns to Users (admin issues cash from vault back to a user) ──
+window.userReturnModal = null;
+document.addEventListener('DOMContentLoaded', () => {
+  const el = document.getElementById('userReturnModal');
+  if (el) window.userReturnModal = new bootstrap.Modal(el);
+});
+
+function openUserReturnModal() {
+  document.getElementById('userReturnTitle').textContent = 'Issue Cash from Vault to User';
+  document.getElementById('userReturnId').value     = '';
+  document.getElementById('userReturnUser').value   = '';
+  document.getElementById('userReturnAmount').value = '';
+  document.getElementById('userReturnDate').value   = new Date().toISOString().split('T')[0];
+  document.getElementById('userReturnNotes').value  = '';
+  document.getElementById('userReturnMsg').style.display = 'none';
+  document.getElementById('userReturnSaveBtn').disabled = false;
+  document.getElementById('userReturnSaveBtn').innerHTML = '<i class="fa-solid fa-check me-1"></i>Issue Cash';
+  window.userReturnModal && window.userReturnModal.show();
+}
+
+function openEditUserReturn(id) {
+  apiPost('../admin/vault.php', {action:'get_user_return', id}, (err, res) => {
+    if (!res || !res.success) { showToast((res&&res.error)||'Failed to load.','error'); return; }
+    const r = res.record;
+    document.getElementById('userReturnTitle').textContent = 'Edit Vault Return to User';
+    document.getElementById('userReturnId').value     = r.id;
+    document.getElementById('userReturnUser').value   = r.user_id;
+    document.getElementById('userReturnAmount').value = r.amount;
+    document.getElementById('userReturnDate').value   = r.transaction_date;
+    document.getElementById('userReturnNotes').value  = r.notes || '';
+    document.getElementById('userReturnMsg').style.display = 'none';
+    document.getElementById('userReturnSaveBtn').disabled = false;
+    document.getElementById('userReturnSaveBtn').innerHTML = '<i class="fa-solid fa-check me-1"></i>Save Changes';
+    window.userReturnModal && window.userReturnModal.show();
+  });
+}
+
+function saveUserReturn() {
+  const btn = document.getElementById('userReturnSaveBtn');
+  if (btn.disabled) return;
+  btn.disabled = true;
+  const id = document.getElementById('userReturnId').value;
+  const data = {
+    action:      id ? 'edit_user_return' : 'add_user_return',
+    id,
+    user_id:     document.getElementById('userReturnUser').value,
+    amount:      document.getElementById('userReturnAmount').value,
+    return_date: document.getElementById('userReturnDate').value,
+    notes:       document.getElementById('userReturnNotes').value
+  };
+  apiPost('../admin/vault.php', data, (err, res) => {
+    btn.disabled = false;
+    if (!res || !res.success) {
+      const m = document.getElementById('userReturnMsg');
+      m.style.display = '';
+      m.className = 'alert alert-danger';
+      m.textContent = (res && res.error) || 'Save failed.';
+      return;
+    }
+    showToast(res.msg, 'success');
+    window.userReturnModal && window.userReturnModal.hide();
+    // Cheap refresh: reload the page so the row + balance + chart all re-render correctly.
+    setTimeout(() => location.reload(), 400);
+  });
+}
+
+function deleteUserReturn(id) {
+  confirmDelete('Delete this vault-return record? The user\'s cash on hand will decrease by the amount.', () => {
+    apiPost('../admin/vault.php', {action:'delete_user_return', id}, (err, res) => {
+      if (!res || !res.success) { showToast((res&&res.error)||'Delete failed.','error'); return; }
+      showToast(res.msg, 'success');
+      setTimeout(() => location.reload(), 400);
     });
   });
 }

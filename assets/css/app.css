@@ -272,9 +272,10 @@ body {
 .badge-occupied   { background:#d1fae5; color:#065f46; }
 .badge-rent       { background:#dbeafe; color:#1e40af; }
 .badge-service    { background:#fef3c7; color:#92400e; }
-.badge-received   { background:#d1fae5; color:#065f46; }
-.badge-remitted   { background:#dbeafe; color:#1e40af; }
-.badge-expense    { background:#fee2e2; color:#991b1b; }
+.badge-received     { background:#d1fae5; color:#065f46; }
+.badge-remitted     { background:#dbeafe; color:#1e40af; }
+.badge-expense      { background:#fee2e2; color:#991b1b; }
+.badge-vault-return { background:#e0f2fe; color:#0369a1; }
 
 /* ─── BUTTONS ─────────────────────────────────────────────── */
 .btn { font-size: 13px; font-weight: 500; border-radius: var(--radius); }
@@ -424,7 +425,15 @@ body {
 .dataTables_wrapper .dataTables_paginate .paginate_button { font-size: 12.5px !important; }
 
 /* ─── RESPONSIVE ──────────────────────────────────────────── */
+@media (max-width: 992px) {
+    .unit-status-scroll { height: 320px !important; }
+}
+
 @media (max-width: 768px) {
+    /* Dashboard chart heights */
+    .db-chart     { height: 160px !important; }
+    .db-chart-grow { min-height: 160px !important; }
+
     #sidebar { transform: translateX(-100%); }
     #sidebar.show { transform: translateX(0); box-shadow: 4px 0 20px rgba(0,0,0,.15); }
     .sidebar-overlay.show { display: block; }
@@ -434,7 +443,28 @@ body {
     .page-title { font-size: 16px; }
     .stat-value { font-size: 18px; }
     .cell-trunc, .cell-trunc-lg { max-width: 120px; }
-    .modal-dialog { margin: 8px; }
+    .modal-dialog { margin: 8px; max-width: calc(100vw - 16px); }
+
+    /* Touch targets — sidebar nav items */
+    .sidebar-nav-item { min-height: 44px; padding: 10px 12px; }
+
+    /* Topbar title: don't let it push the user avatar off-screen */
+    .topbar-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: calc(100vw - 120px); }
+
+    /* Modals: allow body to scroll instead of the page */
+    .modal-content { max-height: calc(100vh - 32px); display: flex; flex-direction: column; }
+    .modal-body { overflow-y: auto; flex: 1; }
+
+    /* DataTable controls wrap on small screens */
+    .dataTables_wrapper .d-flex { flex-wrap: wrap; }
+    .dataTables_wrapper .dataTables_filter input { min-width: 120px; }
+
+    /* Cash hero: smaller main balance number */
+    .cash-hero-amount { font-size: 24px !important; }
+
+/* Cash hero sub-cards: tighter padding + smaller amount font so long figures fit in col-4 */
+    .cash-stat-inner { padding: 8px 4px !important; }
+    .cash-stat-val   { font-size: 13px !important; }
 }
 
 @media (max-width: 576px) {
@@ -445,6 +475,17 @@ body {
     .stat-card { padding: 10px 11px; gap: 9px; }
     .stat-value { font-size: 16px; }
     .stat-icon { width: 36px; height: 36px; font-size: 15px; }
+
+    /* Stack modal footer buttons vertically */
+    .modal-footer { flex-direction: column; gap: 6px; align-items: stretch; }
+    .modal-footer .btn { width: 100%; text-align: center; }
+    .modal-footer .d-flex { flex-direction: column; gap: 6px; width: 100%; }
+
+    /* Page header: stack title and action button */
+    .page-header { flex-direction: column; align-items: flex-start; }
+
+    /* Stat cards full-width on xs */
+    .stat-card { gap: 8px; }
 }
 
 /* ─── PRINT ───────────────────────────────────────────────── */

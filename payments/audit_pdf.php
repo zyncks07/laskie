@@ -18,9 +18,10 @@ function fmt_money(float $n, string $sym): string {
     return $sym . number_format($n, 2);
 }
 
+// Resolve the date window once (sargable — hits idx_pay_date / idx_exp_date / idx_cash_user_date)
+[$rangeStart, $rangeEnd] = $month > 0 ? monthRange($month, $year) : yearRange($year);
+
 // ── Payments ─────────────────────────────────────────────────
-$payWhere = $month > 0 ? "YEAR(p.payment_date)=? AND MONTH(p.payment_date)=?" : "YEAR(p.payment_date)=?";
-$payParams = $month > 0 ? [$year, $month] : [$year];
 $payStmt = $pdo->prepare(
     "SELECT p.*, ru.unit_name, t.full_name AS tenant_name, u.full_name AS cashier_name,
             st.name AS service_name
@@ -29,41 +30,37 @@ $payStmt = $pdo->prepare(
      LEFT JOIN tenants t       ON t.id  = p.tenant_id
      LEFT JOIN users u         ON u.id  = p.received_by
      LEFT JOIN service_types st ON st.id = p.service_type_id
-     WHERE $payWhere
+     WHERE p.payment_date >= ? AND p.payment_date < ?
      ORDER BY p.payment_date, p.id"
 );
-$payStmt->execute($payParams);
+$payStmt->execute([$rangeStart, $rangeEnd]);
 $payments = $payStmt->fetchAll();
 
 $rentPayments    = array_filter($payments, fn($p) => $p['payment_type'] === 'rent');
 $servicePayments = array_filter($payments, fn($p) => $p['payment_type'] === 'service');
 
 // ── Expenses ─────────────────────────────────────────────────
-$expWhere = $month > 0 ? "YEAR(e.expense_date)=? AND MONTH(e.expense_date)=?" : "YEAR(e.expense_date)=?";
-$expParams = $month > 0 ? [$year, $month] : [$year];
 $expStmt = $pdo->prepare(
     "SELECT e.*, ru.unit_name, ec.name AS category_name, u.full_name AS recorded_by_name
      FROM expenses e
      LEFT JOIN rental_units ru     ON ru.id = e.unit_id
      LEFT JOIN expense_categories ec ON ec.id = e.category_id
      LEFT JOIN users u               ON u.id  = e.recorded_by
-     WHERE $expWhere
+     WHERE e.expense_date >= ? AND e.expense_date < ?
      ORDER BY e.expense_date, e.id"
 );
-$expStmt->execute($expParams);
+$expStmt->execute([$rangeStart, $rangeEnd]);
 $expenses = $expStmt->fetchAll();
 
 // ── Cash transactions ─────────────────────────────────────────
-$cashWhere = $month > 0 ? "YEAR(ct.transaction_date)=? AND MONTH(ct.transaction_date)=?" : "YEAR(ct.transaction_date)=?";
-$cashParams = $month > 0 ? [$year, $month] : [$year];
 $cashStmt = $pdo->prepare(
     "SELECT ct.*, u.full_name AS user_name
      FROM cash_transactions ct
      LEFT JOIN users u ON u.id = ct.user_id
-     WHERE $cashWhere
+     WHERE ct.transaction_date >= ? AND ct.transaction_date < ?
      ORDER BY ct.transaction_date, ct.id"
 );
-$cashStmt->execute($cashParams);
+$cashStmt->execute([$rangeStart, $rangeEnd]);
 $cashTxns = $cashStmt->fetchAll();
 
 // ── Summaries ─────────────────────────────────────────────────

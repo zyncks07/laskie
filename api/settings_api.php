@@ -4,6 +4,7 @@ define('JSON_RESPONSE', true);
 require_once '../config/db.php';
 require_once '../config/functions.php';
 requireAdmin();
+csrfRequirePost();
 
 $action = $_POST['action'] ?? $_GET['action'] ?? '';
 

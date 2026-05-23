@@ -9,21 +9,26 @@ $user = currentUser();
 $initials = implode('', array_map(fn($p) => $p !== '' ? strtoupper($p[0]) : '', array_slice(explode(' ', $user['full_name'] ?? ''), 0, 2)));
 $appName = getSetting($pdo, 'app_name', 'Laskie Rental PMS');
 $currentPage = basename($_SERVER['PHP_SELF'], '.php');
-$currentDir  = basename(dirname($_SERVER['PHP_SELF']));
 
-// Sidebar root path (relative)
-$depth = ($currentDir === 'laskie' || $currentDir === 'htdocs' || $currentDir === 'www') ? '' : '../';
+// $depth is provided by the including page (root pages: ''; subdir pages: '../').
+// Fall back to a URL-path heuristic only if the caller forgot to set it.
+// Note: assetUrl() / pageUrl() (driven by BASE_URL) are the preferred way to
+// build links — use them in new code.
+if (!isset($depth)) {
+    $depth = preg_match('#/(admin|payments|api)/[^/]+\.php$#', $_SERVER['PHP_SELF'] ?? '') ? '../' : '';
+}
 ?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="csrf-token" content="<?= htmlspecialchars(csrfToken(), ENT_QUOTES, 'UTF-8') ?>">
 <title><?= clean($pageTitle ?? 'Dashboard') ?> — Laskie RMS</title>
-<link rel="stylesheet" href="<?= $depth ?>assets/vendor/google-fonts.css">
-<link rel="stylesheet" href="<?= $depth ?>assets/vendor/fontawesome.min.css">
-<link rel="stylesheet" href="<?= $depth ?>assets/vendor/dataTables.bootstrap5.min.css">
-<link rel="stylesheet" href="<?= $depth ?>assets/vendor/bootstrap.min.css">
+<?= vendorCssTag($depth, 'google-fonts.css') ?>
+<?= vendorCssTag($depth, 'fontawesome.min.css') ?>
+<?= vendorCssTag($depth, 'dataTables.bootstrap5.min.css') ?>
+<?= vendorCssTag($depth, 'bootstrap.min.css') ?>
 <link rel="stylesheet" href="<?= $depth ?>assets/css/app.css">
 </head>
 <body>
@@ -88,6 +93,9 @@ $depth = ($currentDir === 'laskie' || $currentDir === 'htdocs' || $currentDir ==
     </a>
     <a href="<?= $depth ?>admin/logs.php" class="sidebar-nav-item <?= ($currentPage==='logs')?'active':'' ?>">
       <i class="fa-solid fa-scroll"></i> Audit Logs
+    </a>
+    <a href="<?= $depth ?>admin/transactions.php" class="sidebar-nav-item <?= ($currentPage==='transactions')?'active':'' ?>">
+      <i class="fa-solid fa-rectangle-list"></i> Transactions
     </a>
     <a href="<?= $depth ?>admin/settings.php" class="sidebar-nav-item <?= ($currentPage==='settings')?'active':'' ?>">
       <i class="fa-solid fa-gear"></i> Settings

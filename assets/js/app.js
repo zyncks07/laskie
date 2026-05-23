@@ -23,6 +23,14 @@ window.showToast = function(msg, type = 'success') {
     }, 3600);
 };
 
+// ─── CSRF header helper ───────────────────────────────────────
+// Reads the per-session token from <meta name="csrf-token"> in the page head.
+// All POST requests in the app must include this header (see config/functions.php::csrfRequirePost).
+window.csrfHeaders = function() {
+    const m = document.querySelector('meta[name="csrf-token"]');
+    return m ? { 'X-CSRF-Token': m.getAttribute('content') } : {};
+};
+
 // ─── AJAX POST helper ─────────────────────────────────────────
 window.apiPost = function(url, data, cb) {
     let fd;
@@ -34,7 +42,7 @@ window.apiPost = function(url, data, cb) {
             if (v !== undefined && v !== null) fd.append(k, v);
         });
     }
-    fetch(url, { method: 'POST', body: fd, credentials: 'same-origin' })
+    fetch(url, { method: 'POST', body: fd, credentials: 'same-origin', headers: window.csrfHeaders() })
         .then(r => {
             if (!r.ok) throw new Error('Server error: ' + r.status);
             return r.json();

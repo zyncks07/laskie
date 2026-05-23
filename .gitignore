@@ -1,4 +1,9 @@
 .claude/
 uploads/
 config/db.php
+.deploy_credentials
 *.log
+vendor/
+composer.lock
+.phpunit.result.cache
+tests/.phpunit.cache/

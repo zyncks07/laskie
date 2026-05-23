@@ -20,6 +20,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $user = $stmt->fetch();
 
         if ($user && password_verify($password, $user['password_hash'])) {
+            // Defence-in-depth: fresh session id + fresh CSRF token on every successful login.
+            session_regenerate_id(true);
+            unset($_SESSION['csrf_token']);
             $_SESSION['user'] = [
                 'id'        => $user['id'],
                 'username'  => $user['username'],
@@ -53,9 +56,9 @@ if ($err === 'session') $error = 'Your session has expired. Please log in again.
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Sign In — Laskie Rental Property Management System</title>
-<link rel="stylesheet" href="assets/vendor/google-fonts.css">
-<link rel="stylesheet" href="assets/vendor/fontawesome.min.css">
-<link rel="stylesheet" href="assets/vendor/bootstrap.min.css">
+<?= vendorCssTag('', 'google-fonts.css') ?>
+<?= vendorCssTag('', 'fontawesome.min.css') ?>
+<?= vendorCssTag('', 'bootstrap.min.css') ?>
 <link rel="stylesheet" href="assets/css/app.css">
 <style>
   body { font-family: 'DM Sans', sans-serif; }
