@@ -213,7 +213,7 @@ window.dtDefaults = {
 };
 
 // ─── File size validator ──────────────────────────────────────
-window.validateFileSize = function(inputEl, maxMb = 10) {
+window.validateFileSize = function(inputEl, maxMb = 30) {
     const file = inputEl.files[0];
     if (!file) return true;
     if (file.size > maxMb * 1024 * 1024) {

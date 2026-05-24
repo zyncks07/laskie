@@ -167,7 +167,8 @@ Helpers Claude should reuse rather than re-implement:
 | `logActivity($pdo, $action, $module, $details)` | Append free-text audit row |
 | `logChange($pdo, $action, $module, $before, $after)` | Append JSON before/after diff |
 | `generateInvoiceNo($pdo)` | Get next `INV-YYYY-#####` |
-| `handleUpload($field, $subDir)` | File upload with whitelist + 10 MB cap, returns `['path'=>..., 'error'=>...]` |
+| `handleUpload($field, $subDir)` | File upload with whitelist + 30 MB cap. Auto-compresses image uploads via `compressImage()`. Returns `['path'=>..., 'error'=>...]` |
+| `compressImage($absPath, $opts)` | Re-encode JPEG/PNG/WebP in place (long-edge cap + quality). Non-images and GIFs are no-ops. Returns `['compressed'=>bool, 'original_size'=>, 'new_size'=>, 'new_path'=>, 'reason'=>]` |
 | `getRateForMonth($pdo, $unitId, $base, $m, $y)` | **Use this**, not `rental_units.monthly_rate`, for historical billing |
 | `prorateFirstMonth($rate, $dueDay, $contractStart, $m, $y)` | First-month proration |
 | `chargeDate($dueDay, $contractStart, $m, $y)` | Returns correct charge date (proration-aware) |
@@ -246,7 +247,7 @@ Global helpers attached to `window`: `showToast`, `apiPost`, `confirmDelete`, `f
 - `clean()` (`htmlspecialchars` ENT_QUOTES) on every echoed user input
 - Session: HttpOnly, SameSite=Strict, `use_strict_mode`
 - `.htaccess`: blocks `config/`, `includes/`, `*.sql/*.log/*.md/*.sh`; sets `X-Frame-Options=SAMEORIGIN`, `X-Content-Type-Options=nosniff`, `Referrer-Policy=strict-origin-when-cross-origin`; strips `X-Powered-By`
-- File upload whitelist (`jpg/jpeg/png/gif/pdf/doc/docx/xls/xlsx/zip`) + 10 MB cap + uniqid-named files
+- File upload whitelist (`jpg/jpeg/png/gif/pdf/doc/docx/xls/xlsx/zip`) + 30 MB cap + uniqid-named files
 - Failed login attempts logged to `system_logs` with IP
 - Master password (`settings.master_password`) gates destructive admin operations
 

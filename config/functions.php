@@ -250,11 +250,164 @@ function generateInvoiceNo(PDO $pdo): string {
     return $prefix . '-' . $year . '-' . str_pad((int)$max->fetchColumn() + 1, 5, '0', STR_PAD_LEFT);
 }
 
+// ─── Image Compression ───────────────────────────────────────
+// Re-encodes an uploaded image in place to shrink storage. Phone-screenshot
+// receipts at 1–4 MB routinely compress to ~50–200 KB without losing legibility.
+//
+// Returns ['compressed'=>bool, 'original_size'=>int, 'new_size'=>int,
+//          'new_path'=>?string, 'reason'=>?string].
+// `new_path` is the file's absolute path AFTER compression — it may differ
+// from $absPath when the extension changes (e.g. .png → .jpg).
+// Non-image files (PDF/DOC/ZIP) return ['compressed'=>false, 'reason'=>'not-image']
+// and are left untouched.
+//
+// Tunables (overridable via config/db.php define()s before functions.php loads):
+//   IMAGE_COMPRESSION_MAX_DIM  — long-edge cap in pixels (default 2000)
+//   IMAGE_COMPRESSION_QUALITY  — JPEG/WebP quality 0–100 (default 78)
+if (!defined('IMAGE_COMPRESSION_MAX_DIM')) define('IMAGE_COMPRESSION_MAX_DIM', 1600);
+if (!defined('IMAGE_COMPRESSION_QUALITY')) define('IMAGE_COMPRESSION_QUALITY', 72);
+
+function compressImage(string $absPath, array $opts = []): array {
+    $maxDim    = (int)($opts['max_dimension'] ?? IMAGE_COMPRESSION_MAX_DIM);
+    $quality   = (int)($opts['quality']       ?? IMAGE_COMPRESSION_QUALITY);
+    $pngToJpeg = (bool)($opts['png_to_jpeg']  ?? true); // flatten alpha-less PNGs to JPEG
+
+    $orig = ['compressed' => false, 'original_size' => 0, 'new_size' => 0, 'new_path' => null, 'reason' => null];
+    if (!is_file($absPath))                  return ['reason' => 'file-missing']    + $orig;
+    if (!function_exists('imagecreatetruecolor')) return ['reason' => 'gd-missing'] + $orig;
+
+    $info = @getimagesize($absPath);
+    if ($info === false) return ['reason' => 'not-image'] + $orig;
+
+    $mime     = $info['mime'];
+    $w        = (int)$info[0];
+    $h        = (int)$info[1];
+    $origSize = (int)(filesize($absPath) ?: 0);
+    $orig['original_size'] = $origSize;
+
+    // Skip formats we can't safely re-encode in place
+    if ($mime === 'image/gif')  return ['reason' => 'gif-skipped'] + $orig;  // may be animated
+    if ($mime === 'image/avif') return ['reason' => 'avif-skipped'] + $orig;
+    if ($mime === 'image/bmp')  return ['reason' => 'bmp-skipped'] + $orig;
+
+    // Decode
+    try {
+        $src = match ($mime) {
+            'image/jpeg', 'image/pjpeg' => imagecreatefromjpeg($absPath),
+            'image/png'                 => imagecreatefrompng($absPath),
+            'image/webp'                => function_exists('imagecreatefromwebp') ? imagecreatefromwebp($absPath) : false,
+            default                     => false,
+        };
+    } catch (\Throwable $e) { $src = false; }
+    if (!$src) return ['reason' => 'decode-failed'] + $orig;
+
+    // EXIF orientation correction (JPEG only — PNG/WebP rarely carry useful EXIF)
+    if (($mime === 'image/jpeg' || $mime === 'image/pjpeg') && function_exists('exif_read_data')) {
+        $exif = @exif_read_data($absPath);
+        $rotateBy = 0;
+        if (!empty($exif['Orientation'])) {
+            $rotateBy = match ((int)$exif['Orientation']) { 3 => 180, 6 => -90, 8 => 90, default => 0 };
+        }
+        if ($rotateBy !== 0) {
+            $rotated = @imagerotate($src, $rotateBy, 0);
+            if ($rotated) { imagedestroy($src); $src = $rotated; $w = imagesx($src); $h = imagesy($src); }
+        }
+    }
+
+    // Detect alpha — only for PNG (WebP we always re-encode to WebP; JPEG has no alpha)
+    $hasAlpha = false;
+    if ($mime === 'image/png') {
+        $hasAlpha = _imageHasAlpha($src, $w, $h);
+    }
+
+    // Scale down if larger than $maxDim on the long edge
+    $scale = max($w, $h) > $maxDim ? ($maxDim / max($w, $h)) : 1.0;
+    $nw = max(1, (int)round($w * $scale));
+    $nh = max(1, (int)round($h * $scale));
+
+    $dst = imagecreatetruecolor($nw, $nh);
+    if (!$dst) { imagedestroy($src); return ['reason' => 'canvas-failed'] + $orig; }
+
+    if ($hasAlpha && !$pngToJpeg) {
+        imagealphablending($dst, false);
+        imagesavealpha($dst, true);
+        $transparent = imagecolorallocatealpha($dst, 0, 0, 0, 127);
+        imagefilledrectangle($dst, 0, 0, $nw, $nh, $transparent);
+    } else {
+        // Flatten on white — receipts/screenshots look correct when alpha is dropped
+        $white = imagecolorallocate($dst, 255, 255, 255);
+        imagefilledrectangle($dst, 0, 0, $nw, $nh, $white);
+        if ($hasAlpha) imagealphablending($dst, true); // composite PNG-with-alpha over white
+    }
+    imagecopyresampled($dst, $src, 0, 0, 0, 0, $nw, $nh, $w, $h);
+    imagedestroy($src);
+
+    // Choose target format
+    if ($hasAlpha && !$pngToJpeg) {
+        $targetExt = 'png';
+    } elseif ($mime === 'image/webp') {
+        $targetExt = 'webp';
+    } else {
+        $targetExt = 'jpg';
+    }
+
+    $tmp = $absPath . '.compress.tmp';
+    $ok  = false;
+    if ($targetExt === 'png') {
+        $ok = @imagepng($dst, $tmp, 8); // 0=none .. 9=max; 8 is a good speed/size tradeoff
+    } elseif ($targetExt === 'webp') {
+        $ok = @imagewebp($dst, $tmp, $quality);
+    } else {
+        $ok = @imagejpeg($dst, $tmp, $quality);
+    }
+    imagedestroy($dst);
+
+    if (!$ok || !is_file($tmp)) {
+        @unlink($tmp);
+        return ['reason' => 'encode-failed'] + $orig;
+    }
+
+    $newSize = (int)(filesize($tmp) ?: PHP_INT_MAX);
+
+    // Skip the swap when savings are negligible (<5%). Re-encoding tiny files
+    // often makes them larger; bail out and keep the original.
+    if ($newSize >= $origSize * 0.95) {
+        @unlink($tmp);
+        return ['compressed' => false, 'original_size' => $origSize, 'new_size' => $newSize, 'new_path' => null, 'reason' => 'no-gain'];
+    }
+
+    $origExt = strtolower(pathinfo($absPath, PATHINFO_EXTENSION));
+    if ($targetExt !== $origExt) {
+        $newPath = preg_replace('/\.[^.]+$/', '.' . $targetExt, $absPath);
+        if (!@rename($tmp, $newPath)) { @unlink($tmp); return ['reason' => 'rename-failed'] + $orig; }
+        @unlink($absPath);
+        return ['compressed' => true, 'original_size' => $origSize, 'new_size' => $newSize, 'new_path' => $newPath, 'reason' => null];
+    }
+    if (!@rename($tmp, $absPath)) { @unlink($tmp); return ['reason' => 'rename-failed'] + $orig; }
+    return ['compressed' => true, 'original_size' => $origSize, 'new_size' => $newSize, 'new_path' => $absPath, 'reason' => null];
+}
+
+// Sampled alpha probe — scans on a coarse grid. Cheap and good enough for
+// distinguishing receipt screenshots (opaque) from PNGs with real transparency.
+function _imageHasAlpha($im, int $w, int $h): bool {
+    $step = max(1, (int)floor(min($w, $h) / 32));
+    for ($y = 0; $y < $h; $y += $step) {
+        for ($x = 0; $x < $w; $x += $step) {
+            $rgba  = imagecolorat($im, $x, $y);
+            $alpha = ($rgba >> 24) & 0x7F; // GD: 0=opaque, 127=transparent
+            if ($alpha > 0) return true;
+        }
+    }
+    return false;
+}
+
 // ─── File Upload Handler ─────────────────────────────────────
 // $allowedExts (optional): override the default file-type whitelist
-// $maxBytes (optional):    override the default 10 MB size cap
+// $maxBytes (optional):    override the default 30 MB size cap
 // $verifyImage (optional): when true, validates the file actually IS an image
 //                          via getimagesize() — defeats renamed-extension tricks
+// Images (JPEG/PNG/WebP) are auto-compressed in place via compressImage();
+// non-image uploads (PDF/DOC/ZIP) are left untouched.
 function handleUpload(
     string $fieldName,
     string $subDir,
@@ -281,7 +434,7 @@ function handleUpload(
     if (!in_array($ext, $allowed)) {
         return ['path' => null, 'error' => 'File type not allowed: .' . $ext . ' (expected: ' . implode(', ', $allowed) . ')'];
     }
-    $cap = $maxBytes ?? (10 * 1024 * 1024);
+    $cap = $maxBytes ?? (30 * 1024 * 1024);
     if ($file['size'] > $cap) {
         $capMb  = round($cap / 1048576, 1);
         $fileMb = round($file['size'] / 1048576, 1);
@@ -309,9 +462,19 @@ function handleUpload(
         return ['path' => null, 'error' => 'Upload directory not writable. Run on server: sudo chmod -R 775 /var/www/laskie/uploads && sudo chown -R www-data:www-data /var/www/laskie/uploads'];
     }
     $filename = date('Ymd_His') . '_' . uniqid() . '.' . $ext;
-    if (!move_uploaded_file($file['tmp_name'], $dir . $filename)) {
+    $absPath  = $dir . $filename;
+    if (!move_uploaded_file($file['tmp_name'], $absPath)) {
         return ['path' => null, 'error' => 'Failed to save file. Run: sudo chown -R www-data:www-data /var/www/laskie/uploads'];
     }
+
+    // Compress JPEG/PNG/WebP in place. Non-image types (PDF/DOC/ZIP) are a no-op.
+    // If compression rewrites the file with a new extension (PNG → JPG), the
+    // returned URL reflects the new path so callers store the correct value.
+    $c = compressImage($absPath);
+    if ($c['compressed'] && $c['new_path']) {
+        $filename = basename($c['new_path']);
+    }
+
     return ['path' => UPLOAD_URL_BASE . $subDir . '/' . $filename, 'error' => null];
 }
 
