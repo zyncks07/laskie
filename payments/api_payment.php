@@ -289,15 +289,21 @@ if ($action === 'monthly_summary') {
 
     // Compute status + balance per unit (cents math — no float drift)
     foreach ($summary as &$row) {
+        // Vacant units have no active tenant, so there is nothing to charge or owe.
+        // Skip the rent computation so the row renders as a neutral dash, not a red balance.
+        if ($row['status'] === 'vacant') {
+            $row['expected_charge'] = '0.00';
+            $row['balance']         = '0.00';
+            $row['pay_status']      = 'gray';
+            continue;
+        }
         $expected     = prorateFirstMonth($row['monthly_rate'], (int)$row['due_day'], $row['contract_start'] ?? null, $month, $year);
         $paid         = $row['rent_paid'];
         $unpaidRent   = money_max('0.00', money_sub($expected, $paid));
         $balance      = money_add($unpaidRent, $row['outstanding_charges']);
         $row['expected_charge'] = $expected;
         $row['balance'] = $balance;
-        if ($row['status'] === 'vacant') {
-            $row['pay_status'] = 'gray';
-        } elseif (!money_is_pos($paid)) {
+        if (!money_is_pos($paid)) {
             $dueTs = mktime(0,0,0,$month,$row['due_day'],$year);
             $row['pay_status'] = (time() > $dueTs) ? 'red' : 'amber';
         } elseif (money_is_pos($balance)) {
