@@ -1,6 +1,6 @@
 LASKIE Rental Property Management System
 
-A straightforward web application for managing rental properties with essential financial tracking and user access controls.
+A straightforward web application for managing rental properties with essential financial tracking and user access controls. Vibe coded using Claude Opus 4.7
 Features:
 
 Property Management – Create and manage rental units with customizable unit types.
