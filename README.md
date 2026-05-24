@@ -77,7 +77,7 @@ Export and import database records *(MariaDB on Debian 13)* and system settings 
 
 <div align="center">
 
-## 🤝 If you found this thing useful...
+## 🤝 If you find this thing useful...
 
 then good for you. :)
 
