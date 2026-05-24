@@ -1,16 +1,22 @@
-Simple  straight forward rental property management system.
+LASKIE Rental Property Management System
 
+A straightforward web application for managing rental properties with essential financial tracking and user access controls.
 Features:
 
-1. Custom Rental unit and rental unit types.
-2. Expense and other services custom integration.
-3. User roles for security (admin,accountant,cashier/staff)
-4. Flexible cash on hand, collection, expenses and other additional services opearations provided within the property.
-5. "The Vault" page that tracks bank deposits/withdrawals and dividends distributions.
-6. Dashboard for annual and monthly summary graphs and rental unit/tenant rent collection status.
-7. Easy import/export database. (mariaDB on debian 13) and page settings (tenants,renatal units,expenses category and users list)
-8. Detailed activity logs to monitor system users. (page click events, transaction records, ip address tracking)
-9. Good looking and simple PDF/Direct to print generation of statement of accounts, expenses reports and whole system audit transaction dumps.
+Property Management – Create and manage rental units with customizable unit types.
+Expense and Service Tracking – Record expenses and additional services provided to tenants.
+User Access Control – Role-based permissions for administrators, accountants, and cashier/staff members.
+Financial Operations – Track cash on hand, rent collections, expenses, and additional service transactions.
+Bank Account Management – Monitor bank deposits, withdrawals, and dividend distributions through the dedicated Vault page.
+Dashboard and Reports – View annual and monthly financial summaries with graphs showing rental unit status and tenant payment tracking.
+Data Import/Export – Export and import database records (MariaDB on Debian 13) and system settings including tenants, rental units, expense categories, and user lists.
+Activity Logging – Monitor system usage through detailed logs tracking page access, transactions, and IP addresses.
+Document Generation – Generate PDF reports and print-ready statements of accounts, expense summaries, and transaction audit reports.
+
+What/Who is LASKIE?
+A: It's my late dog Laskie... Thats his name. LASKIE... He's a good boi.
+
+
 
 
 If you found this thing useful...
