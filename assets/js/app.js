@@ -6,15 +6,26 @@
 'use strict';
 
 // ─── Global Toast Notifications ──────────────────────────────
+// Builds the toast with createElement + textContent so server-returned
+// error strings (which sometimes embed user data — refund reasons, file
+// names, exception messages) can't execute as HTML.
 window.showToast = function(msg, type = 'success') {
     const icons  = { success: '✓', error: '✕', warning: '⚠' };
     const colors = { success: '#16a34a', error: '#dc2626', warning: '#d97706' };
-    const existing = document.querySelectorAll('.laskie-toast');
-    existing.forEach(t => t.remove());
+    document.querySelectorAll('.laskie-toast').forEach(t => t.remove());
 
     const t = document.createElement('div');
     t.className = 'laskie-toast';
-    t.innerHTML = `<span style="color:${colors[type] || colors.success};font-weight:700;font-size:16px;line-height:1">${icons[type] || icons.success}</span><span>${msg}</span>`;
+
+    const iconEl = document.createElement('span');
+    iconEl.style.cssText = `color:${colors[type] || colors.success};font-weight:700;font-size:16px;line-height:1`;
+    iconEl.textContent = icons[type] || icons.success;
+
+    const textEl = document.createElement('span');
+    textEl.textContent = msg == null ? '' : String(msg);
+
+    t.appendChild(iconEl);
+    t.appendChild(textEl);
     document.body.appendChild(t);
     requestAnimationFrame(() => t.classList.add('show'));
     setTimeout(() => {
@@ -181,8 +192,22 @@ window.showLoading = function(msg = 'Processing...') {
         ov = document.createElement('div');
         ov.id = 'globalLoadingOverlay';
         ov.style.cssText = 'position:fixed;inset:0;background:rgba(255,255,255,.7);z-index:9998;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(2px);';
-        ov.innerHTML = `<div style="text-align:center;"><div class="spinner-border text-primary" role="status"></div><div style="margin-top:12px;font-size:13px;font-weight:600;color:#1a3a8f;">${msg}</div></div>`;
+        const wrap = document.createElement('div');
+        wrap.style.textAlign = 'center';
+        const spin = document.createElement('div');
+        spin.className = 'spinner-border text-primary';
+        spin.setAttribute('role', 'status');
+        const label = document.createElement('div');
+        label.id = 'globalLoadingMsg';
+        label.style.cssText = 'margin-top:12px;font-size:13px;font-weight:600;color:#1a3a8f;';
+        label.textContent = msg;
+        wrap.appendChild(spin);
+        wrap.appendChild(label);
+        ov.appendChild(wrap);
         document.body.appendChild(ov);
+    } else {
+        const label = ov.querySelector('#globalLoadingMsg');
+        if (label) label.textContent = msg;
     }
     ov.style.display = 'flex';
 };

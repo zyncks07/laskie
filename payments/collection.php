@@ -311,7 +311,7 @@ var SERVICE_TYPES = <?= json_encode($serviceTypes) ?>;
 <script>
 function esc(s) {
   var d = document.createElement('div');
-  d.appendChild(document.createTextNode(s || ''));
+  d.appendChild(document.createTextNode(s != null ? String(s) : ''));
   return d.innerHTML;
 }
 
@@ -630,10 +630,10 @@ function viewUnitPayments(unitId, unitName, month, year) {
     if (unit) {
       html +=
         '<div class="alert alert-info py-2 mb-3" style="font-size:12.5px">' +
-          '<strong>' + unit.unit_name + '</strong> &nbsp;&middot;&nbsp; Tenant: <strong>' +
-          (unit.tenant_name || 'Vacant') + '</strong>' +
+          '<strong>' + esc(unit.unit_name) + '</strong> &nbsp;&middot;&nbsp; Tenant: <strong>' +
+          esc(unit.tenant_name || 'Vacant') + '</strong>' +
           ' &nbsp;&middot;&nbsp; Monthly Rate: <strong>' + fmt(unit.monthly_rate) + '</strong>' +
-          ' &nbsp;&middot;&nbsp; Due: <strong>' + unit.due_day + 'th</strong>' +
+          ' &nbsp;&middot;&nbsp; Due: <strong>' + parseInt(unit.due_day || 0) + 'th</strong>' +
         '</div>';
     }
 
@@ -646,16 +646,16 @@ function viewUnitPayments(unitId, unitName, month, year) {
         '<th>Service</th><th>Period</th><th class="text-end">Amount</th><th class="text-center" style="width:90px">Actions</th>' +
         '</tr></thead><tbody>';
       outstanding.forEach(function(c) {
-        var period = MONTHS[(parseInt(c.period_month)||1) - 1] + ' ' + c.period_year;
+        var period = MONTHS[(parseInt(c.period_month)||1) - 1] + ' ' + parseInt(c.period_year);
         html += '<tr>' +
-          '<td>' + (c.service_name || c.description) + '</td>' +
-          '<td>' + period + '</td>' +
+          '<td>' + esc(c.service_name || c.description) + '</td>' +
+          '<td>' + esc(period) + '</td>' +
           '<td class="text-end fw-600">' + fmt(c.amount) + '</td>' +
           '<td class="text-center">' +
             '<button class="btn btn-primary btn-sm py-0 px-2 me-1" style="font-size:11px" title="Collect payment" ' +
-              'onclick="collectCharge(' + c.id + ',' + unitId + ',' + (c.service_type_id||0) + ',' + c.amount + ',' + c.period_month + ',' + c.period_year + ')">' +
+              'onclick="collectCharge(' + parseInt(c.id) + ',' + parseInt(unitId) + ',' + parseInt(c.service_type_id||0) + ',' + (parseFloat(c.amount)||0) + ',' + parseInt(c.period_month) + ',' + parseInt(c.period_year) + ')">' +
               '<i class="fa-solid fa-money-bill-wave fa-xs me-1"></i>Collect</button>' +
-            '<button class="btn-icon danger" title="Delete charge" onclick="deleteCharge(' + c.id + ')">' +
+            '<button class="btn-icon danger" title="Delete charge" onclick="deleteCharge(' + parseInt(c.id) + ')">' +
               '<i class="fa-solid fa-trash fa-xs"></i></button>' +
           '</td>' +
         '</tr>';
@@ -698,7 +698,7 @@ function viewUnitPayments(unitId, unitName, month, year) {
         if (!isVoided) totPaid += parseFloat(p.amount) || 0;
         var typeLabel = p.payment_type === 'rent'
           ? '<span class="badge badge-rent">Rent</span>'
-          : '<span class="badge badge-service">' + (p.service_name || 'Service') + '</span>';
+          : '<span class="badge badge-service">' + esc(p.service_name || 'Service') + '</span>';
         var statusBadge = '';
         if (p.status === 'voided') {
           statusBadge = ' <span class="badge bg-secondary" style="font-size:10px">Voided</span>';
@@ -708,36 +708,40 @@ function viewUnitPayments(unitId, unitName, month, year) {
           statusBadge = ' <span class="badge bg-warning text-dark" style="font-size:10px">Partial Refund</span>';
         }
         var alreadyRefunded = parseFloat(p.refunded_total) || 0;
-        var invEsc = (p.invoice_no || '').replace(/'/g, "\\'");
+        var pid    = parseInt(p.id) || 0;
+        var invEsc = esc(p.invoice_no || '');
+        // data-* attributes carry user-controlled strings (invoice_no) out of
+        // the JS literal — handlers read them via dataset, never via inline
+        // interpolation that could break out of the attribute.
         var refBtn = (!isVoided && p.status !== 'refunded')
-          ? '<button class="btn-icon" title="Process Refund" onclick="openRefundModal(' + p.id + ',\'' + invEsc + '\',' + p.amount + ',' + alreadyRefunded + ')">' +
+          ? '<button class="btn-icon" title="Process Refund" data-id="' + pid + '" data-inv="' + invEsc + '" data-amt="' + (parseFloat(p.amount)||0) + '" data-already="' + alreadyRefunded + '" onclick="openRefundModal(+this.dataset.id, this.dataset.inv, +this.dataset.amt, +this.dataset.already)">' +
               '<i class="fa-solid fa-rotate-left fa-xs" style="color:var(--danger)"></i></button> '
           : '';
         var editBtn = (IS_ADMIN && !isVoided)
-          ? '<button class="btn-icon" title="Edit" onclick="editPayment(' + p.id + ')"><i class="fa-solid fa-pen fa-xs"></i></button> '
+          ? '<button class="btn-icon" title="Edit" data-id="' + pid + '" onclick="editPayment(+this.dataset.id)"><i class="fa-solid fa-pen fa-xs"></i></button> '
           : '';
         var voidRestoreBtn = '';
         if (IS_ADMIN) {
           voidRestoreBtn = isVoided
-            ? '<button class="btn-icon" title="Restore Payment" onclick="restorePayment(' + p.id + ')"><i class="fa-solid fa-rotate-right fa-xs" style="color:var(--success)"></i></button> '
-            : '<button class="btn-icon" title="Void Payment" onclick="voidPayment(' + p.id + ',\'' + invEsc + '\')"><i class="fa-solid fa-ban fa-xs" style="color:var(--warning)"></i></button> ';
+            ? '<button class="btn-icon" title="Restore Payment" data-id="' + pid + '" onclick="restorePayment(+this.dataset.id)"><i class="fa-solid fa-rotate-right fa-xs" style="color:var(--success)"></i></button> '
+            : '<button class="btn-icon" title="Void Payment" data-id="' + pid + '" data-inv="' + invEsc + '" onclick="voidPayment(+this.dataset.id, this.dataset.inv)"><i class="fa-solid fa-ban fa-xs" style="color:var(--warning)"></i></button> ';
         }
         html +=
           '<tr' + (isVoided ? ' style="opacity:0.55"' : '') + '>' +
-            (IS_ADMIN ? '<td class="no-print"><input type="checkbox" class="pay-chk" value="' + p.id + '" onclick="updatePayBulkBar()"></td>' : '') +
-            '<td style="white-space:nowrap">' + p.payment_date + '</td>' +
-            '<td class="mono" style="font-size:12px">' + (p.invoice_no || '—') + '</td>' +
+            (IS_ADMIN ? '<td class="no-print"><input type="checkbox" class="pay-chk" value="' + pid + '" onclick="updatePayBulkBar()"></td>' : '') +
+            '<td style="white-space:nowrap">' + esc(p.payment_date) + '</td>' +
+            '<td class="mono" style="font-size:12px">' + (p.invoice_no ? esc(p.invoice_no) : '—') + '</td>' +
             '<td>' + typeLabel + '</td>' +
-            '<td style="font-size:12.5px">' + (p.notes || '—') + '</td>' +
+            '<td style="font-size:12.5px">' + (p.notes ? esc(p.notes) : '—') + '</td>' +
             '<td class="text-end fw-600">' + fmt(p.amount) + statusBadge + '</td>' +
-            '<td style="font-size:12px">' + (p.cashier_name || '—') + '</td>' +
+            '<td style="font-size:12px">' + (p.cashier_name ? esc(p.cashier_name) : '—') + '</td>' +
             '<td class="text-center">' +
-              '<a href="../payments/invoice_print.php?id=' + p.id + '" target="_blank" class="btn-icon" title="Print Invoice">' +
+              '<a href="../payments/invoice_print.php?id=' + pid + '" target="_blank" rel="noopener noreferrer" class="btn-icon" title="Print Invoice">' +
                 '<i class="fa-solid fa-print fa-xs"></i></a> ' +
               refBtn +
               editBtn +
               voidRestoreBtn +
-              '<button class="btn-icon danger" title="Delete" onclick="deletePayment(' + p.id + ')">' +
+              '<button class="btn-icon danger" title="Delete" data-id="' + pid + '" onclick="deletePayment(+this.dataset.id)">' +
                 '<i class="fa-solid fa-trash fa-xs"></i></button>' +
             '</td>' +
           '</tr>';
@@ -1006,9 +1010,11 @@ function openRefundModal(paymentId, invoiceNo, amount, alreadyRefunded) {
   alreadyRefunded = alreadyRefunded || 0;
   var maxRefund = amount - alreadyRefunded;
   document.getElementById('refPaymentId').value = paymentId;
+  // invoice_no is server-generated (INV-YYYY-NNNNN) but defence-in-depth:
+  // esc() any value we pull from a data-* attribute back into innerHTML.
   document.getElementById('refPaymentInfo').innerHTML =
-    '<strong>' + invoiceNo + '</strong> &nbsp;·&nbsp; Original: <strong>₱' + fmt(amount) + '</strong>' +
-    (alreadyRefunded > 0 ? ' &nbsp;·&nbsp; Already refunded: <strong>₱' + fmt(alreadyRefunded) + '</strong>' : '');
+    '<strong>' + esc(invoiceNo) + '</strong> &nbsp;·&nbsp; Original: <strong>' + fmt(amount) + '</strong>' +
+    (alreadyRefunded > 0 ? ' &nbsp;·&nbsp; Already refunded: <strong>' + fmt(alreadyRefunded) + '</strong>' : '');
   document.getElementById('refAmount').value = maxRefund.toFixed(2);
   document.getElementById('refAmount').max   = maxRefund.toFixed(2);
   document.getElementById('refMaxHint').textContent = 'Max refundable: ₱' + fmt(maxRefund);

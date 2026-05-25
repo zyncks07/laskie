@@ -1,6 +1,4 @@
 <?php
-error_reporting(0);
-ini_set('display_errors', 0);
 session_start();
 require_once 'config/db.php';
 require_once 'config/functions.php';
@@ -253,6 +251,15 @@ function esc(s) {
   d.appendChild(document.createTextNode(s != null ? String(s) : ''));
   return d.innerHTML;
 }
+// Reject javascript:/data:/vbscript: URLs before they reach an href. Allows
+// /uploads/... paths, absolute http(s), and protocol-relative URLs.
+function safeUrl(u) {
+  if (!u) return '';
+  var s = String(u).trim();
+  if (/^\s*(javascript|data|vbscript|file):/i.test(s)) return '';
+  // After scheme check it's safe to attribute-escape via esc().
+  return esc(s);
+}
 
 var remitModal = null;
 var IS_ADMIN   = <?=isAdmin()?'true':'false'?>;
@@ -351,8 +358,13 @@ function loadTransactions() {
       else if (t.linked_expense) refHtml = '<span style="font-size:11.5px;color:var(--text-muted)">' + esc(t.linked_expense) + '</span>';
 
       var proofHtml = '<span class="text-muted">&#8212;</span>';
-      if (t.doc_path) proofHtml = '<a href="' + t.doc_path + '" target="_blank" class="btn-icon" title="View file"><i class="fa-solid fa-paperclip fa-xs"></i></a>';
-      else if (t.doc_url) proofHtml = '<a href="' + t.doc_url + '" target="_blank" class="btn-icon" title="Open URL"><i class="fa-solid fa-link fa-xs"></i></a>';
+      if (t.doc_path) {
+        var p = safeUrl(t.doc_path);
+        if (p) proofHtml = '<a href="' + p + '" target="_blank" rel="noopener noreferrer" class="btn-icon" title="View file"><i class="fa-solid fa-paperclip fa-xs"></i></a>';
+      } else if (t.doc_url) {
+        var u = safeUrl(t.doc_url);
+        if (u) proofHtml = '<a href="' + u + '" target="_blank" rel="noopener noreferrer" class="btn-icon" title="Open URL"><i class="fa-solid fa-link fa-xs"></i></a>';
+      }
 
       var isManual = !t.reference_payment_id && !t.reference_expense_id;
       var isRemittance = isManual && tt === 'remitted';

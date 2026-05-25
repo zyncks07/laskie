@@ -21,13 +21,25 @@ function closeSidebar() {
     document.getElementById('sidebarOverlay').classList.remove('show');
 }
 
-// Toast notifications
+// Fallback toast — overridden by window.showToast in assets/js/app.js, which
+// is loaded above. Kept for resilience if app.js fails to load. Both the
+// global version and this one must avoid innerHTML interpolation of `msg`
+// because server-returned strings can embed user data.
 function showToast(msg, type = 'success') {
-    const icons = { success: '✓', error: '✕', warning: '!' };
+    if (window.showToast && window.showToast !== showToast) {
+        return window.showToast(msg, type);
+    }
+    const icons  = { success: '✓', error: '✕', warning: '!' };
     const colors = { success: '#16a34a', error: '#dc2626', warning: '#d97706' };
     const t = document.createElement('div');
     t.className = 'laskie-toast';
-    t.innerHTML = `<span style="color:${colors[type]};font-weight:700;font-size:16px">${icons[type]}</span> ${msg}`;
+    const iconEl = document.createElement('span');
+    iconEl.style.cssText = `color:${colors[type] || colors.success};font-weight:700;font-size:16px`;
+    iconEl.textContent = icons[type] || icons.success;
+    const textEl = document.createElement('span');
+    textEl.textContent = ' ' + (msg == null ? '' : String(msg));
+    t.appendChild(iconEl);
+    t.appendChild(textEl);
     document.body.appendChild(t);
     setTimeout(() => t.classList.add('show'), 10);
     setTimeout(() => { t.classList.remove('show'); setTimeout(() => t.remove(), 300); }, 3500);

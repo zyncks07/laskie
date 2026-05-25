@@ -1,6 +1,4 @@
 <?php
-error_reporting(0);
-ini_set('display_errors', 0);
 session_start();
 require_once 'config/db.php';
 require_once 'config/functions.php';
@@ -316,6 +314,18 @@ include 'includes/header.php';
 </div>
 
 <script>
+function esc(s) {
+  var d = document.createElement('div');
+  d.appendChild(document.createTextNode(s != null ? String(s) : ''));
+  return d.innerHTML;
+}
+// Reject dangerous URL schemes before they reach an href attribute.
+function safeUrl(u) {
+  if (!u) return '';
+  var s = String(u).trim();
+  if (/^\s*(javascript|data|vbscript|file):/i.test(s)) return '';
+  return esc(s);
+}
 var IS_ADMIN  = <?=isAdmin()?'true':'false'?>;
 var expModal = null;
 document.addEventListener('DOMContentLoaded', function() {
@@ -375,33 +385,40 @@ function loadExpenses() {
     for (var j = 0; j < exps.length; j++) {
       var ex = exps[j];
       var receipt = '<span class="text-muted">&#8212;</span>';
-      if (ex.receipt_path) receipt = '<a href="' + ex.receipt_path + '" target="_blank" class="btn-icon" title="View file"><i class="fa-solid fa-paperclip fa-xs"></i></a>';
-      else if (ex.receipt_url) receipt = '<a href="' + ex.receipt_url + '" target="_blank" class="btn-icon" title="Open URL"><i class="fa-solid fa-link fa-xs"></i></a>';
+      if (ex.receipt_path) {
+        var rp = safeUrl(ex.receipt_path);
+        if (rp) receipt = '<a href="' + rp + '" target="_blank" rel="noopener noreferrer" class="btn-icon" title="View file"><i class="fa-solid fa-paperclip fa-xs"></i></a>';
+      } else if (ex.receipt_url) {
+        var ru = safeUrl(ex.receipt_url);
+        if (ru) receipt = '<a href="' + ru + '" target="_blank" rel="noopener noreferrer" class="btn-icon" title="Open URL"><i class="fa-solid fa-link fa-xs"></i></a>';
+      }
 
       var catBadge = ex.category_name
-        ? '<span class="badge" style="background:var(--primary-light);color:var(--primary);font-size:11px">' + ex.category_name + '</span>'
+        ? '<span class="badge" style="background:var(--primary-light);color:var(--primary);font-size:11px">' + esc(ex.category_name) + '</span>'
         : '<span class="text-muted" style="font-size:11.5px">&#8212;</span>';
       var unitLabel = ex.unit_name
-        ? '<span style="font-size:12.5px">' + ex.unit_name + '</span>'
+        ? '<span style="font-size:12.5px">' + esc(ex.unit_name) + '</span>'
         : '<span class="text-muted" style="font-size:11.5px">General</span>';
       var notesHtml = ex.notes
-        ? '<span style="font-size:11.5px;color:var(--text-muted);display:inline-block;max-width:140px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + ex.notes + '</span>'
+        ? '<span style="font-size:11.5px;color:var(--text-muted);display:inline-block;max-width:140px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(ex.notes) + '</span>'
         : '<span class="text-muted">&#8212;</span>';
 
       html += '<tr>';
       if (IS_ADMIN) html += '<td class="no-print"><input type="checkbox" class="exp-chk" value="' + parseInt(ex.id) + '" onclick="updateExpBulkBar()"></td>';
-      html += '<td style="white-space:nowrap;font-size:12.5px">' + ex.expense_date + '</td>';
-      html += '<td class="fw-600 cell-trunc-lg" style="font-size:12.5px">' + ex.description + '</td>';
+      html += '<td style="white-space:nowrap;font-size:12.5px">' + esc(ex.expense_date) + '</td>';
+      html += '<td class="fw-600 cell-trunc-lg" style="font-size:12.5px">' + esc(ex.description) + '</td>';
       html += '<td>' + catBadge + '</td>';
       html += '<td>' + unitLabel + '</td>';
       html += '<td class="text-end fw-600" style="color:var(--danger)">' + fmt(ex.amount) + '</td>';
-      html += '<td style="font-size:12px;color:var(--text-muted)">' + (ex.recorder_name || '&#8212;') + '</td>';
+      html += '<td style="font-size:12px;color:var(--text-muted)">' + (ex.recorder_name ? esc(ex.recorder_name) : '&#8212;') + '</td>';
       html += '<td>' + notesHtml + '</td>';
       html += '<td class="text-center">' + receipt + '</td>';
       html += '<td class="text-center no-print">';
       if (IS_ADMIN) {
-        html += '<button class="btn-icon" title="Edit" onclick="editExpense(' + parseInt(ex.id) + ')"><i class="fa-solid fa-pen fa-xs"></i></button> ';
-        html += '<button class="btn-icon danger" title="Delete" onclick="deleteExpense(' + parseInt(ex.id) + ',\'' + ex.description.replace(/\'/g, "\\'") + '\')"><i class="fa-solid fa-trash fa-xs"></i></button>';
+        // data-* + dataset access keeps user-controlled values out of the
+        // inline JS literal, so nothing in description can break the attribute.
+        html += '<button class="btn-icon" title="Edit" data-id="' + parseInt(ex.id) + '" onclick="editExpense(+this.dataset.id)"><i class="fa-solid fa-pen fa-xs"></i></button> ';
+        html += '<button class="btn-icon danger" title="Delete" data-id="' + parseInt(ex.id) + '" data-desc="' + esc(ex.description || '') + '" onclick="deleteExpense(+this.dataset.id, this.dataset.desc)"><i class="fa-solid fa-trash fa-xs"></i></button>';
       } else {
         html += '<span class="text-muted">&#8212;</span>';
       }
