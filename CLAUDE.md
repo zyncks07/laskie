@@ -253,9 +253,8 @@ Global helpers attached to `window`: `showToast`, `apiPost`, `confirmDelete`, `f
 - Master password (`settings.master_password`) gates destructive admin operations
 
 ### Gaps (see §11)
-- No CSRF tokens
-- No rate-limit on login
 - DB credentials committed to `config/db.php` (gitignored, but a `.env` pattern is safer)
+- Login lockout exists (5 fails / 15 min) but no global rate-limit at the web-server layer
 
 ---
 
@@ -285,50 +284,36 @@ Global helpers attached to `window`: `showToast`, `apiPost`, `confirmDelete`, `f
 These are known gaps. Address top items before adding features.
 
 ### 🔴 Critical — block new installs / risk data corruption
-1. **Schema drift: `unit_charges` is used but missing from `install.sql`.**
-   Fix: add `migrations/001_create_unit_charges.sql` and append its DDL to `install.sql`.
-   ```sql
-   CREATE TABLE unit_charges (
-     id INT AUTO_INCREMENT PRIMARY KEY,
-     unit_id INT NOT NULL,
-     tenant_id INT,
-     service_type_id INT,
-     amount DECIMAL(12,2) NOT NULL,
-     description VARCHAR(255),
-     charge_date DATE NOT NULL,
-     period_month TINYINT NOT NULL,
-     period_year SMALLINT NOT NULL,
-     payment_id INT,
-     source ENUM('pre_billed','auto_collected') NOT NULL DEFAULT 'pre_billed',
-     created_by INT,
-     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-     FOREIGN KEY (unit_id) REFERENCES rental_units(id) ON DELETE CASCADE,
-     FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE SET NULL,
-     FOREIGN KEY (service_type_id) REFERENCES service_types(id) ON DELETE SET NULL,
-     FOREIGN KEY (payment_id) REFERENCES payments(id) ON DELETE SET NULL,
-     FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL,
-     INDEX idx_uc_unit_period (unit_id, period_year, period_month),
-     INDEX idx_uc_payment (payment_id)
-   );
-   ```
-2. **No DB transactions around multi-table writes.** A payment write touches `payments` + `cash_transactions` + `unit_charges`. If any step fails mid-way, the books drift. Wrap every multi-statement API action in `$pdo->beginTransaction() … commit() / rollBack()`.
+1. ~~**Schema drift: `unit_charges` is used but missing from `install.sql`.**~~ — done. `migrations/001_create_unit_charges.sql` shipped; DDL is also embedded in `install.sql` so fresh installs work.
+2. ~~**No DB transactions around multi-table writes.**~~ — done. Every money-moving action in `payments/api_payment.php` (save_payment, void_payment, restore_payment, purge_payment, process_refund, bulk_delete_payments) and `api/expenses_api.php` (save_expense, purge_expense, bulk_delete_expenses) is wrapped in `beginTransaction() … commit() / rollBack()`. `tests/Integration/TransactionAtomicityTest.php` pins the behaviour.
 
 ### 🟠 High — accounting integrity & security
-3. **Float money → use bcmath or cents.** Add `money_add/sub/cmp` helpers in `functions.php` and use them anywhere PHP touches money outside of SQL aggregates.
-4. **CSRF tokens.** Issue a token in `header.php`, validate in every POST endpoint under `/api/` and `/payments/api_payment.php`.
-5. **Payment idempotency.** Add an `idempotency_key` UUID column on `payments` + a debounce wrapper in `apiPost` for `save_payment`.
+3. ~~**Float money → use bcmath or cents.**~~ — done. `to_cents()`, `from_cents()`, `money_add/sub/sum/mul/div/cmp/eq/gt/gte/lt/lte/max/is_zero/is_pos` shipped in `config/functions.php`. Used everywhere PHP combines money values (proration, payment status, dashboard totals, transaction grand totals, vault balance). `tests/Unit/MoneyHelpersTest.php` covers the math.
+4. ~~**CSRF tokens.**~~ — done. `csrfToken()`, `csrfField()`, `csrfRequirePost()` shipped; every POST endpoint under `/api/`, `/payments/`, `/admin/` invokes `csrfRequirePost()`. Front-end `apiPost()` auto-adds the `X-CSRF-Token` header. `tests/Unit/CsrfHelpersTest.php` pins token format + validation.
+5. ~~**Payment idempotency.**~~ — done. `payments.idempotency_key` column shipped via `migrations/004_add_payment_idempotency.sql` with a UNIQUE index. `save_payment` looks up the key before INSERT and falls back to returning the existing row on the MySQL 1062 race. `tests/Integration/IdempotencyTest.php` covers replay + race.
 6. **`.env` config.** Move DB creds out of `config/db.php`. Ship `config/db.php.example`, read real values from `/var/www/laskie/.env` (chmod 600, www-data only).
 
 ### 🟡 Medium — performance, observability, robustness
-7. **Composite indexes.** `payments(unit_id, period_year, period_month, deleted_at)`, `expenses(unit_id, expense_date, deleted_at)`, `cash_transactions(user_id, transaction_date)`.
-8. **Rewrite non-sargable date filters.** `dashboard.php` / `my_summary.php` / `cash_api.php` use `WHERE YEAR(payment_date)=?` and `WHERE MONTH(...)=? AND YEAR(...)=?` — these can't hit `idx_pay_date` / `idx_exp_date`. Rewrite to `payment_date >= ? AND payment_date < ?` so the indexes activate.
-9. **PHPUnit tests for accounting math** — _initial suite shipped (`tests/Unit/MoneyHelpersTest.php`, `ProrationTest.php`, `CsrfHelpersTest.php`, plus `tests/Integration/IdempotencyTest.php` and `TransactionAtomicityTest.php`)._ Worth adding next: `getRateForMonth`, `chargeDate`, `generateInvoiceNo` — all pure (or near-pure) and worth pinning behavior on.
+7. ~~**Composite indexes.**~~ — done. `migrations/005_add_composite_indexes.sql` adds the three covering indexes called out here.
+8. **Rewrite non-sargable date filters** — _partially done._ `dashboard.php` (rev/exp aggregates), `api/expenses_api.php list_expenses`, `api/cash_api.php list_transactions`, and `api/unit_chart_api.php` all use `monthRange()` / `yearRange()` helpers now. Still using `YEAR()` / `MONTH()` predicates: `my_summary.php`, `admin/logs.php`, `admin/vault.php` (get_logs query + chart queries + year-list UNION), and a few `SELECT DISTINCT YEAR(...)` calls that exist only to populate year dropdowns (low impact). Convert the remaining filter predicates; leave the DISTINCT-year ones — they have no index to hit anyway.
+9. **PHPUnit tests for accounting math** — _initial suite shipped (`tests/Unit/MoneyHelpersTest.php`, `ProrationTest.php`, `CsrfHelpersTest.php`, `ChargeDateTest.php`, `DateRangeTest.php`, `UrlHelpersTest.php`, `ImageCompressionTest.php`, plus `tests/Integration/IdempotencyTest.php`, `TransactionAtomicityTest.php`, `RateHistoryTest.php`, `InvoiceNumberTest.php`, `VaultUserReturnTest.php`)._ 59 unit tests, 100% passing. Worth adding next: tests covering void/restore of auto_collected service payments (regression for the phantom-charge fix in §13).
 10. **Automated daily DB backup** — ship `scripts/backup.sh` + crontab snippet, retain 14 days locally + 90 days off-host.
 
 ### 🟢 Low — polish
 11. ~~**SRI hashes** on vendor CSS/JS~~ — done. See `vendorSriMap()` in `config/functions.php` + `scripts/generate-sri.sh`. Tags emitted via `vendorCssTag()` / `vendorJsTag()` in header.php + footer.php + index.php.
 12. ~~**`BASE_URL` constant** to replace the fragile `$depth` calculation~~ — done. `BASE_URL` defined in `config/functions.php` (overridable in `config/db.php`); `assetUrl()` / `pageUrl()` helpers shipped; header.php's fragile `currentDir === 'laskie' || 'htdocs' || 'www'` heuristic replaced with a URL-path-based fallback.
 13. ~~**Update path for vendor libs**~~ — done. See `VENDOR.md` (pinned versions, upgrade procedure, major-version notes).
+
+---
+
+### Recently fixed (audit-trail of bug-fix sprints)
+
+Most of the items above were addressed in dedicated bug-fix commits. If you're investigating a regression, check that the fix didn't get reverted before redoing it:
+
+- `9e6514f` — 18 fixes: invoice_print fake-receipt banner, soa_pdf voided/deleted filter, edit-payment overwriting refund cash rows, rate edit retroactively rewriting history, void of auto_collected leaving phantom charges, edit non-existent payment silently succeeding, `X-Forwarded-For` spoofing (added `getClientIp()`), factory_reset missing tables + server-side `confirm=RESET`, vault user-return admin-only gate, import_accounts role/status whitelist + valid bcrypt placeholder, admin self-demote / last-admin lockout guard, dashboard late-fee threshold overflow, tenants vacate-unit logic, float-money grand totals, removed `error_reporting(0)` overrides, removed redundant `addslashes()` wrappers, delete_doc orphan files, tenant status whitelist.
+- `2aa97c9` — 8 fixes: monthly_summary historical rate lookup, void_payment unit_charges release + transaction wrap, restore_payment cash re-creation, get_unit_payments voided filter, due_day month-overflow capping, cash.php XSS hardening, requireLogin redirect fix, my_summary footer totals via money_sum.
+- `10e7888` — voided/deleted filter across dashboard + report queries; dynamic unit chart with period selector.
+- `ee46d87` — schema fixes, atomic transactions, CSRF, tests, vault returns.
 
 ---
 
