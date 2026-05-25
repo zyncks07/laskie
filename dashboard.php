@@ -65,7 +65,7 @@ if ($selectedYear === $curYear) {
 $cmNet = $cmRev - $cmExp;
 
 // ─── Available years ──────────────────────────────────────────
-$years = $pdo->query("SELECT DISTINCT YEAR(payment_date) y FROM payments UNION SELECT DISTINCT YEAR(expense_date) FROM expenses ORDER BY y DESC")->fetchAll(PDO::FETCH_COLUMN);
+$years = $pdo->query("SELECT DISTINCT YEAR(payment_date) y FROM payments WHERE deleted_at IS NULL AND status != 'voided' UNION SELECT DISTINCT YEAR(expense_date) FROM expenses WHERE deleted_at IS NULL ORDER BY y DESC")->fetchAll(PDO::FETCH_COLUMN);
 if (!in_array(date('Y'), $years)) array_unshift($years, (int)date('Y'));
 if (!in_array($selectedYear, $years)) $years[] = $selectedYear;
 rsort($years);

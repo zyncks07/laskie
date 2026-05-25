@@ -67,7 +67,7 @@ switch ($action) {
         // Apply immediately for this request
         date_default_timezone_set($tz);
         $offset = (new DateTime('now', new DateTimeZone($tz)))->format('P');
-        $pdo->exec("SET time_zone = '$offset'");
+        $pdo->prepare("SET time_zone = ?")->execute([$offset]);
         logActivity($pdo, 'UPDATE_TIMEZONE', 'Settings', "Timezone set to $tz ($offset)");
         jsonOk(['msg' => "Timezone set to $tz ($offset)."]);
     }
@@ -221,6 +221,10 @@ switch ($action) {
                 if (!is_dir($dir)) mkdir($dir, 0775, true);
                 continue;
             }
+            // Whitelist extensions — block PHP and other executable types.
+            $fileExt = strtolower(pathinfo($name, PATHINFO_EXTENSION));
+            $allowedExts = ['jpg','jpeg','png','gif','pdf','doc','docx','xls','xlsx'];
+            if (!in_array($fileExt, $allowedExts, true)) continue;
             $target = $uploadsDir . '/' . substr($name, strlen('uploads/'));
             $dir = dirname($target);
             if (!is_dir($dir)) mkdir($dir, 0775, true);

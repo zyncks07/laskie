@@ -201,8 +201,21 @@ if ($action === 'void_payment') {
     if ($p['deleted_at'])            jsonErr('Cannot void a deleted payment. Restore it from trash first.');
     if ($p['status'] === 'voided')   jsonErr('Payment is already voided.');
     if ($p['status'] === 'refunded') jsonErr('Cannot void a fully refunded payment.');
-    $pdo->prepare("UPDATE payments SET status='voided' WHERE id=?")->execute([$id]);
-    logActivity($pdo,'VOID_PAYMENT','Payments',"Voided payment #{$id} ({$p['invoice_no']}) ₱{$p['amount']}");
+    $pdo->beginTransaction();
+    try {
+        $pdo->prepare("UPDATE payments SET status='voided' WHERE id=?")->execute([$id]);
+        // Remove the cash entry so the void is immediately reflected in all balance calculations.
+        $pdo->prepare("DELETE FROM cash_transactions WHERE reference_payment_id=? AND transaction_type='received'")->execute([$id]);
+        // Release the linked service charge so it reappears as outstanding.
+        if ($p['payment_type'] === 'service') {
+            $pdo->prepare("UPDATE unit_charges SET payment_id=NULL WHERE payment_id=?")->execute([$id]);
+        }
+        logActivity($pdo,'VOID_PAYMENT','Payments',"Voided payment #{$id} ({$p['invoice_no']}) ₱{$p['amount']}");
+        $pdo->commit();
+    } catch (Throwable $e) {
+        if ($pdo->inTransaction()) $pdo->rollBack();
+        throw $e;
+    }
     jsonOk(['msg' => 'Payment voided. It is excluded from totals but remains on record.']);
 }
 
@@ -216,8 +229,18 @@ if ($action === 'restore_payment') {
     $p = $pay->fetch();
     if (!$p) jsonErr('Payment not found.');
     if ($p['status'] !== 'voided') jsonErr('Payment is not voided.');
-    $pdo->prepare("UPDATE payments SET status='paid' WHERE id=?")->execute([$id]);
-    logActivity($pdo,'RESTORE_PAYMENT','Payments',"Restored voided payment #{$id} ({$p['invoice_no']}) ₱{$p['amount']}");
+    $pdo->beginTransaction();
+    try {
+        $pdo->prepare("UPDATE payments SET status='paid' WHERE id=?")->execute([$id]);
+        // Re-create the cash entry that was removed when this payment was voided.
+        $pdo->prepare("INSERT INTO cash_transactions (user_id,transaction_type,amount,reference_payment_id,notes,transaction_date) VALUES (?,?,?,?,?,?)")
+            ->execute([$p['received_by'],'received',$p['amount'],$id,"Payment received: {$p['invoice_no']}",$p['payment_date']]);
+        logActivity($pdo,'RESTORE_PAYMENT','Payments',"Restored voided payment #{$id} ({$p['invoice_no']}) ₱{$p['amount']}");
+        $pdo->commit();
+    } catch (Throwable $e) {
+        if ($pdo->inTransaction()) $pdo->rollBack();
+        throw $e;
+    }
     jsonOk(['msg' => 'Payment restored and active again.']);
 }
 
@@ -248,7 +271,7 @@ if ($action === 'get_unit_payments') {
         FROM payments p
         LEFT JOIN service_types st ON p.service_type_id=st.id
         LEFT JOIN users u          ON p.received_by=u.id
-        WHERE p.unit_id=? AND p.period_month=? AND p.period_year=? AND p.deleted_at IS NULL
+        WHERE p.unit_id=? AND p.period_month=? AND p.period_year=? AND p.deleted_at IS NULL AND p.status != 'voided'
         ORDER BY p.payment_date DESC, p.created_at DESC");
     $rows->execute([$unitId, $month, $year]);
     $payments = $rows->fetchAll();
@@ -277,7 +300,7 @@ if ($action === 'monthly_summary') {
             COALESCE(SUM(CASE WHEN p.payment_type='service' THEN p.amount ELSE 0 END), 0) as service_paid,
             COALESCE(SUM(p.amount), 0) as total_paid,
             COALESCE((SELECT SUM(uc.amount) FROM unit_charges uc WHERE uc.unit_id=ru.id AND uc.period_month=? AND uc.period_year=? AND uc.payment_id IS NULL), 0) as outstanding_charges,
-            (SELECT u2.full_name FROM payments p2 LEFT JOIN users u2 ON p2.received_by=u2.id WHERE p2.unit_id=ru.id AND p2.period_month=? AND p2.period_year=? AND p2.deleted_at IS NULL ORDER BY p2.created_at DESC LIMIT 1) as last_cashier
+            (SELECT u2.full_name FROM payments p2 LEFT JOIN users u2 ON p2.received_by=u2.id WHERE p2.unit_id=ru.id AND p2.period_month=? AND p2.period_year=? AND p2.deleted_at IS NULL AND p2.status != 'voided' ORDER BY p2.created_at DESC LIMIT 1) as last_cashier
         FROM rental_units ru
         LEFT JOIN tenants t  ON t.unit_id=ru.id AND t.status='active'
         LEFT JOIN payments p ON p.unit_id=ru.id AND p.period_month=? AND p.period_year=? AND p.status != 'voided' AND p.deleted_at IS NULL
@@ -297,14 +320,16 @@ if ($action === 'monthly_summary') {
             $row['pay_status']      = 'gray';
             continue;
         }
-        $expected     = prorateFirstMonth($row['monthly_rate'], (int)$row['due_day'], $row['contract_start'] ?? null, $month, $year);
+        $rate         = getRateForMonth($pdo, (int)$row['id'], (float)$row['monthly_rate'], $month, $year);
+        $expected     = prorateFirstMonth($rate, (int)$row['due_day'], $row['contract_start'] ?? null, $month, $year);
         $paid         = $row['rent_paid'];
         $unpaidRent   = money_max('0.00', money_sub($expected, $paid));
         $balance      = money_add($unpaidRent, $row['outstanding_charges']);
         $row['expected_charge'] = $expected;
         $row['balance'] = $balance;
         if (!money_is_pos($paid)) {
-            $dueTs = mktime(0,0,0,$month,$row['due_day'],$year);
+            $daysInMo  = (int)date('t', mktime(0,0,0,$month,1,$year));
+            $dueTs     = mktime(0,0,0,$month,min((int)$row['due_day'],$daysInMo),$year);
             $row['pay_status'] = (time() > $dueTs) ? 'red' : 'amber';
         } elseif (money_is_pos($balance)) {
             $row['pay_status'] = 'amber';
@@ -380,14 +405,14 @@ if ($action === 'save_charge') {
     $unitId      = (int)($_POST['unit_id'] ?? 0);
     $tenantId    = (int)($_POST['tenant_id'] ?? 0) ?: null;
     $serviceId   = (int)($_POST['service_type_id'] ?? 0) ?: null;
-    $amount      = (float)($_POST['amount'] ?? 0);
+    $amount      = trim((string)($_POST['amount'] ?? '0'));
     $description = trim($_POST['description'] ?? '');
     $chargeDate  = $_POST['charge_date'] ?? date('Y-m-d');
     $periodMonth = (int)($_POST['period_month'] ?? date('n'));
     $periodYear  = (int)($_POST['period_year']  ?? date('Y'));
 
-    if (!$unitId)     jsonErr('Rental unit is required.');
-    if ($amount <= 0) jsonErr('Amount must be greater than zero.');
+    if (!$unitId)              jsonErr('Rental unit is required.');
+    if (!money_is_pos($amount)) jsonErr('Amount must be greater than zero.');
     if (!$description && $serviceId) {
         $stRow = $pdo->prepare("SELECT name FROM service_types WHERE id=?");
         $stRow->execute([$serviceId]);

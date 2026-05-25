@@ -16,7 +16,7 @@ $serviceTypes = $pdo->query("SELECT id, name, default_amount FROM service_types 
 $curMonth = (int)date('n');
 $curYear  = (int)date('Y');
 
-$years = $pdo->query("SELECT DISTINCT YEAR(payment_date) y FROM payments ORDER BY y DESC")->fetchAll(PDO::FETCH_COLUMN);
+$years = $pdo->query("SELECT DISTINCT YEAR(payment_date) y FROM payments WHERE deleted_at IS NULL AND status != 'voided' ORDER BY y DESC")->fetchAll(PDO::FETCH_COLUMN);
 if (!in_array($curYear, $years)) array_unshift($years, $curYear);
 rsort($years);
 
@@ -309,6 +309,12 @@ var SERVICE_TYPES = <?= json_encode($serviceTypes) ?>;
 </script>
 
 <script>
+function esc(s) {
+  var d = document.createElement('div');
+  d.appendChild(document.createTextNode(s || ''));
+  return d.innerHTML;
+}
+
 var payModal        = null;
 var unitDetailModal = null;
 var refundModal     = null;
@@ -369,17 +375,16 @@ function loadSummary() {
       var statusBadge = r.status === 'occupied'
         ? '<span class="badge badge-occupied">Occupied</span>'
         : '<span class="badge badge-vacant">Vacant</span>';
-      var tenantCell = r.tenant_name ? r.tenant_name : '<span class="text-muted">—</span>';
-      var rentCell   = rentPd > 0 ? '<span style="color:var(--success)">' + fmt(rentPd) + '</span>' : '<span class="text-muted">—</span>';
-      var svcCell    = svcPd  > 0 ? fmt(svcPd)  : '<span class="text-muted">—</span>';
-      var totCell    = totPd  > 0 ? fmt(totPd)  : '<span class="text-muted">—</span>';
-      var cashierCell = r.last_cashier ? r.last_cashier : '<span class="text-muted">—</span>';
-      var unitNameEsc = r.unit_name.replace(/'/g, "\\'");
+      var tenantCell  = r.tenant_name ? esc(r.tenant_name) : '<span class="text-muted">—</span>';
+      var rentCell    = rentPd > 0 ? '<span style="color:var(--success)">' + fmt(rentPd) + '</span>' : '<span class="text-muted">—</span>';
+      var svcCell     = svcPd  > 0 ? fmt(svcPd)  : '<span class="text-muted">—</span>';
+      var totCell     = totPd  > 0 ? fmt(totPd)  : '<span class="text-muted">—</span>';
+      var cashierCell = r.last_cashier ? esc(r.last_cashier) : '<span class="text-muted">—</span>';
 
       html +=
         '<tr>' +
           '<td>' + dot + '</td>' +
-          '<td><div class="fw-600 cell-trunc-sm">' + r.unit_name + '</div>' + statusBadge + '</td>' +
+          '<td><div class="fw-600 cell-trunc-sm">' + esc(r.unit_name) + '</div>' + statusBadge + '</td>' +
           '<td class="cell-trunc">' + tenantCell + '</td>' +
           '<td class="text-end">' + fmt(rate) + '</td>' +
           '<td class="text-end">' + rentCell + '</td>' +
@@ -388,7 +393,10 @@ function loadSummary() {
           '<td class="text-end">' + balCell + '</td>' +
           '<td style="font-size:12px">' + cashierCell + '</td>' +
           '<td class="text-center no-print">' +
-            '<button class="btn-icon" title="View payments" onclick="viewUnitPayments(' + r.id + ',\'' + unitNameEsc + '\',' + month + ',' + year + ')">' +
+            '<button class="btn-icon" title="View payments" ' +
+              'data-uid="' + r.id + '" data-uname="' + esc(r.unit_name) + '" ' +
+              'data-month="' + month + '" data-year="' + year + '" ' +
+              'onclick="viewUnitPayments(+this.dataset.uid, this.dataset.uname, +this.dataset.month, +this.dataset.year)">' +
               '<i class="fa-solid fa-eye fa-xs"></i></button> ' +
             '<button class="btn-icon" title="Record payment" onclick="openPaymentForUnit(' + r.id + ')">' +
               '<i class="fa-solid fa-plus fa-xs"></i></button>' +

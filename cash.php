@@ -20,15 +20,17 @@ $myBal = $pdo->prepare("
         COALESCE(SUM(CASE WHEN transaction_type='received'     THEN amount ELSE 0 END),0) AS total_received,
         COALESCE(SUM(CASE WHEN transaction_type='remitted'     THEN amount ELSE 0 END),0) AS total_remitted,
         COALESCE(SUM(CASE WHEN transaction_type='expense'      THEN amount ELSE 0 END),0) AS total_expenses,
-        COALESCE(SUM(CASE WHEN transaction_type='vault_return' THEN amount ELSE 0 END),0) AS total_vault_returns
+        COALESCE(SUM(CASE WHEN transaction_type='vault_return' THEN amount ELSE 0 END),0) AS total_vault_returns,
+        COALESCE(SUM(CASE WHEN transaction_type='refunded'     THEN amount ELSE 0 END),0) AS total_refunded
     FROM cash_transactions WHERE user_id=?
 ");
 $myBal->execute([$_SESSION['user']['id']]);
 $myBalance = $myBal->fetch();
-// cash_on_hand = received + vault_return - remitted - expenses
+// cash_on_hand = received + vault_return - remitted - expenses - refunded
 $myCash = money_sub(
-    money_sub(money_add($myBalance['total_received'], $myBalance['total_vault_returns']), $myBalance['total_remitted']),
-    $myBalance['total_expenses']
+    money_sub(money_sub(money_add($myBalance['total_received'], $myBalance['total_vault_returns']), $myBalance['total_remitted']),
+    $myBalance['total_expenses']),
+    $myBalance['total_refunded']
 );
 
 logActivity($pdo, 'VIEW_CASH', 'Cash', 'Viewed cash on hand page');
@@ -246,6 +248,12 @@ include 'includes/header.php';
 </div>
 
 <script>
+function esc(s) {
+  var d = document.createElement('div');
+  d.appendChild(document.createTextNode(s != null ? String(s) : ''));
+  return d.innerHTML;
+}
+
 var remitModal = null;
 var IS_ADMIN   = <?=isAdmin()?'true':'false'?>;
 var MY_ID      = <?=(int)$_SESSION['user']['id']?>;
@@ -274,9 +282,9 @@ function loadAllBalances() {
       var c = parseFloat(u.cash_on_hand)        || 0;
       totR += r; totM += m; totE += e; totV += v;
       var cashColor = c > 0 ? 'var(--warning)' : (c < 0 ? 'var(--danger)' : 'var(--success)');
-      var roleBadge = '<span class="badge badge-' + u.role + '">' + u.role.charAt(0).toUpperCase() + u.role.slice(1) + '</span>';
+      var roleBadge = '<span class="badge badge-' + esc(u.role) + '">' + esc(u.role.charAt(0).toUpperCase() + u.role.slice(1)) + '</span>';
       html += '<tr>';
-      html += '<td class="fw-600">' + u.full_name + '</td>';
+      html += '<td class="fw-600">' + esc(u.full_name) + '</td>';
       html += '<td>' + roleBadge + '</td>';
       html += '<td class="text-end">' + fmt(r) + '</td>';
       html += '<td class="text-end">' + fmt(m) + '</td>';
@@ -339,8 +347,8 @@ function loadTransactions() {
       var t = res.transactions[i];
       var tt = t.transaction_type;
       var refHtml = '&#8212;';
-      if (t.linked_invoice) refHtml = '<span class="mono" style="font-size:11.5px;color:var(--primary)">' + t.linked_invoice + '</span>';
-      else if (t.linked_expense) refHtml = '<span style="font-size:11.5px;color:var(--text-muted)">' + t.linked_expense + '</span>';
+      if (t.linked_invoice) refHtml = '<span class="mono" style="font-size:11.5px;color:var(--primary)">' + esc(t.linked_invoice) + '</span>';
+      else if (t.linked_expense) refHtml = '<span style="font-size:11.5px;color:var(--text-muted)">' + esc(t.linked_expense) + '</span>';
 
       var proofHtml = '<span class="text-muted">&#8212;</span>';
       if (t.doc_path) proofHtml = '<a href="' + t.doc_path + '" target="_blank" class="btn-icon" title="View file"><i class="fa-solid fa-paperclip fa-xs"></i></a>';
@@ -358,10 +366,10 @@ function loadTransactions() {
       html += '<tr>';
       html += '<td style="white-space:nowrap;font-size:12.5px">' + t.transaction_date + '</td>';
       html += '<td><span class="badge ' + (typeBadge[tt] || 'badge-staff') + '"><i class="fa-solid ' + (typeIcon[tt] || 'fa-circle') + ' me-1 fa-xs"></i>' + (typeLabel[tt] || tt) + '</span></td>';
-      html += '<td style="font-size:12.5px">' + (t.user_name || '&#8212;') + '</td>';
+      html += '<td style="font-size:12.5px">' + (t.user_name ? esc(t.user_name) : '&#8212;') + '</td>';
       html += '<td>' + refHtml + '</td>';
       html += '<td class="text-end fw-600" style="color:' + (amtColor[tt] || '#000') + '">' + fmt(t.amount) + '</td>';
-      html += '<td style="font-size:12px;color:var(--text-muted);max-width:180px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + (t.notes || '&#8212;') + '</td>';
+      html += '<td style="font-size:12px;color:var(--text-muted);max-width:180px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + (t.notes ? esc(t.notes) : '&#8212;') + '</td>';
       html += '<td class="text-center">' + proofHtml + '</td>';
       html += '<td class="text-center">' + editBtn + delBtn + '</td>';
       html += '</tr>';

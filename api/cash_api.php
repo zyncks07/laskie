@@ -117,25 +117,28 @@ if ($action === 'list_transactions') {
     ");
     $rows->execute($params);
     $txns = $rows->fetchAll();
-    $rec = $rem = $exp = $vretFromVault = [];
+    $rec = $rem = $exp = $vretFromVault = $ref = [];
     foreach ($txns as $t) {
         if ($t['transaction_type']==='received')     $rec[]           = $t['amount'];
         if ($t['transaction_type']==='remitted')     $rem[]           = $t['amount'];
         if ($t['transaction_type']==='expense')      $exp[]           = $t['amount'];
         if ($t['transaction_type']==='vault_return') $vretFromVault[] = $t['amount'];
+        if ($t['transaction_type']==='refunded')     $ref[]           = $t['amount'];
     }
     $totRec     = money_sum($rec);
     $totRem     = money_sum($rem);
     $totExp     = money_sum($exp);
     $totVaultIn = money_sum($vretFromVault);
-    // Cash on hand = received + vault_return - remitted - expenses
-    $cashOnHand = money_sub(money_sub(money_add($totRec, $totVaultIn), $totRem), $totExp);
+    $totRef     = money_sum($ref);
+    // Cash on hand = received + vault_return - remitted - expenses - refunded
+    $cashOnHand = money_sub(money_sub(money_sub(money_add($totRec, $totVaultIn), $totRem), $totExp), $totRef);
     jsonOk([
         'transactions'        => $txns,
         'total_received'      => $totRec,
         'total_remitted'      => $totRem,
         'total_expenses'      => $totExp,
         'total_vault_returns' => $totVaultIn,
+        'total_refunded'      => $totRef,
         'cash_on_hand'        => $cashOnHand,
         'count'               => count($txns),
     ]);
@@ -149,7 +152,8 @@ if ($action === 'all_users_balance') {
             COALESCE(SUM(CASE WHEN ct.transaction_type='received'     THEN ct.amount ELSE 0 END),0) AS total_received,
             COALESCE(SUM(CASE WHEN ct.transaction_type='remitted'     THEN ct.amount ELSE 0 END),0) AS total_remitted,
             COALESCE(SUM(CASE WHEN ct.transaction_type='expense'      THEN ct.amount ELSE 0 END),0) AS total_expenses,
-            COALESCE(SUM(CASE WHEN ct.transaction_type='vault_return' THEN ct.amount ELSE 0 END),0) AS total_vault_returns
+            COALESCE(SUM(CASE WHEN ct.transaction_type='vault_return' THEN ct.amount ELSE 0 END),0) AS total_vault_returns,
+            COALESCE(SUM(CASE WHEN ct.transaction_type='refunded'     THEN ct.amount ELSE 0 END),0) AS total_refunded
         FROM users u
         LEFT JOIN cash_transactions ct ON ct.user_id=u.id
         WHERE u.status='active'
@@ -158,10 +162,11 @@ if ($action === 'all_users_balance') {
     $rows->execute();
     $data = $rows->fetchAll();
     foreach ($data as &$d) {
-        // cash_on_hand = received + vault_return - remitted - expenses
+        // cash_on_hand = received + vault_return - remitted - expenses - refunded
         $d['cash_on_hand'] = money_sub(
-            money_sub(money_add($d['total_received'], $d['total_vault_returns']), $d['total_remitted']),
-            $d['total_expenses']
+            money_sub(money_sub(money_add($d['total_received'], $d['total_vault_returns']), $d['total_remitted']),
+            $d['total_expenses']),
+            $d['total_refunded']
         );
     }
     unset($d);

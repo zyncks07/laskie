@@ -240,7 +240,8 @@ Global helpers attached to `window`: `showToast`, `apiPost`, `confirmDelete`, `f
 | Edit/Delete payments | ✓ | ✗ | ✗ |
 | Edit/Delete expenses | ✓ | ✗ | ✗ |
 | Manage Accounts, Tenants, Units, Categories, Settings | ✓ | ✗ | ✗ |
-| Audit Logs, The Vault | ✓ | ✗ | ✗ |
+| Audit Logs | ✓ | ✗ | ✗ |
+| The Vault (dividend recipients, distributions, returns) | ✓ | ✓ | ✗ |
 
 ### Already in place
 - Prepared statements only — no string-interpolated SQL anywhere in the codebase

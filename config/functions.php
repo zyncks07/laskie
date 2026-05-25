@@ -145,7 +145,7 @@ function requireLogin(): void {
             echo json_encode(['success' => false, 'error' => 'Session expired. Please log in again.']);
             exit;
         }
-        header('Location: ' . rtrim(dirname($_SERVER['PHP_SELF']), '/admin/payments') . '/index.php?err=session');
+        header('Location: ' . pageUrl('index.php') . '?err=session');
         exit;
     }
 }
@@ -550,7 +550,9 @@ function getUnitPaymentStatus(PDO $pdo, int $unitId, int $month, int $year): str
     $expected  = prorateFirstMonth($rate, (int)$u['due_day'], $u['contract_start'] ?? null, $month, $year);
 
     if (money_is_zero($totalPaid) && money_is_pos($expected)) {
-        $dueDate = mktime(0,0,0, $month, $u['due_day'], $year);
+        $daysInMonth = (int)date('t', mktime(0,0,0,$month,1,$year));
+        $cappedDay   = min((int)$u['due_day'], $daysInMonth);
+        $dueDate     = mktime(0,0,0, $month, $cappedDay, $year);
         return time() > $dueDate ? 'red' : 'amber';
     }
     if (money_gte($totalPaid, $expected)) return 'green';

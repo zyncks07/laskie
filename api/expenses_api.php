@@ -202,7 +202,7 @@ if ($action === 'list_expenses') {
     $stmt->execute($params);
     $rows = $stmt->fetchAll();
 
-    $total = array_sum(array_column($rows, 'amount'));
+    $total = money_sum(array_column($rows, 'amount'));
     jsonOk(['expenses' => $rows, 'total' => $total, 'count' => count($rows)]);
 }
 

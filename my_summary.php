@@ -29,7 +29,8 @@ $totals = $pdo->prepare("
         COALESCE(SUM(CASE WHEN transaction_type='received'     THEN amount ELSE 0 END),0) AS total_received,
         COALESCE(SUM(CASE WHEN transaction_type='remitted'     THEN amount ELSE 0 END),0) AS total_remitted,
         COALESCE(SUM(CASE WHEN transaction_type='expense'      THEN amount ELSE 0 END),0) AS total_expenses,
-        COALESCE(SUM(CASE WHEN transaction_type='vault_return' THEN amount ELSE 0 END),0) AS total_vault_returns
+        COALESCE(SUM(CASE WHEN transaction_type='vault_return' THEN amount ELSE 0 END),0) AS total_vault_returns,
+        COALESCE(SUM(CASE WHEN transaction_type='refunded'     THEN amount ELSE 0 END),0) AS total_refunded
     FROM cash_transactions
     WHERE user_id=? AND transaction_date >= ? AND transaction_date < ?
 ");
@@ -130,8 +131,17 @@ include 'includes/header.php';
 </div>
 
 <!-- Period Summary Stats -->
+<?php
+$myCash = money_sub(
+    money_sub(money_sub(
+        money_add($tot['total_received'], $tot['total_vault_returns']),
+        $tot['total_remitted']),
+    $tot['total_expenses']),
+    $tot['total_refunded']
+);
+?>
 <div class="row g-3 mb-3">
-  <div class="col-6 col-md-3">
+  <div class="col-6 col-md-2">
     <div class="stat-card">
       <div class="stat-icon green"><i class="fa-solid fa-arrow-down"></i></div>
       <div class="stat-body">
@@ -141,7 +151,7 @@ include 'includes/header.php';
       </div>
     </div>
   </div>
-  <div class="col-6 col-md-3">
+  <div class="col-6 col-md-2">
     <div class="stat-card">
       <div class="stat-icon blue"><i class="fa-solid fa-arrow-up"></i></div>
       <div class="stat-body">
@@ -151,13 +161,47 @@ include 'includes/header.php';
       </div>
     </div>
   </div>
-  <div class="col-6 col-md-3">
+  <div class="col-6 col-md-2">
     <div class="stat-card">
       <div class="stat-icon red"><i class="fa-solid fa-receipt"></i></div>
       <div class="stat-body">
         <div class="stat-label">Expenses</div>
         <div class="stat-value" style="font-size:17px"><?= money((float)$tot['total_expenses']) ?></div>
         <div class="stat-sub"><?= count($myExpenses) ?> record<?= count($myExpenses)!=1?'s':'' ?></div>
+      </div>
+    </div>
+  </div>
+  <?php if ((float)$tot['total_vault_returns'] > 0): ?>
+  <div class="col-6 col-md-2">
+    <div class="stat-card">
+      <div class="stat-icon teal"><i class="fa-solid fa-hand-holding-dollar"></i></div>
+      <div class="stat-body">
+        <div class="stat-label">Vault Returns</div>
+        <div class="stat-value" style="font-size:17px"><?= money((float)$tot['total_vault_returns']) ?></div>
+        <div class="stat-sub">Returned to you</div>
+      </div>
+    </div>
+  </div>
+  <?php endif; ?>
+  <?php if ((float)$tot['total_refunded'] > 0): ?>
+  <div class="col-6 col-md-2">
+    <div class="stat-card">
+      <div class="stat-icon amber"><i class="fa-solid fa-rotate-left"></i></div>
+      <div class="stat-body">
+        <div class="stat-label">Refunded</div>
+        <div class="stat-value" style="font-size:17px"><?= money((float)$tot['total_refunded']) ?></div>
+        <div class="stat-sub">Returned to tenants</div>
+      </div>
+    </div>
+  </div>
+  <?php endif; ?>
+  <div class="col-6 col-md-2">
+    <div class="stat-card">
+      <div class="stat-icon purple"><i class="fa-solid fa-wallet"></i></div>
+      <div class="stat-body">
+        <div class="stat-label">Cash on Hand</div>
+        <div class="stat-value" style="font-size:17px;color:<?= money_is_pos($myCash)?'var(--success)':'var(--danger)' ?>"><?= money($myCash) ?></div>
+        <div class="stat-sub">This period</div>
       </div>
     </div>
   </div>
@@ -194,7 +238,7 @@ include 'includes/header.php';
       <tfoot>
         <tr style="background:#f0fdf4;font-weight:700">
           <td colspan="5">Total Collected</td>
-          <td class="text-end" style="color:var(--success)"><?= money(array_sum(array_column($myPayments,'amount'))) ?></td>
+          <td class="text-end" style="color:var(--success)"><?= money(money_sum(array_column($myPayments,'amount'))) ?></td>
           <td></td>
         </tr>
       </tfoot>
@@ -234,7 +278,7 @@ include 'includes/header.php';
       <tfoot>
         <tr style="background:#f0f8ff;font-weight:700">
           <td>Total Remitted</td>
-          <td class="text-end" style="color:var(--info)"><?= money(array_sum(array_column($myRemits,'amount'))) ?></td>
+          <td class="text-end" style="color:var(--info)"><?= money(money_sum(array_column($myRemits,'amount'))) ?></td>
           <td colspan="2"></td>
         </tr>
       </tfoot>
