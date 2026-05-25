@@ -99,6 +99,10 @@ if ($action === 'get_expense') {
 }
 
 // ── Delete Expense (soft) ─────────────────────────────────────
+// Same shape as payments/api_payment.php::delete_payment — must also remove
+// the matching cash_transactions row, otherwise cash_api.php list_transactions
+// and all_users_balance keep counting the deleted expense and the recorder's
+// cash-on-hand stays over-debited until the row is purged from trash.
 if ($action === 'delete_expense') {
     requireAdmin();
     $id = (int)($_POST['id'] ?? 0);
@@ -109,12 +113,22 @@ if ($action === 'delete_expense') {
     $e = $exp->fetch();
     if (!$e) jsonErr('Expense not found or already deleted.');
 
-    $pdo->prepare("UPDATE expenses SET deleted_at=NOW() WHERE id=?")->execute([$id]);
-    logActivity($pdo,'DELETE_EXPENSE','Expenses',"Soft-deleted expense #{$id}: {$e['description']} ₱{$e['amount']}");
+    $pdo->beginTransaction();
+    try {
+        $pdo->prepare("UPDATE expenses SET deleted_at=NOW() WHERE id=?")->execute([$id]);
+        $pdo->prepare("DELETE FROM cash_transactions WHERE reference_expense_id=? AND transaction_type='expense'")->execute([$id]);
+        logActivity($pdo,'DELETE_EXPENSE','Expenses',"Soft-deleted expense #{$id}: {$e['description']} ₱{$e['amount']}");
+        $pdo->commit();
+    } catch (Throwable $t) {
+        if ($pdo->inTransaction()) $pdo->rollBack();
+        throw $t;
+    }
     jsonOk(['msg' => 'Expense moved to trash. It can be restored from the Transaction Manager.']);
 }
 
 // ── Restore Deleted Expense (from trash) ──────────────────────
+// Mirror of delete_expense side-effects: recreate the cash entry. Idempotent
+// against the legacy state where the cash row was never removed.
 if ($action === 'restore_deleted_expense') {
     requireAdmin();
     $id = (int)($_POST['id'] ?? 0);
@@ -125,8 +139,21 @@ if ($action === 'restore_deleted_expense') {
     $e = $exp->fetch();
     if (!$e) jsonErr('Expense not found in trash.');
 
-    $pdo->prepare("UPDATE expenses SET deleted_at=NULL WHERE id=?")->execute([$id]);
-    logActivity($pdo,'RESTORE_EXPENSE','Expenses',"Restored deleted expense #{$id}: {$e['description']} ₱{$e['amount']}");
+    $pdo->beginTransaction();
+    try {
+        $pdo->prepare("UPDATE expenses SET deleted_at=NULL WHERE id=?")->execute([$id]);
+        $existing = $pdo->prepare("SELECT id FROM cash_transactions WHERE reference_expense_id=? AND transaction_type='expense' LIMIT 1");
+        $existing->execute([$id]);
+        if (!$existing->fetchColumn()) {
+            $pdo->prepare("INSERT INTO cash_transactions (user_id,transaction_type,amount,reference_expense_id,notes,transaction_date) VALUES (?,?,?,?,?,?)")
+                ->execute([$e['recorded_by'], 'expense', $e['amount'], $id, "Expense: {$e['description']}", $e['expense_date']]);
+        }
+        logActivity($pdo,'RESTORE_EXPENSE','Expenses',"Restored deleted expense #{$id}: {$e['description']} ₱{$e['amount']}");
+        $pdo->commit();
+    } catch (Throwable $t) {
+        if ($pdo->inTransaction()) $pdo->rollBack();
+        throw $t;
+    }
     jsonOk(['msg' => 'Expense restored successfully.']);
 }
 
@@ -255,7 +282,10 @@ if ($action === 'bulk_delete_expenses') {
             $e = $exp->fetch();
             if (!$e) continue;
 
+            // Same side-effect as single delete_expense — drop the cash row so
+            // the recorder's cash-on-hand stays in sync with reality.
             $pdo->prepare("UPDATE expenses SET deleted_at=NOW() WHERE id=?")->execute([$id]);
+            $pdo->prepare("DELETE FROM cash_transactions WHERE reference_expense_id=? AND transaction_type='expense'")->execute([$id]);
             logActivity($pdo, 'DELETE_EXPENSE', 'Expenses', "Bulk soft-deleted expense #{$id}: {$e['description']} ₱{$e['amount']}");
             $deleted++;
         }

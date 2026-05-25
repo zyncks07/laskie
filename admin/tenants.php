@@ -344,6 +344,21 @@ function openDocs(tenantId, name) {
   loadDocs(tenantId);
 }
 
+// Same esc()/safeUrl() pair used in cash.php / expenses.php — keeps DB-stored
+// doc names/types/URLs from breaking out of the rendered cell or executing as
+// HTML. external_url is user-supplied so the URL-scheme check is load-bearing.
+function _docEsc(s) {
+  var d = document.createElement('div');
+  d.appendChild(document.createTextNode(s != null ? String(s) : ''));
+  return d.innerHTML;
+}
+function _docSafeUrl(u) {
+  if (!u) return '';
+  var s = String(u).trim();
+  if (/^\s*(javascript|data|vbscript|file):/i.test(s)) return '';
+  return _docEsc(s);
+}
+
 function loadDocs(tenantId) {
   apiPost('tenants.php', {action:'get_docs', tenant_id:tenantId}, (err, res) => {
     const container = document.getElementById('docsList');
@@ -351,10 +366,16 @@ function loadDocs(tenantId) {
     let html = '<div class="table-responsive"><table class="table"><thead><tr><th>Name</th><th>Type</th><th>File/URL</th><th>Uploaded By</th><th>Date</th><th></th></tr></thead><tbody>';
     res.docs.forEach(d => {
       let link = '—';
-      if (d.file_path) link = '<a href="' + d.file_path + '" target="_blank" class="text-primary"><i class="fa-solid fa-file me-1"></i>View</a>';
-      else if (d.external_url) link = '<a href="' + d.external_url + '" target="_blank" class="text-primary"><i class="fa-solid fa-link me-1"></i>Open URL</a>';
-      html += '<tr><td>' + d.doc_name + '</td><td><span class="badge bg-secondary">' + (d.doc_type||'&#8212;') + '</span></td><td>' + link + '</td><td>' + (d.uploader||'&#8212;') + '</td><td style="font-size:11px">' + d.created_at.split(' ')[0] + '</td>' +
-        '<td><button class="btn-icon danger" onclick="deleteDoc(' + d.id + ')"><i class="fa-solid fa-trash fa-xs"></i></button></td></tr>';
+      if (d.file_path) {
+        const fp = _docSafeUrl(d.file_path);
+        if (fp) link = '<a href="' + fp + '" target="_blank" rel="noopener noreferrer" class="text-primary"><i class="fa-solid fa-file me-1"></i>View</a>';
+      } else if (d.external_url) {
+        const eu = _docSafeUrl(d.external_url);
+        if (eu) link = '<a href="' + eu + '" target="_blank" rel="noopener noreferrer" class="text-primary"><i class="fa-solid fa-link me-1"></i>Open URL</a>';
+      }
+      const created = d.created_at ? _docEsc(String(d.created_at).split(' ')[0]) : '—';
+      html += '<tr><td>' + _docEsc(d.doc_name) + '</td><td><span class="badge bg-secondary">' + (d.doc_type ? _docEsc(d.doc_type) : '&#8212;') + '</span></td><td>' + link + '</td><td>' + (d.uploader ? _docEsc(d.uploader) : '&#8212;') + '</td><td style="font-size:11px">' + created + '</td>' +
+        '<td><button class="btn-icon danger" data-id="' + parseInt(d.id) + '" onclick="deleteDoc(+this.dataset.id)"><i class="fa-solid fa-trash fa-xs"></i></button></td></tr>';
     });
     html += '</tbody></table></div>';
     container.innerHTML = html;

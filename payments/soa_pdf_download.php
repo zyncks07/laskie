@@ -15,6 +15,17 @@ $dateTo   = $_GET['date_to']   ?? date('Y-m-d');
 
 if (!$unitId) { http_response_code(400); die('Unit ID required.'); }
 
+// Validate date params before they reach the SQL inside soa_pdf.php (where
+// they would be safely bound anyway) and — more importantly — before they
+// land in the Content-Disposition filename below. Without this, anything
+// the user pastes into the URL leaks into the downloaded file name.
+$isoDate = '/^\d{4}-\d{2}-\d{2}$/';
+if (!preg_match($isoDate, $dateFrom)) $dateFrom = date('Y-01-01');
+if (!preg_match($isoDate, $dateTo))   $dateTo   = date('Y-m-d');
+// Keep $_GET in sync so the included soa_pdf.php sees the sanitized values.
+$_GET['date_from'] = $dateFrom;
+$_GET['date_to']   = $dateTo;
+
 $s = $pdo->prepare("SELECT unit_name FROM rental_units WHERE id=?");
 $s->execute([$unitId]);
 $unitName = $s->fetchColumn() ?: 'Unit';
