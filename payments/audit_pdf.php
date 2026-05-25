@@ -36,8 +36,16 @@ $payStmt = $pdo->prepare(
 $payStmt->execute([$rangeStart, $rangeEnd]);
 $payments = $payStmt->fetchAll();
 
-$rentPayments    = array_filter($payments, fn($p) => $p['payment_type'] === 'rent');
-$servicePayments = array_filter($payments, fn($p) => $p['payment_type'] === 'service');
+// Voided / soft-deleted payments are kept in $payments and rendered in the
+// detail tables (an audit report should list everything that happened) but
+// must not inflate the Net Income summary. Same for soft-deleted expenses.
+$isValidPayment = fn(array $p): bool => empty($p['deleted_at']) && ($p['status'] ?? 'paid') !== 'voided';
+$validPayments    = array_values(array_filter($payments, $isValidPayment));
+$rentPayments     = array_filter($payments, fn($p) => $p['payment_type'] === 'rent');
+$servicePayments  = array_filter($payments, fn($p) => $p['payment_type'] === 'service');
+$validRent        = array_filter($rentPayments,    $isValidPayment);
+$validService     = array_filter($servicePayments, $isValidPayment);
+$voidedOrDeletedPayments = array_values(array_filter($payments, fn($p) => !$isValidPayment($p)));
 
 // ── Expenses ─────────────────────────────────────────────────
 $expStmt = $pdo->prepare(
@@ -51,6 +59,8 @@ $expStmt = $pdo->prepare(
 );
 $expStmt->execute([$rangeStart, $rangeEnd]);
 $expenses = $expStmt->fetchAll();
+$validExpenses          = array_values(array_filter($expenses, fn($e) => empty($e['deleted_at'])));
+$deletedExpenses        = array_values(array_filter($expenses, fn($e) => !empty($e['deleted_at'])));
 
 // ── Cash transactions ─────────────────────────────────────────
 $cashStmt = $pdo->prepare(
@@ -64,18 +74,20 @@ $cashStmt->execute([$rangeStart, $rangeEnd]);
 $cashTxns = $cashStmt->fetchAll();
 
 // ── Summaries ─────────────────────────────────────────────────
-$totalRentPaid    = array_sum(array_column($rentPayments, 'amount'));
-$totalServicePaid = array_sum(array_column($servicePayments, 'amount'));
-$totalRevenue     = $totalRentPaid + $totalServicePaid;
-$totalExpenses    = array_sum(array_column($expenses, 'amount'));
-$netIncome        = $totalRevenue - $totalExpenses;
+// Cents-based sums to avoid float drift across a year's worth of rows.
+$totalRentPaid    = money_sum(array_column($validRent,     'amount'));
+$totalServicePaid = money_sum(array_column($validService,  'amount'));
+$totalRevenue     = money_add($totalRentPaid, $totalServicePaid);
+$totalExpenses    = money_sum(array_column($validExpenses, 'amount'));
+$netIncome        = money_sub($totalRevenue, $totalExpenses);
+$voidedExcluded   = money_sum(array_column($voidedOrDeletedPayments, 'amount'));
+$deletedExpExcluded = money_sum(array_column($deletedExpenses, 'amount'));
 
-// Expenses by category
+// Expenses by category (valid expenses only — same reasoning as totals)
 $expByCategory = [];
-foreach ($expenses as $e) {
+foreach ($validExpenses as $e) {
     $cat = $e['category_name'] ?: 'Uncategorized';
-    if (!isset($expByCategory[$cat])) $expByCategory[$cat] = 0;
-    $expByCategory[$cat] += (float)$e['amount'];
+    $expByCategory[$cat] = money_add($expByCategory[$cat] ?? '0.00', $e['amount']);
 }
 
 $periodLabel = $month > 0
@@ -155,6 +167,11 @@ tfoot td { background: #f8fafc; font-weight: 700; border-top: 2px solid var(--bo
 .badge-recv    { background: #d1fae5; color: #065f46; }
 .badge-remit   { background: #fee2e2; color: #991b1b; }
 .badge-exp     { background: #fce7f3; color: #9d174d; }
+.badge-voided  { background: #fee2e2; color: #991b1b; }
+.badge-deleted { background: #f1f5f9; color: #475569; }
+tr.row-excluded td { color: #94a3b8; text-decoration: line-through; }
+tr.row-excluded td .badge { text-decoration: none; }
+.excluded-note { padding: 6px 12px; font-size: 10.5px; color: var(--muted); background: #fafafa; border-left: 3px solid #e2e8f0; margin-top: 4px; }
 .mono { font-family: 'DM Mono', monospace; font-size: 10px; }
 .text-muted { color: var(--muted); }
 
@@ -201,27 +218,41 @@ tfoot td { background: #f8fafc; font-weight: 700; border-top: 2px solid var(--bo
   <div class="summary-grid">
     <div class="sum-card revenue">
       <div class="label">Total Revenue</div>
-      <div class="value"><?= fmt_money($totalRevenue, $currSymbol) ?></div>
+      <div class="value"><?= fmt_money((float)$totalRevenue, $currSymbol) ?></div>
     </div>
     <div class="sum-card expense">
       <div class="label">Total Expenses</div>
-      <div class="value"><?= fmt_money($totalExpenses, $currSymbol) ?></div>
+      <div class="value"><?= fmt_money((float)$totalExpenses, $currSymbol) ?></div>
     </div>
-    <div class="sum-card net <?= $netIncome >= 0 ? 'positive' : 'negative' ?>">
+    <div class="sum-card net <?= money_gte($netIncome, '0.00') ? 'positive' : 'negative' ?>">
       <div class="label">Net Income</div>
-      <div class="value"><?= fmt_money($netIncome, $currSymbol) ?></div>
+      <div class="value"><?= fmt_money((float)$netIncome, $currSymbol) ?></div>
     </div>
     <div class="sum-card">
       <div class="label">Cash Transactions</div>
       <div class="value"><?= count($cashTxns) ?></div>
     </div>
   </div>
+  <?php if (money_is_pos($voidedExcluded) || money_is_pos($deletedExpExcluded)): ?>
+  <div style="background:#fef9c3;border:1px solid #facc15;border-radius:6px;padding:8px 12px;margin-bottom:18px;font-size:11px;color:#713f12">
+    <strong>Note:</strong> Totals exclude
+    <?php if (money_is_pos($voidedExcluded)): ?>
+      <?= count($voidedOrDeletedPayments) ?> voided/deleted payment(s) totalling <strong><?= fmt_money((float)$voidedExcluded, $currSymbol) ?></strong>
+    <?php endif; ?>
+    <?php if (money_is_pos($voidedExcluded) && money_is_pos($deletedExpExcluded)): ?> and<?php endif; ?>
+    <?php if (money_is_pos($deletedExpExcluded)): ?>
+      <?= count($deletedExpenses) ?> deleted expense(s) totalling <strong><?= fmt_money((float)$deletedExpExcluded, $currSymbol) ?></strong>
+    <?php endif; ?>.
+    These records are still listed in the detail sections below for audit-trail completeness.
+  </div>
+  <?php endif; ?>
 
   <!-- ── SECTION 1: Rental Payments ─────────────────────────── -->
+  <?php $rentExcluded = count($rentPayments) - count($validRent); ?>
   <div class="section">
     <div class="section-title">
-      <span>1 — Rental Payments (<?= count($rentPayments) ?> records)</span>
-      <span class="section-total"><?= fmt_money($totalRentPaid, $currSymbol) ?></span>
+      <span>1 — Rental Payments (<?= count($validRent) ?> counted<?= $rentExcluded > 0 ? " + $rentExcluded voided/deleted" : '' ?>)</span>
+      <span class="section-total"><?= fmt_money((float)$totalRentPaid, $currSymbol) ?></span>
     </div>
     <?php if (empty($rentPayments)): ?>
       <p class="text-muted" style="padding:10px 12px;font-size:11px">No rental payments recorded for this period.</p>
@@ -230,21 +261,28 @@ tfoot td { background: #f8fafc; font-weight: 700; border-top: 2px solid var(--bo
       <thead>
         <tr>
           <th>#</th><th>Date</th><th>Invoice</th><th>Unit</th><th>Tenant</th>
-          <th>Period</th><th class="r">Amount</th><th>Cashier</th><th>Notes</th>
+          <th>Period</th><th>Status</th><th class="r">Amount</th><th>Cashier</th><th>Notes</th>
         </tr>
       </thead>
       <tbody>
         <?php $rSeq = 0; foreach ($rentPayments as $p):
           $rSeq++;
-          $period = date('M Y', mktime(0,0,0,$p['period_month'],1,$p['period_year']));
+          $period   = date('M Y', mktime(0,0,0,$p['period_month'],1,$p['period_year']));
+          $excluded = !$isValidPayment($p);
+          $statusBadge = !empty($p['deleted_at'])
+              ? '<span class="badge badge-deleted">Deleted</span>'
+              : (($p['status'] ?? 'paid') === 'voided'
+                  ? '<span class="badge badge-voided">Voided</span>'
+                  : '');
         ?>
-        <tr>
+        <tr<?= $excluded ? ' class="row-excluded"' : '' ?>>
           <td class="text-muted"><?= $rSeq ?></td>
           <td><?= $p['payment_date'] ?></td>
           <td class="mono"><?= clean($p['invoice_no'] ?: '—') ?></td>
           <td><?= clean($p['unit_name'] ?: '—') ?></td>
           <td><?= clean($p['tenant_name'] ?: '—') ?></td>
           <td><?= $period ?></td>
+          <td><?= $statusBadge ?></td>
           <td class="r"><strong><?= fmt_money((float)$p['amount'], $currSymbol) ?></strong></td>
           <td><?= clean($p['cashier_name'] ?: '—') ?></td>
           <td class="text-muted"><?= clean($p['notes'] ?: '') ?></td>
@@ -253,20 +291,24 @@ tfoot td { background: #f8fafc; font-weight: 700; border-top: 2px solid var(--bo
       </tbody>
       <tfoot>
         <tr>
-          <td colspan="6">TOTAL RENTAL PAYMENTS</td>
-          <td class="r"><?= fmt_money($totalRentPaid, $currSymbol) ?></td>
+          <td colspan="7">TOTAL RENTAL PAYMENTS (counted)</td>
+          <td class="r"><?= fmt_money((float)$totalRentPaid, $currSymbol) ?></td>
           <td colspan="2"></td>
         </tr>
       </tfoot>
     </table>
+    <?php if ($rentExcluded > 0): ?>
+      <div class="excluded-note">Excluded from total: <?= $rentExcluded ?> voided / deleted record(s). Listed above for audit-trail completeness but not summed.</div>
+    <?php endif; ?>
     <?php endif; ?>
   </div>
 
   <!-- ── SECTION 2: Service Payments ───────────────────────────── -->
+  <?php $svcExcluded = count($servicePayments) - count($validService); ?>
   <div class="section">
     <div class="section-title">
-      <span>2 — Service / Fee Payments (<?= count($servicePayments) ?> records)</span>
-      <span class="section-total"><?= fmt_money($totalServicePaid, $currSymbol) ?></span>
+      <span>2 — Service / Fee Payments (<?= count($validService) ?> counted<?= $svcExcluded > 0 ? " + $svcExcluded voided/deleted" : '' ?>)</span>
+      <span class="section-total"><?= fmt_money((float)$totalServicePaid, $currSymbol) ?></span>
     </div>
     <?php if (empty($servicePayments)): ?>
       <p class="text-muted" style="padding:10px 12px;font-size:11px">No service payments recorded for this period.</p>
@@ -275,15 +317,21 @@ tfoot td { background: #f8fafc; font-weight: 700; border-top: 2px solid var(--bo
       <thead>
         <tr>
           <th>#</th><th>Date</th><th>Invoice</th><th>Unit</th><th>Tenant</th>
-          <th>Service Type</th><th>Period</th><th class="r">Amount</th><th>Cashier</th><th>Notes</th>
+          <th>Service Type</th><th>Period</th><th>Status</th><th class="r">Amount</th><th>Cashier</th><th>Notes</th>
         </tr>
       </thead>
       <tbody>
         <?php $sSeq = 0; foreach ($servicePayments as $p):
           $sSeq++;
-          $period = date('M Y', mktime(0,0,0,$p['period_month'],1,$p['period_year']));
+          $period   = date('M Y', mktime(0,0,0,$p['period_month'],1,$p['period_year']));
+          $excluded = !$isValidPayment($p);
+          $statusBadge = !empty($p['deleted_at'])
+              ? '<span class="badge badge-deleted">Deleted</span>'
+              : (($p['status'] ?? 'paid') === 'voided'
+                  ? '<span class="badge badge-voided">Voided</span>'
+                  : '');
         ?>
-        <tr>
+        <tr<?= $excluded ? ' class="row-excluded"' : '' ?>>
           <td class="text-muted"><?= $sSeq ?></td>
           <td><?= $p['payment_date'] ?></td>
           <td class="mono"><?= clean($p['invoice_no'] ?: '—') ?></td>
@@ -291,6 +339,7 @@ tfoot td { background: #f8fafc; font-weight: 700; border-top: 2px solid var(--bo
           <td><?= clean($p['tenant_name'] ?: '—') ?></td>
           <td><?= clean($p['service_name'] ?: '—') ?></td>
           <td><?= $period ?></td>
+          <td><?= $statusBadge ?></td>
           <td class="r"><strong><?= fmt_money((float)$p['amount'], $currSymbol) ?></strong></td>
           <td><?= clean($p['cashier_name'] ?: '—') ?></td>
           <td class="text-muted"><?= clean($p['notes'] ?: '') ?></td>
@@ -299,20 +348,24 @@ tfoot td { background: #f8fafc; font-weight: 700; border-top: 2px solid var(--bo
       </tbody>
       <tfoot>
         <tr>
-          <td colspan="7">TOTAL SERVICE PAYMENTS</td>
-          <td class="r"><?= fmt_money($totalServicePaid, $currSymbol) ?></td>
+          <td colspan="8">TOTAL SERVICE PAYMENTS (counted)</td>
+          <td class="r"><?= fmt_money((float)$totalServicePaid, $currSymbol) ?></td>
           <td colspan="2"></td>
         </tr>
       </tfoot>
     </table>
+    <?php if ($svcExcluded > 0): ?>
+      <div class="excluded-note">Excluded from total: <?= $svcExcluded ?> voided / deleted record(s). Listed above for audit-trail completeness but not summed.</div>
+    <?php endif; ?>
     <?php endif; ?>
   </div>
 
   <!-- ── SECTION 3: Expenses by Category ──────────────────────── -->
+  <?php $expExcluded = count($expenses) - count($validExpenses); ?>
   <div class="section">
     <div class="section-title">
-      <span>3 — Expenses by Category (<?= count($expenses) ?> records)</span>
-      <span class="section-total"><?= fmt_money($totalExpenses, $currSymbol) ?></span>
+      <span>3 — Expenses by Category (<?= count($validExpenses) ?> counted<?= $expExcluded > 0 ? " + $expExcluded deleted" : '' ?>)</span>
+      <span class="section-total"><?= fmt_money((float)$totalExpenses, $currSymbol) ?></span>
     </div>
     <?php if (empty($expenses)): ?>
       <p class="text-muted" style="padding:10px 12px;font-size:11px">No expenses recorded for this period.</p>
@@ -321,12 +374,13 @@ tfoot td { background: #f8fafc; font-weight: 700; border-top: 2px solid var(--bo
       <thead>
         <tr>
           <th>#</th><th>Date</th><th>Category</th><th>Unit</th><th>Description</th>
-          <th class="r">Amount</th><th>Recorded By</th><th>Notes</th>
+          <th>Status</th><th class="r">Amount</th><th>Recorded By</th><th>Notes</th>
         </tr>
       </thead>
       <tbody>
         <?php
-        // Group by category
+        // Group by category. Deleted rows still render so the audit shows the
+        // full picture, but they're flagged and excluded from category totals.
         $expGrouped = [];
         foreach ($expenses as $e) {
             $cat = $e['category_name'] ?: 'Uncategorized';
@@ -334,16 +388,18 @@ tfoot td { background: #f8fafc; font-weight: 700; border-top: 2px solid var(--bo
         }
         $eSeq = 0;
         foreach ($expGrouped as $catName => $catRows):
-          $catTotal = array_sum(array_column($catRows, 'amount'));
+          $valid    = array_filter($catRows, fn($e) => empty($e['deleted_at']));
+          $catTotal = money_sum(array_column($valid, 'amount'));
         ?>
-        <tr class="cat-row"><td colspan="8"><?= clean($catName) ?> — <?= fmt_money($catTotal, $currSymbol) ?></td></tr>
-        <?php foreach ($catRows as $e): $eSeq++; ?>
-        <tr>
+        <tr class="cat-row"><td colspan="9"><?= clean($catName) ?> — <?= fmt_money((float)$catTotal, $currSymbol) ?></td></tr>
+        <?php foreach ($catRows as $e): $eSeq++; $deleted = !empty($e['deleted_at']); ?>
+        <tr<?= $deleted ? ' class="row-excluded"' : '' ?>>
           <td class="text-muted"><?= $eSeq ?></td>
           <td><?= $e['expense_date'] ?></td>
           <td><?= clean($e['category_name'] ?: '—') ?></td>
           <td><?= clean($e['unit_name'] ?: '—') ?></td>
           <td><?= clean($e['description'] ?: '—') ?></td>
+          <td><?= $deleted ? '<span class="badge badge-deleted">Deleted</span>' : '' ?></td>
           <td class="r"><strong><?= fmt_money((float)$e['amount'], $currSymbol) ?></strong></td>
           <td><?= clean($e['recorded_by_name'] ?: '—') ?></td>
           <td class="text-muted"><?= clean($e['notes'] ?: '') ?></td>
@@ -352,8 +408,8 @@ tfoot td { background: #f8fafc; font-weight: 700; border-top: 2px solid var(--bo
       </tbody>
       <tfoot>
         <tr>
-          <td colspan="5">TOTAL EXPENSES</td>
-          <td class="r"><?= fmt_money($totalExpenses, $currSymbol) ?></td>
+          <td colspan="6">TOTAL EXPENSES (counted)</td>
+          <td class="r"><?= fmt_money((float)$totalExpenses, $currSymbol) ?></td>
           <td colspan="2"></td>
         </tr>
       </tfoot>
@@ -361,13 +417,16 @@ tfoot td { background: #f8fafc; font-weight: 700; border-top: 2px solid var(--bo
 
     <!-- Category breakdown sidebar -->
     <div style="margin-top:12px;padding:10px 12px;background:#fafafa;border:1px solid var(--border);border-radius:4px">
-      <strong style="font-size:11px">Expense Breakdown by Category:</strong>
+      <strong style="font-size:11px">Expense Breakdown by Category (counted only):</strong>
       <div style="display:flex;flex-wrap:wrap;gap:8px 24px;margin-top:6px">
         <?php foreach ($expByCategory as $cat => $total): ?>
-        <span style="font-size:11px"><span class="text-muted"><?= clean($cat) ?>:</span> <strong><?= fmt_money($total, $currSymbol) ?></strong></span>
+        <span style="font-size:11px"><span class="text-muted"><?= clean($cat) ?>:</span> <strong><?= fmt_money((float)$total, $currSymbol) ?></strong></span>
         <?php endforeach; ?>
       </div>
     </div>
+    <?php if ($expExcluded > 0): ?>
+      <div class="excluded-note">Excluded from total: <?= $expExcluded ?> deleted record(s). Listed above for audit-trail completeness but not summed.</div>
+    <?php endif; ?>
     <?php endif; ?>
   </div>
 
@@ -380,7 +439,7 @@ tfoot td { background: #f8fafc; font-weight: 700; border-top: 2px solid var(--bo
     <?php if (empty($cashTxns)): ?>
       <p class="text-muted" style="padding:10px 12px;font-size:11px">No cash transactions recorded for this period.</p>
     <?php else:
-      $totalReceived = 0; $totalRemitted = 0; $totalCashExp = 0;
+      $totalReceived = '0.00'; $totalRemitted = '0.00'; $totalCashExp = '0.00';
     ?>
     <table>
       <thead>
@@ -388,9 +447,9 @@ tfoot td { background: #f8fafc; font-weight: 700; border-top: 2px solid var(--bo
       </thead>
       <tbody>
         <?php foreach ($cashTxns as $i => $ct):
-          if ($ct['transaction_type'] === 'received')  $totalReceived  += (float)$ct['amount'];
-          if ($ct['transaction_type'] === 'remitted')  $totalRemitted  += (float)$ct['amount'];
-          if ($ct['transaction_type'] === 'expense')   $totalCashExp   += (float)$ct['amount'];
+          if ($ct['transaction_type'] === 'received')  $totalReceived  = money_add($totalReceived, $ct['amount']);
+          if ($ct['transaction_type'] === 'remitted')  $totalRemitted  = money_add($totalRemitted, $ct['amount']);
+          if ($ct['transaction_type'] === 'expense')   $totalCashExp   = money_add($totalCashExp,  $ct['amount']);
           $badgeClass = ['received' => 'badge-recv', 'remitted' => 'badge-remit', 'expense' => 'badge-exp'][$ct['transaction_type']] ?? '';
         ?>
         <tr>
@@ -404,9 +463,9 @@ tfoot td { background: #f8fafc; font-weight: 700; border-top: 2px solid var(--bo
         <?php endforeach; ?>
       </tbody>
       <tfoot>
-        <tr><td colspan="4">Received</td><td></td><td class="r" style="color:var(--success)"><?= fmt_money($totalReceived, $currSymbol) ?></td></tr>
-        <tr><td colspan="4">Remitted</td><td></td><td class="r" style="color:var(--danger)"><?= fmt_money($totalRemitted, $currSymbol) ?></td></tr>
-        <tr><td colspan="4">Expenses</td><td></td><td class="r" style="color:var(--danger)"><?= fmt_money($totalCashExp, $currSymbol) ?></td></tr>
+        <tr><td colspan="4">Received</td><td></td><td class="r" style="color:var(--success)"><?= fmt_money((float)$totalReceived, $currSymbol) ?></td></tr>
+        <tr><td colspan="4">Remitted</td><td></td><td class="r" style="color:var(--danger)"><?= fmt_money((float)$totalRemitted, $currSymbol) ?></td></tr>
+        <tr><td colspan="4">Expenses</td><td></td><td class="r" style="color:var(--danger)"><?= fmt_money((float)$totalCashExp,  $currSymbol) ?></td></tr>
       </tfoot>
     </table>
     <?php endif; ?>
@@ -417,14 +476,14 @@ tfoot td { background: #f8fafc; font-weight: 700; border-top: 2px solid var(--bo
     <div class="section-title"><span>Summary</span></div>
     <table style="max-width:480px">
       <tbody>
-        <tr><td>Rental Payments</td><td class="r"><?= fmt_money($totalRentPaid, $currSymbol) ?></td></tr>
-        <tr><td>Service Payments</td><td class="r"><?= fmt_money($totalServicePaid, $currSymbol) ?></td></tr>
-        <tr style="background:#eef2ff"><td><strong>Total Revenue</strong></td><td class="r"><strong><?= fmt_money($totalRevenue, $currSymbol) ?></strong></td></tr>
-        <tr><td>Total Expenses</td><td class="r" style="color:var(--danger)"><?= fmt_money($totalExpenses, $currSymbol) ?></td></tr>
-        <tr style="background:<?= $netIncome >= 0 ? '#f0fdf4' : '#fef2f2' ?>">
+        <tr><td>Rental Payments</td><td class="r"><?= fmt_money((float)$totalRentPaid, $currSymbol) ?></td></tr>
+        <tr><td>Service Payments</td><td class="r"><?= fmt_money((float)$totalServicePaid, $currSymbol) ?></td></tr>
+        <tr style="background:#eef2ff"><td><strong>Total Revenue</strong></td><td class="r"><strong><?= fmt_money((float)$totalRevenue, $currSymbol) ?></strong></td></tr>
+        <tr><td>Total Expenses</td><td class="r" style="color:var(--danger)"><?= fmt_money((float)$totalExpenses, $currSymbol) ?></td></tr>
+        <tr style="background:<?= money_gte($netIncome, '0.00') ? '#f0fdf4' : '#fef2f2' ?>">
           <td><strong>Net Income</strong></td>
-          <td class="r" style="color:<?= $netIncome >= 0 ? 'var(--success)' : 'var(--danger)' ?>">
-            <strong><?= fmt_money($netIncome, $currSymbol) ?></strong>
+          <td class="r" style="color:<?= money_gte($netIncome, '0.00') ? 'var(--success)' : 'var(--danger)' ?>">
+            <strong><?= fmt_money((float)$netIncome, $currSymbol) ?></strong>
           </td>
         </tr>
       </tbody>

@@ -5,6 +5,14 @@
 // Usage: php seed_spreadsheet.php
 // ============================================================
 
+// CLI-only guard. Apache would otherwise serve this file: the script touches
+// the production DB, and the .htaccess block list doesn't cover a bare .php
+// at the doc-root. Refuse any non-CLI SAPI before loading anything else.
+if (PHP_SAPI !== 'cli') {
+    http_response_code(404);
+    exit;
+}
+
 $_SESSION = [];
 $_SERVER += ['REMOTE_ADDR' => '127.0.0.1', 'HTTP_X_FORWARDED_FOR' => ''];
 

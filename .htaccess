@@ -20,14 +20,33 @@ Options -Indexes +FollowSymLinks
 
 <IfModule mod_rewrite.c>
     RewriteEngine On
-    RewriteRule ^config/    - [F,L]
-    RewriteRule ^includes/  - [F,L]
+    # Block server-only directories. vendor/ ships PHPUnit + sebastian source
+    # files; tests/ ships fixtures and bootstrap; migrations/ holds DDL we'd
+    # rather not advertise; uploads/ is data, not code. .deploy_credentials
+    # is a developer secret that lives at the doc root.
+    RewriteRule ^config/        - [F,L]
+    RewriteRule ^includes/      - [F,L]
+    RewriteRule ^vendor/        - [F,L]
+    RewriteRule ^tests/         - [F,L]
+    RewriteRule ^migrations/    - [F,L]
+    RewriteRule ^scripts/       - [F,L]
 </IfModule>
 
-<FilesMatch "\.(sql|log|env|md|sh|lock)$">
+# Block dotfiles (no extension, leading dot) and the package manifests that
+# only matter to Composer. PHP files in subdirectories blocked above are also
+# covered by the RewriteRules — this is defence-in-depth for direct hits.
+<FilesMatch "\.(sql|log|env|md|sh|lock|json|dist)$">
     Order Allow,Deny
     Deny from all
 </FilesMatch>
+<FilesMatch "^\.">
+    Order Allow,Deny
+    Deny from all
+</FilesMatch>
+<Files "seed_spreadsheet.php">
+    Order Allow,Deny
+    Deny from all
+</Files>
 
 <IfModule mod_headers.c>
     Header always set X-Content-Type-Options  "nosniff"

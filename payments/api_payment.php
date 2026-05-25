@@ -130,6 +130,9 @@ if ($action === 'save_payment') {
 }
 
 // ── Delete Payment (soft) ─────────────────────────────────────
+// Same side-effects as void: remove the 'received' cash entry and release /
+// delete the linked unit_charges. Without these, cash_api list_transactions
+// and monthly_summary outstanding_charges keep counting the trashed payment.
 if ($action === 'delete_payment') {
     requireAdmin();
     $id = (int)($_POST['id'] ?? 0);
@@ -140,12 +143,26 @@ if ($action === 'delete_payment') {
     $p = $pay->fetch();
     if (!$p) jsonErr('Payment not found or already deleted.');
 
-    $pdo->prepare("UPDATE payments SET deleted_at=NOW() WHERE id=?")->execute([$id]);
-    logActivity($pdo,'DELETE_PAYMENT','Payments',"Soft-deleted payment #{$id} ({$p['invoice_no']}) ₱{$p['amount']}");
+    $pdo->beginTransaction();
+    try {
+        $pdo->prepare("UPDATE payments SET deleted_at=NOW() WHERE id=?")->execute([$id]);
+        $pdo->prepare("DELETE FROM cash_transactions WHERE reference_payment_id=? AND transaction_type='received'")->execute([$id]);
+        if ($p['payment_type'] === 'service') {
+            $pdo->prepare("UPDATE unit_charges SET payment_id=NULL WHERE payment_id=? AND source='pre_billed'")->execute([$id]);
+            $pdo->prepare("DELETE FROM unit_charges WHERE payment_id=? AND source='auto_collected'")->execute([$id]);
+        }
+        logActivity($pdo,'DELETE_PAYMENT','Payments',"Soft-deleted payment #{$id} ({$p['invoice_no']}) ₱{$p['amount']}");
+        $pdo->commit();
+    } catch (Throwable $e) {
+        if ($pdo->inTransaction()) $pdo->rollBack();
+        throw $e;
+    }
     jsonOk(['msg' => 'Payment moved to trash. It can be restored from the Transaction Manager.']);
 }
 
 // ── Restore Deleted Payment (from trash) ──────────────────────
+// Mirror of delete_payment side-effects: recreate the cash entry and re-link
+// (or recreate) the unit_charges row. Symmetric with restore_payment for voids.
 if ($action === 'restore_deleted_payment') {
     requireAdmin();
     $id = (int)($_POST['id'] ?? 0);
@@ -156,8 +173,43 @@ if ($action === 'restore_deleted_payment') {
     $p = $pay->fetch();
     if (!$p) jsonErr('Payment not found in trash.');
 
-    $pdo->prepare("UPDATE payments SET deleted_at=NULL WHERE id=?")->execute([$id]);
-    logActivity($pdo,'RESTORE_PAYMENT','Payments',"Restored deleted payment #{$id} ({$p['invoice_no']}) ₱{$p['amount']}");
+    $pdo->beginTransaction();
+    try {
+        $pdo->prepare("UPDATE payments SET deleted_at=NULL WHERE id=?")->execute([$id]);
+        // Only recreate the cash row if it isn't already there — covers the
+        // historical case where an older delete_payment left it in place.
+        $existing = $pdo->prepare("SELECT id FROM cash_transactions WHERE reference_payment_id=? AND transaction_type='received' LIMIT 1");
+        $existing->execute([$id]);
+        if (!$existing->fetchColumn()) {
+            $pdo->prepare("INSERT INTO cash_transactions (user_id,transaction_type,amount,reference_payment_id,notes,transaction_date) VALUES (?,?,?,?,?,?)")
+                ->execute([$p['received_by'],'received',$p['amount'],$id,"Payment received: {$p['invoice_no']}",$p['payment_date']]);
+        }
+        if ($p['payment_type'] === 'service') {
+            $look = $pdo->prepare("SELECT id FROM unit_charges WHERE unit_id=? AND service_type_id=? AND period_month=? AND period_year=? AND payment_id IS NULL AND source='pre_billed' LIMIT 1");
+            $look->execute([$p['unit_id'], $p['service_type_id'], $p['period_month'], $p['period_year']]);
+            $existChargeId = $look->fetchColumn();
+            $alreadyLinked = $pdo->prepare("SELECT id FROM unit_charges WHERE payment_id=? LIMIT 1");
+            $alreadyLinked->execute([$id]);
+            if ($alreadyLinked->fetchColumn()) {
+                // legacy state: charge survived a previous (broken) delete and is still linked
+            } elseif ($existChargeId) {
+                $pdo->prepare("UPDATE unit_charges SET payment_id=?, amount=?, charge_date=? WHERE id=?")
+                    ->execute([$id, $p['amount'], $p['payment_date'], $existChargeId]);
+            } else {
+                $stRow = $pdo->prepare("SELECT name FROM service_types WHERE id=?");
+                $stRow->execute([$p['service_type_id']]);
+                $stName  = $stRow->fetchColumn() ?: 'Service';
+                $chgDesc = $p['notes'] ?: $stName;
+                $pdo->prepare("INSERT INTO unit_charges (unit_id,tenant_id,service_type_id,amount,description,charge_date,period_month,period_year,payment_id,source,created_by) VALUES (?,?,?,?,?,?,?,?,?,'auto_collected',?)")
+                    ->execute([$p['unit_id'], $p['tenant_id'], $p['service_type_id'], $p['amount'], $chgDesc, $p['payment_date'], $p['period_month'], $p['period_year'], $id, $p['received_by']]);
+            }
+        }
+        logActivity($pdo,'RESTORE_PAYMENT','Payments',"Restored deleted payment #{$id} ({$p['invoice_no']}) ₱{$p['amount']}");
+        $pdo->commit();
+    } catch (Throwable $e) {
+        if ($pdo->inTransaction()) $pdo->rollBack();
+        throw $e;
+    }
     jsonOk(['msg' => 'Payment restored successfully.']);
 }
 
@@ -389,24 +441,32 @@ if ($action === 'process_refund') {
     if (!money_is_pos($refundAmount)) jsonErr('Refund amount must be greater than zero.');
     if ($reason === '')               jsonErr('Reason is required.');
 
-    // Load payment
-    $stmt = $pdo->prepare("SELECT p.*, ru.unit_name FROM payments p LEFT JOIN rental_units ru ON p.unit_id=ru.id WHERE p.id=?");
-    $stmt->execute([$paymentId]);
-    $pay = $stmt->fetch();
-    if (!$pay) jsonErr('Payment not found.');
-    if ($pay['status'] === 'voided')   jsonErr('Cannot refund a voided payment. Restore it first.');
-    if ($pay['status'] === 'refunded') jsonErr('This payment has already been fully refunded.');
-
-    // Sum already-refunded amounts (exact in SQL).
-    $refStmt = $pdo->prepare("SELECT COALESCE(SUM(amount),0) FROM refunds WHERE payment_id=?");
-    $refStmt->execute([$paymentId]);
-    $alreadyRefunded = $refStmt->fetchColumn();
-    $maxRefund       = money_sub($pay['amount'], $alreadyRefunded);
-
-    if (money_gt($refundAmount, $maxRefund)) jsonErr("Maximum refundable amount is " . money($maxRefund) . ".");
-
+    // Refund validation and write must happen inside one serialised view of
+    // the payment row, otherwise two concurrent refund requests can both
+    // observe alreadyRefunded=0 and both over-refund. SELECT ... FOR UPDATE
+    // holds the row until commit; the already-refunded sum is recomputed
+    // inside the transaction.
     $pdo->beginTransaction();
     try {
+        $stmt = $pdo->prepare(
+            "SELECT p.*, ru.unit_name
+             FROM payments p
+             LEFT JOIN rental_units ru ON p.unit_id=ru.id
+             WHERE p.id=? FOR UPDATE"
+        );
+        $stmt->execute([$paymentId]);
+        $pay = $stmt->fetch();
+        if (!$pay)                          jsonErr('Payment not found.');
+        if (!empty($pay['deleted_at']))     jsonErr('Cannot refund a deleted payment. Restore it from trash first.');
+        if ($pay['status'] === 'voided')    jsonErr('Cannot refund a voided payment. Restore it first.');
+        if ($pay['status'] === 'refunded')  jsonErr('This payment has already been fully refunded.');
+
+        $refStmt = $pdo->prepare("SELECT COALESCE(SUM(amount),0) FROM refunds WHERE payment_id=?");
+        $refStmt->execute([$paymentId]);
+        $alreadyRefunded = $refStmt->fetchColumn();
+        $maxRefund       = money_sub($pay['amount'], $alreadyRefunded);
+        if (money_gt($refundAmount, $maxRefund)) jsonErr("Maximum refundable amount is " . money($maxRefund) . ".");
+
         $pdo->prepare("INSERT INTO refunds (payment_id, amount, reason, refunded_by) VALUES (?,?,?,?)")
             ->execute([$paymentId, $refundAmount, $reason, $_SESSION['user']['id']]);
 
@@ -511,7 +571,13 @@ if ($action === 'bulk_delete_payments') {
             $p = $pay->fetch();
             if (!$p) continue;
 
+            // Same side-effects as single delete_payment — keep cash + unit_charges consistent.
             $pdo->prepare("UPDATE payments SET deleted_at=NOW() WHERE id=?")->execute([$id]);
+            $pdo->prepare("DELETE FROM cash_transactions WHERE reference_payment_id=? AND transaction_type='received'")->execute([$id]);
+            if ($p['payment_type'] === 'service') {
+                $pdo->prepare("UPDATE unit_charges SET payment_id=NULL WHERE payment_id=? AND source='pre_billed'")->execute([$id]);
+                $pdo->prepare("DELETE FROM unit_charges WHERE payment_id=? AND source='auto_collected'")->execute([$id]);
+            }
             logActivity($pdo, 'DELETE_PAYMENT', 'Payments', "Bulk soft-deleted payment #{$id} ({$p['invoice_no']}) ₱{$p['amount']}");
             $deleted++;
         }
