@@ -544,7 +544,7 @@ function getUnitPaymentStatus(PDO $pdo, int $unitId, int $month, int $year): str
     $rate = getRateForMonth($pdo, $unitId, (float)$u['monthly_rate'], $month, $year);
 
     // Sum in SQL (exact DECIMAL aggregate); compare in cents to avoid float drift.
-    $paid = $pdo->prepare("SELECT COALESCE(SUM(amount),0) FROM payments WHERE unit_id=? AND payment_type='rent' AND period_month=? AND period_year=?");
+    $paid = $pdo->prepare("SELECT COALESCE(SUM(amount),0) FROM payments WHERE unit_id=? AND payment_type='rent' AND period_month=? AND period_year=? AND deleted_at IS NULL AND status != 'voided'");
     $paid->execute([$unitId, $month, $year]);
     $totalPaid = $paid->fetchColumn();
     $expected  = prorateFirstMonth($rate, (int)$u['due_day'], $u['contract_start'] ?? null, $month, $year);

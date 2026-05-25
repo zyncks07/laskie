@@ -13,11 +13,11 @@ $units = $pdo->query("SELECT ru.*, ut.name as type_name FROM rental_units ru LEF
 
 // ─── Per-unit revenue & expenses (single query each, sargable ranges) ─────
 [$yrStart, $yrEnd] = yearRange($selectedYear);
-$revRows = $pdo->prepare("SELECT unit_id, COALESCE(SUM(amount),0) AS total FROM payments WHERE payment_date >= ? AND payment_date < ? GROUP BY unit_id");
+$revRows = $pdo->prepare("SELECT unit_id, COALESCE(SUM(amount),0) AS total FROM payments WHERE payment_date >= ? AND payment_date < ? AND deleted_at IS NULL AND status != 'voided' GROUP BY unit_id");
 $revRows->execute([$yrStart, $yrEnd]);
 $unitRevenue = array_column($revRows->fetchAll(), 'total', 'unit_id');
 
-$expRows = $pdo->prepare("SELECT unit_id, COALESCE(SUM(amount),0) AS total FROM expenses WHERE expense_date >= ? AND expense_date < ? GROUP BY unit_id");
+$expRows = $pdo->prepare("SELECT unit_id, COALESCE(SUM(amount),0) AS total FROM expenses WHERE expense_date >= ? AND expense_date < ? AND deleted_at IS NULL GROUP BY unit_id");
 $expRows->execute([$yrStart, $yrEnd]);
 $unitExpenses = array_column($expRows->fetchAll(), 'total', 'unit_id');
 
@@ -28,8 +28,8 @@ foreach ($units as $u) {
 
 // ─── Monthly totals ───────────────────────────────────────────
 $monthlyRev = []; $monthlyExp = [];
-$revStmt = $pdo->prepare("SELECT COALESCE(SUM(amount),0) FROM payments WHERE payment_date >= ? AND payment_date < ?");
-$expStmt = $pdo->prepare("SELECT COALESCE(SUM(amount),0) FROM expenses WHERE expense_date >= ? AND expense_date < ?");
+$revStmt = $pdo->prepare("SELECT COALESCE(SUM(amount),0) FROM payments WHERE payment_date >= ? AND payment_date < ? AND deleted_at IS NULL AND status != 'voided'");
+$expStmt = $pdo->prepare("SELECT COALESCE(SUM(amount),0) FROM expenses WHERE expense_date >= ? AND expense_date < ? AND deleted_at IS NULL");
 for ($m = 1; $m <= 12; $m++) {
     [$mStart, $mEnd] = monthRange($m, $selectedYear);
     $revStmt->execute([$mStart, $mEnd]);
@@ -39,7 +39,7 @@ for ($m = 1; $m <= 12; $m++) {
 }
 
 // ─── Expense by category ─────────────────────────────────────
-$catExp = $pdo->prepare("SELECT ec.name, COALESCE(SUM(e.amount),0) as total FROM expense_categories ec LEFT JOIN expenses e ON e.category_id=ec.id AND e.expense_date >= ? AND e.expense_date < ? GROUP BY ec.id ORDER BY total DESC");
+$catExp = $pdo->prepare("SELECT ec.name, COALESCE(SUM(e.amount),0) as total FROM expense_categories ec LEFT JOIN expenses e ON e.category_id=ec.id AND e.expense_date >= ? AND e.expense_date < ? AND e.deleted_at IS NULL GROUP BY ec.id ORDER BY total DESC");
 $catExp->execute([$yrStart, $yrEnd]);
 $catExpData = $catExp->fetchAll();
 
@@ -56,9 +56,9 @@ $curYear  = (int)date('Y');
 $cmRev = $cmExp = 0.0;
 if ($selectedYear === $curYear) {
     [$cmStart, $cmEnd] = monthRange($curMonth, $curYear);
-    $s = $pdo->prepare("SELECT COALESCE(SUM(amount),0) FROM payments WHERE payment_date >= ? AND payment_date < ?");
+    $s = $pdo->prepare("SELECT COALESCE(SUM(amount),0) FROM payments WHERE payment_date >= ? AND payment_date < ? AND deleted_at IS NULL AND status != 'voided'");
     $s->execute([$cmStart, $cmEnd]); $cmRev = (float)$s->fetchColumn();
-    $s = $pdo->prepare("SELECT COALESCE(SUM(amount),0) FROM expenses WHERE expense_date >= ? AND expense_date < ?");
+    $s = $pdo->prepare("SELECT COALESCE(SUM(amount),0) FROM expenses WHERE expense_date >= ? AND expense_date < ? AND deleted_at IS NULL");
     $s->execute([$cmStart, $cmEnd]); $cmExp = (float)$s->fetchColumn();
 }
 $cmNet = $cmRev - $cmExp;
@@ -68,6 +68,26 @@ $years = $pdo->query("SELECT DISTINCT YEAR(payment_date) y FROM payments UNION S
 if (!in_array(date('Y'), $years)) array_unshift($years, (int)date('Y'));
 if (!in_array($selectedYear, $years)) $years[] = $selectedYear;
 rsort($years);
+
+// ─── Unit chart period dropdown data ─────────────────────────
+$mnNames = ['','January','February','March','April','May','June','July','August','September','October','November','December'];
+$chartMonthsByYear = [];
+foreach ($years as $ychk) {
+    $mQ = $pdo->prepare("
+        SELECT DISTINCT m FROM (
+            SELECT MONTH(payment_date) AS m FROM payments
+             WHERE YEAR(payment_date)=? AND deleted_at IS NULL AND status != 'voided'
+            UNION
+            SELECT MONTH(expense_date) FROM expenses
+             WHERE YEAR(expense_date)=? AND deleted_at IS NULL
+        ) sub ORDER BY m ASC
+    ");
+    $mQ->execute([$ychk, $ychk]);
+    $chartMonthsByYear[$ychk] = $mQ->fetchAll(PDO::FETCH_COLUMN);
+}
+$chartInitPeriod = ($selectedYear === $curYear)
+    ? 'month_' . $curYear . '_' . $curMonth
+    : 'year_' . $selectedYear;
 
 // ─── Unit payment status for current month ───────────────────
 $unitStatusData = [];
@@ -252,10 +272,35 @@ include 'includes/header.php';
 
   <div class="col-lg-7">
     <div class="card db-card db-card-fill h-100">
-      <div class="card-header">
-        <span class="card-header-title"><i class="fa-solid fa-chart-bar me-1"></i>Revenue vs Expenses by Unit</span>
+      <div class="card-header" style="display:block">
+        <div style="display:flex;align-items:center;gap:8px">
+          <span class="card-header-title me-auto"><i class="fa-solid fa-chart-bar me-1"></i>Revenue vs Expenses by Unit</span>
+          <select id="unitChartPeriod" class="form-select form-select-sm" style="width:auto;max-width:205px;font-size:11.5px">
+            <?php foreach ($years as $ychk): $isCY = ($ychk === $curYear); ?>
+            <optgroup label="<?= $ychk ?>">
+              <?php if ($isCY): ?>
+              <option value="month_<?= $curYear ?>_<?= $curMonth ?>"<?= $chartInitPeriod === "month_{$curYear}_{$curMonth}" ? ' selected' : '' ?>><?= $mnNames[$curMonth] ?> <?= $curYear ?> — MTD</option>
+              <?php endif; ?>
+              <option value="year_<?= $ychk ?>"<?= $chartInitPeriod === "year_{$ychk}" ? ' selected' : '' ?>>Full Year <?= $ychk ?></option>
+              <?php foreach ($chartMonthsByYear[$ychk] ?? [] as $cm):
+                if ($isCY && (int)$cm === $curMonth) continue; ?>
+              <option value="month_<?= $ychk ?>_<?= $cm ?>"<?= $chartInitPeriod === "month_{$ychk}_{$cm}" ? ' selected' : '' ?>><?= $mnNames[(int)$cm] ?> <?= $ychk ?></option>
+              <?php endforeach; ?>
+            </optgroup>
+            <?php endforeach; ?>
+          </select>
+        </div>
+        <div id="unitChartStats" style="display:flex;gap:14px;flex-wrap:wrap;font-size:11px;margin-top:5px;padding-top:5px;border-top:1px solid #e8ecf5">
+          <span style="color:#64748b">Rev: <strong id="ucRev" style="color:var(--primary)">—</strong></span>
+          <span style="color:#64748b">Exp: <strong id="ucExp" style="color:var(--danger)">—</strong></span>
+          <span style="color:#64748b">Net: <strong id="ucNet">—</strong></span>
+          <span id="ucTitle" style="margin-left:auto;color:#94a3b8;font-style:italic;font-size:10.5px"></span>
+        </div>
       </div>
-      <div class="card-body db-chart-grow">
+      <div class="card-body db-chart-grow" style="position:relative">
+        <div id="unitChartSpinner" style="display:none;position:absolute;inset:0;background:rgba(255,255,255,.82);z-index:10;align-items:center;justify-content:center;border-radius:0 0 12px 12px">
+          <div class="spinner-border spinner-border-sm" style="color:var(--primary)" role="status"><span class="visually-hidden">Loading…</span></div>
+        </div>
         <canvas id="unitChart"></canvas>
       </div>
     </div>
@@ -288,10 +333,37 @@ include 'includes/header.php';
 <div class="row g-2 db-row">
   <div class="col-lg-8">
     <div class="card db-card">
-      <div class="card-header">
-        <span class="card-header-title"><i class="fa-solid fa-chart-bar me-1"></i>Revenue vs Expenses by Unit</span>
+      <div class="card-header" style="display:block">
+        <div style="display:flex;align-items:center;gap:8px">
+          <span class="card-header-title me-auto"><i class="fa-solid fa-chart-bar me-1"></i>Revenue vs Expenses by Unit</span>
+          <select id="unitChartPeriod" class="form-select form-select-sm" style="width:auto;max-width:205px;font-size:11.5px">
+            <?php foreach ($years as $ychk): $isCY = ($ychk === $curYear); ?>
+            <optgroup label="<?= $ychk ?>">
+              <?php if ($isCY): ?>
+              <option value="month_<?= $curYear ?>_<?= $curMonth ?>"><?= $mnNames[$curMonth] ?> <?= $curYear ?> — MTD</option>
+              <?php endif; ?>
+              <option value="year_<?= $ychk ?>"<?= $chartInitPeriod === "year_{$ychk}" ? ' selected' : '' ?>>Full Year <?= $ychk ?></option>
+              <?php foreach ($chartMonthsByYear[$ychk] ?? [] as $cm):
+                if ($isCY && (int)$cm === $curMonth) continue; ?>
+              <option value="month_<?= $ychk ?>_<?= $cm ?>"<?= $chartInitPeriod === "month_{$ychk}_{$cm}" ? ' selected' : '' ?>><?= $mnNames[(int)$cm] ?> <?= $ychk ?></option>
+              <?php endforeach; ?>
+            </optgroup>
+            <?php endforeach; ?>
+          </select>
+        </div>
+        <div id="unitChartStats" style="display:flex;gap:14px;flex-wrap:wrap;font-size:11px;margin-top:5px;padding-top:5px;border-top:1px solid #e8ecf5">
+          <span style="color:#64748b">Rev: <strong id="ucRev" style="color:var(--primary)">—</strong></span>
+          <span style="color:#64748b">Exp: <strong id="ucExp" style="color:var(--danger)">—</strong></span>
+          <span style="color:#64748b">Net: <strong id="ucNet">—</strong></span>
+          <span id="ucTitle" style="margin-left:auto;color:#94a3b8;font-style:italic;font-size:10.5px"></span>
+        </div>
       </div>
-      <div class="card-body db-chart"><canvas id="unitChart"></canvas></div>
+      <div class="card-body db-chart" style="position:relative">
+        <div id="unitChartSpinner" style="display:none;position:absolute;inset:0;background:rgba(255,255,255,.82);z-index:10;align-items:center;justify-content:center;border-radius:0 0 12px 12px">
+          <div class="spinner-border spinner-border-sm" style="color:var(--primary)" role="status"><span class="visually-hidden">Loading…</span></div>
+        </div>
+        <canvas id="unitChart"></canvas>
+      </div>
     </div>
   </div>
   <div class="col-lg-4">
@@ -395,41 +467,137 @@ include 'includes/header.php';
 
 <script>
 var CHART_DATA = {
-  unitLabels:  <?= json_encode(array_column($units, 'unit_name')) ?>,
-  unitRev:     <?= json_encode(array_map(fn($u) => $unitRevenue[$u['id']], $units)) ?>,
-  unitExp:     <?= json_encode(array_map(fn($u) => $unitExpenses[$u['id']], $units)) ?>,
   catLabels:   <?= json_encode(array_column($catExpData, 'name')) ?>,
   catTotals:   <?= json_encode(array_map(fn($r) => (float)$r['total'], $catExpData)) ?>,
   monthLabels: <?= json_encode(['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']) ?>,
   monthRev:    <?= json_encode(array_values($monthlyRev)) ?>,
   monthNet:    <?= json_encode(array_map(fn($m) => $monthlyRev[$m] - $monthlyExp[$m], range(1,12))) ?>
 };
+var UNIT_CHART_API  = '<?= pageUrl('api/unit_chart_api.php') ?>';
+var UNIT_CHART_INIT = '<?= $chartInitPeriod ?>';
 </script>
 <script>
-document.addEventListener('DOMContentLoaded', function() {
-  var d = CHART_DATA;
-  var pallette = ['#1a3a8f','#3b5bdb','#15803d','#b91c1c','#b45309','#6d28d9','#0d9488','#d97706','#0369a1','#6b7280','#be185d','#c026d3'];
-  // 2-decimal formatting; without this, 15,269.86 renders as ₱15,270 on chart axes.
-  var phpFmt = function(v) { return '₱' + parseFloat(v||0).toLocaleString('en-PH', {minimumFractionDigits:2, maximumFractionDigits:2}); };
+// ── Shared formatter ─────────────────────────────────────────
+var _phpFmt = function(v) {
+  return '₱' + parseFloat(v || 0).toLocaleString('en-PH', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+};
 
-  new Chart(document.getElementById('unitChart'), {
+// ── Unit chart — AJAX-driven ─────────────────────────────────
+var _unitChartInst = null;
+
+function loadUnitChart(period) {
+  period = period || (document.getElementById('unitChartPeriod') ? document.getElementById('unitChartPeriod').value : null);
+  if (!period) return;
+  var parts = period.split('_');
+  var qs = parts[0] === 'year'
+    ? 'period_type=year&year=' + parts[1]
+    : 'period_type=month&year=' + parts[1] + '&month=' + parts[2];
+  var spinner = document.getElementById('unitChartSpinner');
+  if (spinner) spinner.style.display = 'flex';
+  fetch(UNIT_CHART_API + '?' + qs)
+    .then(function(r) { return r.json(); })
+    .then(function(res) {
+      if (spinner) spinner.style.display = 'none';
+      if (res.success) _renderUnitChart(res);
+      else showToast(res.error || 'Chart load failed.', 'danger');
+    })
+    .catch(function() {
+      if (spinner) spinner.style.display = 'none';
+      showToast('Chart load failed.', 'danger');
+    });
+}
+
+function _renderUnitChart(data) {
+  if (_unitChartInst) { _unitChartInst.destroy(); _unitChartInst = null; }
+  var canvas = document.getElementById('unitChart');
+  if (!canvas) return;
+  var ctx = canvas.getContext('2d');
+  var h = canvas.parentElement.offsetHeight || 300;
+
+  var gRev = ctx.createLinearGradient(0, 0, 0, h);
+  gRev.addColorStop(0, 'rgba(59,91,219,0.90)');
+  gRev.addColorStop(1, 'rgba(59,91,219,0.42)');
+
+  var gExp = ctx.createLinearGradient(0, 0, 0, h);
+  gExp.addColorStop(0, 'rgba(239,68,68,0.90)');
+  gExp.addColorStop(1, 'rgba(239,68,68,0.42)');
+
+  // Update stats strip
+  var net = (data.totalRev || 0) - (data.totalExp || 0);
+  var ucRev = document.getElementById('ucRev'), ucExp = document.getElementById('ucExp'),
+      ucNet = document.getElementById('ucNet'), ucTitle = document.getElementById('ucTitle');
+  if (ucRev)   ucRev.textContent = _phpFmt(data.totalRev);
+  if (ucExp)   ucExp.textContent = _phpFmt(data.totalExp);
+  if (ucNet) {
+    ucNet.textContent = (net < 0 ? '-' : '') + _phpFmt(Math.abs(net));
+    ucNet.style.color = net >= 0 ? 'var(--success)' : 'var(--danger)';
+  }
+  if (ucTitle) ucTitle.textContent = data.title || '';
+
+  _unitChartInst = new Chart(ctx, {
     type: 'bar',
     data: {
-      labels: d.unitLabels,
+      labels: data.labels,
       datasets: [
-        { label: 'Revenue',  data: d.unitRev, backgroundColor: '#3b5bdb', borderRadius: 3 },
-        { label: 'Expenses', data: d.unitExp, backgroundColor: '#ef4444', borderRadius: 3 }
+        { label: 'Revenue',  data: data.revenue,  backgroundColor: gRev, borderRadius: 6, borderSkipped: false, borderWidth: 0 },
+        { label: 'Expenses', data: data.expenses, backgroundColor: gExp, borderRadius: 6, borderSkipped: false, borderWidth: 0 }
       ]
     },
     options: {
-      responsive: true, maintainAspectRatio: false,
-      plugins: { legend: { position: 'top', labels: { font: { size: 11, family: 'DM Sans' }, boxWidth: 10, padding: 8 } } },
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: { duration: 420, easing: 'easeOutQuart' },
+      plugins: {
+        legend: {
+          position: 'top',
+          labels: { font: { size: 11, family: 'DM Sans' }, boxWidth: 10, padding: 10, usePointStyle: true, pointStyleWidth: 10 }
+        },
+        tooltip: {
+          mode: 'index',
+          intersect: false,
+          backgroundColor: 'rgba(15,23,42,0.88)',
+          titleFont: { size: 12, family: 'DM Sans', weight: '600' },
+          bodyFont:  { size: 11, family: 'DM Sans' },
+          padding: 10,
+          cornerRadius: 8,
+          callbacks: {
+            label: function(c) { return '  ' + c.dataset.label + ': ' + _phpFmt(c.parsed.y); },
+            afterBody: function(items) {
+              if (items.length < 2) return [];
+              var n = (items[0].parsed.y || 0) - (items[1].parsed.y || 0);
+              return ['──────────────────', '  Net: ' + (n < 0 ? '-' : '') + _phpFmt(Math.abs(n))];
+            }
+          }
+        }
+      },
       scales: {
-        y: { beginAtZero: true, ticks: { callback: phpFmt, font: { size: 10 } }, grid: { color: '#f3f4f6' } },
-        x: { grid: { display: false }, ticks: { font: { size: 10 } } }
+        y: {
+          beginAtZero: true,
+          grid:   { color: 'rgba(226,232,240,0.7)' },
+          border: { display: false },
+          ticks:  { callback: _phpFmt, font: { size: 10, family: 'DM Sans' }, color: '#94a3b8' }
+        },
+        x: {
+          grid:   { display: false },
+          border: { display: false },
+          ticks:  { font: { size: 10, family: 'DM Sans' }, color: '#64748b' }
+        }
       }
     }
   });
+}
+
+// ── Page init ────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', function() {
+  var d = CHART_DATA;
+  var pallette = ['#1a3a8f','#3b5bdb','#15803d','#b91c1c','#b45309','#6d28d9','#0d9488','#d97706','#0369a1','#6b7280','#be185d','#c026d3'];
+
+  // Period dropdown wires up loadUnitChart on change
+  var ucSel = document.getElementById('unitChartPeriod');
+  if (ucSel) {
+    ucSel.addEventListener('change', function() { loadUnitChart(this.value); });
+    loadUnitChart(UNIT_CHART_INIT);
+  }
 
   var catFiltered = { labels: [], data: [] };
   d.catLabels.forEach(function(label, i) {
@@ -460,7 +628,7 @@ document.addEventListener('DOMContentLoaded', function() {
       responsive: true, maintainAspectRatio: false,
       plugins: { legend: { position: 'top', labels: { font: { size: 11, family: 'DM Sans' }, boxWidth: 10, padding: 8 } } },
       scales: {
-        y: { beginAtZero: true, ticks: { callback: phpFmt, font: { size: 10 } }, grid: { color: '#f3f4f6' } },
+        y: { beginAtZero: true, ticks: { callback: _phpFmt, font: { size: 10 } }, grid: { color: '#f3f4f6' } },
         x: { grid: { display: false }, ticks: { font: { size: 10 } } }
       }
     }

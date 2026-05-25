@@ -347,6 +347,16 @@ When editing this codebase:
 - **Always** test at 375 px width before declaring UI done.
 - **Always** sum money in SQL when possible; if you must sum in PHP, use bcmath.
 
+### Database access policy during bug investigation
+
+> ⚠️ **This rule has zero exceptions unless the user explicitly authorizes a specific operation.**
+
+- **Never** run `INSERT`, `UPDATE`, `DELETE`, `REPLACE`, `TRUNCATE`, or `DROP` against the live database while investigating or fixing a bug. Investigation is **read-only** (`SELECT` only).
+- **Never** run seed scripts, fixture loaders, or any script that inserts sample/test data (e.g., `install.sql`, any `seed_*.sql`, PHPUnit seeders) against the live database.
+- **Never** use the Bash tool to pipe SQL or call `php artisan`-style commands that modify data as a side effect of investigation.
+- If a bug fix requires a data correction (e.g., removing an erroneous row), **stop and describe the proposed change** to the user first. Only execute it after receiving explicit approval for that specific row/operation.
+- When in doubt about whether a query is safe to run, default to showing the query and asking the user to run it themselves.
+
 ---
 
 *Last updated: see `git log -- CLAUDE.md` · Project version: see `APP_VERSION` in `config/functions.php`.*

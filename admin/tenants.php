@@ -31,12 +31,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if (!$fullName) jsonErr('Tenant full name is required.');
 
         if ($id) {
+            // Capture the old unit before the update so we can vacate it if the tenant moves out or changes units.
+            $oldRow = $pdo->prepare("SELECT unit_id FROM tenants WHERE id=?");
+            $oldRow->execute([$id]);
+            $oldUnitId = (int)($oldRow->fetchColumn() ?: 0) ?: null;
+
             $pdo->prepare("UPDATE tenants SET unit_id=?,full_name=?,email=?,phone=?,phone2=?,facebook=?,instagram=?,other_social=?,address=?,contract_start=?,contract_end=?,status=?,notes=?,updated_at=NOW() WHERE id=?")
                 ->execute([$unitId,$fullName,$email,$phone,$phone2,$fb,$ig,$other_s,$address,$start,$end,$status,$notes,$id]);
-            // Update unit occupancy
+            // Update new unit's occupancy status.
             if ($unitId) {
                 $occ = $status === 'active' ? 'occupied' : 'vacant';
                 $pdo->prepare("UPDATE rental_units SET status=? WHERE id=?")->execute([$occ,$unitId]);
+            }
+            // If the tenant left or moved to a different unit, vacate the old unit
+            // (only if no other active tenant is still assigned to it).
+            if ($oldUnitId && $oldUnitId !== $unitId) {
+                $stillOccupied = $pdo->prepare("SELECT COUNT(*) FROM tenants WHERE unit_id=? AND status='active' AND id!=?");
+                $stillOccupied->execute([$oldUnitId, $id]);
+                if ((int)$stillOccupied->fetchColumn() === 0) {
+                    $pdo->prepare("UPDATE rental_units SET status='vacant' WHERE id=?")->execute([$oldUnitId]);
+                }
             }
             logActivity($pdo, 'UPDATE_TENANT', 'Tenants', "Updated tenant #$id ($fullName)");
             jsonOk(['msg'=>'Tenant updated.']);

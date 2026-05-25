@@ -40,7 +40,7 @@ $expBreak = $pdo->prepare("
     SELECT ec.name AS category, COALESCE(SUM(e.amount),0) AS total, COUNT(*) AS count
     FROM expenses e
     LEFT JOIN expense_categories ec ON e.category_id=ec.id
-    WHERE e.recorded_by=? AND e.expense_date >= ? AND e.expense_date < ?
+    WHERE e.recorded_by=? AND e.expense_date >= ? AND e.expense_date < ? AND e.deleted_at IS NULL
     GROUP BY ec.id ORDER BY total DESC
 ");
 $expBreak->execute([$myId,$selStart,$selEnd]);
@@ -52,7 +52,7 @@ $expRows = $pdo->prepare("
     FROM expenses e
     LEFT JOIN expense_categories ec ON e.category_id=ec.id
     LEFT JOIN rental_units ru       ON e.unit_id=ru.id
-    WHERE e.recorded_by=? AND e.expense_date >= ? AND e.expense_date < ?
+    WHERE e.recorded_by=? AND e.expense_date >= ? AND e.expense_date < ? AND e.deleted_at IS NULL
     ORDER BY e.expense_date DESC
 ");
 $expRows->execute([$myId,$selStart,$selEnd]);

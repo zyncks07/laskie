@@ -58,7 +58,7 @@ if ($selUnit) {
         FROM   payments p
         LEFT JOIN service_types st ON p.service_type_id = st.id
         LEFT JOIN users u          ON p.received_by     = u.id
-        WHERE  p.unit_id = ? AND p.payment_date BETWEEN ? AND ? AND p.deleted_at IS NULL
+        WHERE  p.unit_id = ? AND p.payment_date BETWEEN ? AND ? AND p.deleted_at IS NULL AND p.status != 'voided'
         ORDER  BY p.payment_date ASC, p.created_at ASC
     ");
     $q->execute([$selUnit, $dateFrom, $dateTo]);
