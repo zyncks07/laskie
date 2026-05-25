@@ -619,7 +619,7 @@ function vendorSriMap(): array {
         'dataTables.bootstrap5.min.css'  => 'sha384-ok3J6xA9oQqai5C9ytYveFsBeKgoGk4T+NExsr6hoIKjZdv9SJcmx2mafwUWRNf9',
         'dataTables.bootstrap5.min.js'   => 'sha384-PgPBH0hy6DTJwu7pTf6bkRqPlf/+pjUBExpr/eIfzszlGYFlF9Wi9VTAJODPhgCO',
         'fontawesome.min.css'            => 'sha384-/D34rIC1DP7P2syFqB25deF36WNtLkdJwUKzFsoukQQG7dvRpjEI3ZBnpg5COdkj',
-        'google-fonts.css'               => 'sha384-egjeEAzbJLnjS1xE8oYKtjWwOiLfsXQPBrJI+NfCisDi0HGdojz14+8cxzsKmi6w',
+        'google-fonts.css'               => 'sha384-iEud/DHxTLt2vCbkAyKINYcMA9CEJiyh8ELI7osYdNLZMTUUpSH6Yq/RIVxSXRxw',
         'jquery.dataTables.min.js'       => 'sha384-cjmdOgDzOE22dUheI5E6Gzd3upfmReW8N1y/4jwKQE50KYcvFKZJA9JxWgQOzqwQ',
         'jquery.min.js'                  => 'sha384-1H217gwSVyLSIfaLxHbE7dRb3v4mYCKbpQvzx0cegeju1MVsGrX5xXxAvs/HgeFs',
     ];

@@ -6,7 +6,9 @@
 <?= vendorJsTag($depth, 'jquery.min.js') ?>
 <?= vendorJsTag($depth, 'jquery.dataTables.min.js') ?>
 <?= vendorJsTag($depth, 'dataTables.bootstrap5.min.js') ?>
+<?php if (!empty($needsChartJs)): ?>
 <?= vendorJsTag($depth, 'chart.umd.min.js') ?>
+<?php endif; ?>
 <script src="<?= $depth ?>assets/js/app.js"></script>
 
 <script>

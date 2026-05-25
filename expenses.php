@@ -242,10 +242,19 @@ include 'includes/header.php';
           </div>
         </div>
         <div id="expMsg" class="mt-3" style="display:none"></div>
+        <div id="expUploadProgress" style="display:none;margin-top:10px">
+          <div class="d-flex align-items-center justify-content-between mb-1">
+            <small style="color:var(--text-muted)"><i class="fa-solid fa-cloud-arrow-up me-1"></i>Uploading receipt…</small>
+            <small id="expUploadPct" style="color:var(--text-muted);font-variant-numeric:tabular-nums">0%</small>
+          </div>
+          <div class="progress" style="height:5px;border-radius:3px">
+            <div class="progress-bar progress-bar-striped progress-bar-animated" id="expUploadBar" style="width:0%;background:var(--primary)"></div>
+          </div>
+        </div>
       </div>
       <div class="modal-footer">
         <button class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
-        <button class="btn btn-primary btn-sm" onclick="saveExpense()">
+        <button class="btn btn-primary btn-sm" id="expSaveBtn" onclick="saveExpense()">
           <i class="fa-solid fa-save me-1"></i>Save Expense
         </button>
       </div>
@@ -311,6 +320,11 @@ var IS_ADMIN  = <?=isAdmin()?'true':'false'?>;
 var expModal = null;
 document.addEventListener('DOMContentLoaded', function() {
   expModal = new bootstrap.Modal(document.getElementById('expenseModal'));
+  // Reset save button and progress bar whenever the modal closes (X, ESC, Cancel, or success)
+  document.getElementById('expenseModal').addEventListener('hidden.bs.modal', function() {
+    _setExpSaveBusy(false);
+    _resetExpProgress();
+  });
   loadExpenses();
 });
 
@@ -456,6 +470,21 @@ function editExpense(id) {
   });
 }
 
+function _setExpSaveBusy(busy, label) {
+  var btn = document.getElementById('expSaveBtn');
+  if (!btn) return;
+  btn.disabled = busy;
+  btn.innerHTML = busy
+    ? '<span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>' + (label || 'Saving…')
+    : '<i class="fa-solid fa-save me-1"></i>Save Expense';
+}
+
+function _resetExpProgress() {
+  document.getElementById('expUploadProgress').style.display = 'none';
+  document.getElementById('expUploadBar').style.width = '0%';
+  document.getElementById('expUploadPct').textContent = '0%';
+}
+
 function saveExpense() {
   var fd = new FormData();
   fd.append('action',       'save_expense');
@@ -470,19 +499,64 @@ function saveExpense() {
   var file = document.getElementById('expReceiptFile').files[0];
   if (file) fd.append('receipt_file', file);
 
-  fetch('api/expenses_api.php', {method:'POST', body:fd, credentials:'same-origin', headers: window.csrfHeaders()})
-    .then(function(r) { return r.json(); })
-    .then(function(res) {
-      if (!res.success) {
-        var el = document.getElementById('expMsg');
-        el.style.display = ''; el.className = 'alert alert-danger'; el.textContent = res.error;
-        return;
+  // Lock the button immediately — prevents double-tap regardless of upload size
+  _setExpSaveBusy(true, file ? 'Uploading…' : 'Saving…');
+  document.getElementById('expMsg').style.display = 'none';
+
+  function onDone(res) {
+    if (!res.success) {
+      _setExpSaveBusy(false);
+      _resetExpProgress();
+      var el = document.getElementById('expMsg');
+      el.style.display = ''; el.className = 'alert alert-danger'; el.textContent = res.error;
+      return;
+    }
+    showToast(res.msg, 'success');
+    expModal.hide();
+    loadExpenses();
+  }
+
+  function onFail() {
+    _setExpSaveBusy(false);
+    _resetExpProgress();
+    showToast('Network error. Please try again.', 'error');
+  }
+
+  if (file) {
+    // XHR gives us upload.onprogress; fetch does not
+    var bar  = document.getElementById('expUploadBar');
+    var pct  = document.getElementById('expUploadPct');
+    document.getElementById('expUploadProgress').style.display = '';
+
+    var xhr = new XMLHttpRequest();
+    xhr.open('POST', 'api/expenses_api.php', true);
+    xhr.withCredentials = true;
+    var hdr = window.csrfHeaders();
+    Object.keys(hdr).forEach(function(k) { xhr.setRequestHeader(k, hdr[k]); });
+
+    xhr.upload.onprogress = function(e) {
+      if (!e.lengthComputable) return;
+      var p = Math.round(e.loaded / e.total * 100);
+      bar.style.width = p + '%';
+      pct.textContent = p + '%';
+      if (p >= 100) {
+        pct.textContent = 'Processing…';
+        _setExpSaveBusy(true, 'Processing…');
       }
-      showToast(res.msg, 'success');
-      expModal.hide();
-      loadExpenses();
-    })
-    .catch(function() { showToast('Network error.', 'error'); });
+    };
+
+    xhr.onload = function() {
+      _resetExpProgress();
+      try { onDone(JSON.parse(xhr.responseText)); } catch(e) { onFail(); }
+    };
+    xhr.onerror = onFail;
+    xhr.send(fd);
+  } else {
+    fetch('api/expenses_api.php', {method:'POST', body:fd, credentials:'same-origin', headers: window.csrfHeaders()})
+      .then(function(r) { return r.json(); })
+      .then(onDone)
+      .catch(onFail);
+  }
 }
 
 function deleteExpense(id, desc) {

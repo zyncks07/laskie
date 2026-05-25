@@ -4,9 +4,10 @@ require_once 'config/db.php';
 require_once 'config/functions.php';
 requireLogin();
 
-$pageTitle = 'Annual Dashboard';
+$pageTitle    = 'Annual Dashboard';
 $selectedYear = (int)($_GET['year'] ?? date('Y'));
-$depth = '';
+$depth        = '';
+$needsChartJs = true;
 
 // ─── Fetch all rental units ───────────────────────────────────
 $units = $pdo->query("SELECT ru.*, ut.name as type_name FROM rental_units ru LEFT JOIN unit_types ut ON ru.unit_type_id=ut.id ORDER BY ru.unit_name")->fetchAll();
