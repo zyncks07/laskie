@@ -231,6 +231,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if ($action === 'get_logs') {
         $mo = (int)($_POST['month'] ?? 0);
         $yr = (int)($_POST['year']  ?? date('Y'));
+        // Sargable half-open range so idx_cash_user_date / date-column indexes
+        // can be used instead of full-scan-then-MONTH()/YEAR() filtering.
+        [$periodStart, $periodEnd] = $mo > 0 ? monthRange($mo, $yr) : yearRange($yr);
         $rows = $pdo->prepare("
             SELECT 'remittance' AS log_type, ct.id, ct.transaction_date AS log_date,
                    CONVERT(u.full_name USING utf8mb4) COLLATE utf8mb4_general_ci AS person_name,
@@ -240,7 +243,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             FROM cash_transactions ct
             LEFT JOIN users u ON u.id = ct.user_id
             WHERE ct.transaction_type='remitted'
-              AND YEAR(ct.transaction_date)=? AND (?=0 OR MONTH(ct.transaction_date)=?)
+              AND ct.transaction_date >= ? AND ct.transaction_date < ?
             UNION ALL
             SELECT 'distribution', dd.id, dd.distribution_date,
                    CONVERT(u.full_name USING utf8mb4) COLLATE utf8mb4_general_ci,
@@ -250,7 +253,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             FROM dividend_distributions dd
             LEFT JOIN dividend_recipients dr ON dr.id = dd.recipient_id
             LEFT JOIN users u ON u.id = dd.created_by
-            WHERE YEAR(dd.distribution_date)=? AND (?=0 OR MONTH(dd.distribution_date)=?)
+            WHERE dd.distribution_date >= ? AND dd.distribution_date < ?
             UNION ALL
             SELECT 'return', dret.id, dret.return_date,
                    CONVERT(u.full_name USING utf8mb4) COLLATE utf8mb4_general_ci,
@@ -260,7 +263,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             FROM dividend_returns dret
             LEFT JOIN dividend_recipients dr ON dr.id = dret.recipient_id
             LEFT JOIN users u ON u.id = dret.created_by
-            WHERE YEAR(dret.return_date)=? AND (?=0 OR MONTH(dret.return_date)=?)
+            WHERE dret.return_date >= ? AND dret.return_date < ?
             UNION ALL
             SELECT 'user_return', ct2.id, ct2.transaction_date,
                    CAST(NULL AS CHAR) COLLATE utf8mb4_general_ci,
@@ -270,10 +273,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             FROM cash_transactions ct2
             LEFT JOIN users u2 ON u2.id = ct2.user_id
             WHERE ct2.transaction_type='vault_return'
-              AND YEAR(ct2.transaction_date)=? AND (?=0 OR MONTH(ct2.transaction_date)=?)
+              AND ct2.transaction_date >= ? AND ct2.transaction_date < ?
             ORDER BY log_date DESC, log_type
         ");
-        $rows->execute([$yr,$mo,$mo,$yr,$mo,$mo,$yr,$mo,$mo,$yr,$mo,$mo]);
+        $rows->execute([$periodStart, $periodEnd, $periodStart, $periodEnd, $periodStart, $periodEnd, $periodStart, $periodEnd]);
         jsonOk(['logs'=>$rows->fetchAll()]);
     }
 
@@ -291,15 +294,19 @@ $totalUserReturned = (string)$pdo->query("SELECT COALESCE(SUM(amount),0) FROM ca
 // vault_return ⇒ cash leaves the vault back to a user, so it subtracts from the balance.
 $vaultBalance      = money_sub(money_add(money_sub($totalRemitted, $totalDistrib), $totalReturned), $totalUserReturned);
 
-// Chart: monthly remittances per user for selected year
+// Chart: monthly remittances per user for selected year. MONTH() in the
+// SELECT / GROUP BY is just a projection — the WHERE uses a sargable range
+// so idx_cash_user_date can be used.
+[$yrStart, $yrEnd] = yearRange($selectedYear);
 $cr = $pdo->prepare("
     SELECT MONTH(ct.transaction_date) AS mo, ct.user_id AS uid,
            u.full_name, SUM(ct.amount) AS total
     FROM cash_transactions ct LEFT JOIN users u ON u.id=ct.user_id
-    WHERE ct.transaction_type='remitted' AND YEAR(ct.transaction_date)=?
+    WHERE ct.transaction_type='remitted'
+      AND ct.transaction_date >= ? AND ct.transaction_date < ?
     GROUP BY mo, uid, u.full_name ORDER BY uid, mo
 ");
-$cr->execute([$selectedYear]);
+$cr->execute([$yrStart, $yrEnd]);
 $chartByUser = [];
 foreach ($cr->fetchAll() as $row) {
     $uid = $row['uid'];
@@ -366,14 +373,17 @@ $returnRecords = $pdo->query("
 
 // Chart: dividend distributions per recipient for selected div_year
 $divYear = (int)($_GET['div_year'] ?? date('Y'));
+[$divYrStart, $divYrEnd] = yearRange($divYear);
 $divChartStmt = $pdo->prepare("
     SELECT dr.id, dr.name, COALESCE(SUM(dd.amount),0) AS total
     FROM dividend_recipients dr
-    LEFT JOIN dividend_distributions dd ON dd.recipient_id=dr.id AND YEAR(dd.distribution_date)=?
+    LEFT JOIN dividend_distributions dd
+      ON dd.recipient_id = dr.id
+     AND dd.distribution_date >= ? AND dd.distribution_date < ?
     GROUP BY dr.id, dr.name
     ORDER BY dr.name
 ");
-$divChartStmt->execute([$divYear]);
+$divChartStmt->execute([$divYrStart, $divYrEnd]);
 $divChart = $divChartStmt->fetchAll();
 
 // Available years for selectors

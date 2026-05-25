@@ -39,6 +39,25 @@ if ($action === 'save_payment') {
         if (!$chkRow)                          jsonErr('Payment not found.');
         if ($chkRow['deleted_at'])             jsonErr('Cannot edit a deleted payment. Restore it from the trash first.');
         if ($chkRow['status'] === 'voided')    jsonErr('Cannot edit a voided payment. Restore it first.');
+
+        // Structural changes (unit_id, payment_type, service_type_id) break the
+        // unit_charges linkage in subtle ways:
+        //   - rent → service has no unit_charges row to update or create here
+        //   - service A → service B leaves the old charge linked under the old service
+        //   - unit move re-attaches the charge to the wrong unit's outstanding list
+        // Rather than reimplement the full save_payment unit_charges logic for
+        // every edit shape, refuse the structural change up front. The admin
+        // can void the payment and re-record it cleanly.
+        if ((int)$chkRow['unit_id'] !== $unitId) {
+            jsonErr('Cannot change the unit on an existing payment. Void it and record a new one instead.');
+        }
+        if ($chkRow['payment_type'] !== $type) {
+            jsonErr('Cannot change rent ↔ service on an existing payment. Void it and record a new one instead.');
+        }
+        if ($type === 'service' && (int)($chkRow['service_type_id'] ?? 0) !== (int)$serviceId) {
+            jsonErr('Cannot change the service type on an existing payment. Void it and record a new one instead.');
+        }
+
         $before = array_intersect_key($chkRow, array_flip(['unit_id','tenant_id','payment_type','service_type_id','amount','payment_date','due_date','period_month','period_year','notes']));
 
         $pdo->beginTransaction();
@@ -53,6 +72,8 @@ if ($action === 'save_payment') {
                 ->execute([$amount, $payDate, $id]);
 
             if ($type === 'service') {
+                // After the guards above, unit_id + service_type stay the same — only
+                // amount / charge_date can change, which is exactly what this updates.
                 $pdo->prepare("UPDATE unit_charges SET amount=?, charge_date=? WHERE payment_id=?")
                     ->execute([$amount, $payDate, $id]);
             }
@@ -80,50 +101,70 @@ if ($action === 'save_payment') {
             }
         }
 
-        // New payment — wrap payments + cash_transactions + unit_charges as one atomic unit
-        $pdo->beginTransaction();
-        try {
-            $invoiceNo = generateInvoiceNo($pdo);
-            $pdo->prepare("INSERT INTO payments (invoice_no,unit_id,tenant_id,payment_type,service_type_id,amount,period_month,period_year,payment_date,due_date,received_by,notes,idempotency_key)
-                           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)")
-                ->execute([$invoiceNo,$unitId,$tenantId,$type,$serviceId,$amount,$periodMonth,$periodYear,$payDate,$dueDate,$_SESSION['user']['id'],$notes,$idempotencyKey]);
-            $newId = (int)$pdo->lastInsertId();
+        // New payment — wrap payments + cash_transactions + unit_charges as one atomic unit.
+        // generateInvoiceNo computes MAX(invoice_no)+1 without a lock, so two
+        // concurrent saves can compute the same number; the UNIQUE index on
+        // invoice_no then bounces one with errno 1062. Retry a handful of
+        // times with a fresh number before giving up. The idempotency_key
+        // collision path is still handled separately — it means a duplicate
+        // submit from the same client, not a races between users.
+        $maxRetries = 5;
+        $attempt    = 0;
+        $newId      = 0;
+        $invoiceNo  = '';
+        while (true) {
+            $attempt++;
+            $pdo->beginTransaction();
+            try {
+                $invoiceNo = generateInvoiceNo($pdo);
+                $pdo->prepare("INSERT INTO payments (invoice_no,unit_id,tenant_id,payment_type,service_type_id,amount,period_month,period_year,payment_date,due_date,received_by,notes,idempotency_key)
+                               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)")
+                    ->execute([$invoiceNo,$unitId,$tenantId,$type,$serviceId,$amount,$periodMonth,$periodYear,$payDate,$dueDate,$_SESSION['user']['id'],$notes,$idempotencyKey]);
+                $newId = (int)$pdo->lastInsertId();
 
-            $pdo->prepare("INSERT INTO cash_transactions (user_id,transaction_type,amount,reference_payment_id,notes,transaction_date) VALUES (?,?,?,?,?,?)")
-                ->execute([$_SESSION['user']['id'],'received',$amount,$newId,"Payment received: $invoiceNo",$payDate]);
+                $pdo->prepare("INSERT INTO cash_transactions (user_id,transaction_type,amount,reference_payment_id,notes,transaction_date) VALUES (?,?,?,?,?,?)")
+                    ->execute([$_SESSION['user']['id'],'received',$amount,$newId,"Payment received: $invoiceNo",$payDate]);
 
-            if ($type === 'service') {
-                $stRow = $pdo->prepare("SELECT name FROM service_types WHERE id=?");
-                $stRow->execute([$serviceId]);
-                $stName  = $stRow->fetchColumn() ?: 'Service';
-                $chgDesc = $notes ?: $stName;
-                $exist = $pdo->prepare("SELECT id FROM unit_charges WHERE unit_id=? AND service_type_id=? AND period_month=? AND period_year=? AND payment_id IS NULL AND source='pre_billed' LIMIT 1");
-                $exist->execute([$unitId, $serviceId, $periodMonth, $periodYear]);
-                $existChargeId = $exist->fetchColumn();
-                if ($existChargeId) {
-                    $pdo->prepare("UPDATE unit_charges SET payment_id=?, amount=?, charge_date=? WHERE id=?")
-                        ->execute([$newId, $amount, $payDate, $existChargeId]);
-                } else {
-                    $pdo->prepare("INSERT INTO unit_charges (unit_id,tenant_id,service_type_id,amount,description,charge_date,period_month,period_year,payment_id,source,created_by) VALUES (?,?,?,?,?,?,?,?,?,?,?)")
-                        ->execute([$unitId,$tenantId,$serviceId,$amount,$chgDesc,$payDate,$periodMonth,$periodYear,$newId,'auto_collected',$_SESSION['user']['id']]);
+                if ($type === 'service') {
+                    $stRow = $pdo->prepare("SELECT name FROM service_types WHERE id=?");
+                    $stRow->execute([$serviceId]);
+                    $stName  = $stRow->fetchColumn() ?: 'Service';
+                    $chgDesc = $notes ?: $stName;
+                    $exist = $pdo->prepare("SELECT id FROM unit_charges WHERE unit_id=? AND service_type_id=? AND period_month=? AND period_year=? AND payment_id IS NULL AND source='pre_billed' LIMIT 1");
+                    $exist->execute([$unitId, $serviceId, $periodMonth, $periodYear]);
+                    $existChargeId = $exist->fetchColumn();
+                    if ($existChargeId) {
+                        $pdo->prepare("UPDATE unit_charges SET payment_id=?, amount=?, charge_date=? WHERE id=?")
+                            ->execute([$newId, $amount, $payDate, $existChargeId]);
+                    } else {
+                        $pdo->prepare("INSERT INTO unit_charges (unit_id,tenant_id,service_type_id,amount,description,charge_date,period_month,period_year,payment_id,source,created_by) VALUES (?,?,?,?,?,?,?,?,?,?,?)")
+                            ->execute([$unitId,$tenantId,$serviceId,$amount,$chgDesc,$payDate,$periodMonth,$periodYear,$newId,'auto_collected',$_SESSION['user']['id']]);
+                    }
                 }
-            }
 
-            logActivity($pdo,'RECORD_PAYMENT','Payments',"Recorded payment $invoiceNo for unit #$unitId, ₱$amount");
-            $pdo->commit();
-        } catch (Throwable $e) {
-            if ($pdo->inTransaction()) $pdo->rollBack();
-            // Race-condition recovery: if a concurrent request inserted the same key first,
-            // MySQL fires error 1062 (duplicate-entry). Fall back to returning the existing row.
-            if ($idempotencyKey !== null && $e instanceof PDOException && (int)$e->errorInfo[1] === 1062) {
-                $look = $pdo->prepare("SELECT id, invoice_no FROM payments WHERE idempotency_key=?");
-                $look->execute([$idempotencyKey]);
-                $hit = $look->fetch();
-                if ($hit) {
-                    jsonOk(['msg' => 'Payment already recorded.', 'id' => (int)$hit['id'], 'invoice_no' => $hit['invoice_no'], 'idempotent_replay' => true]);
+                logActivity($pdo,'RECORD_PAYMENT','Payments',"Recorded payment $invoiceNo for unit #$unitId, ₱$amount");
+                $pdo->commit();
+                break; // success — exit retry loop
+            } catch (Throwable $e) {
+                if ($pdo->inTransaction()) $pdo->rollBack();
+                $isDup   = $e instanceof PDOException && (int)$e->errorInfo[1] === 1062;
+                $errText = $isDup ? ($e->errorInfo[2] ?? '') : '';
+                // Idempotency-key collision: same client submitted twice — return the original row.
+                if ($isDup && $idempotencyKey !== null && stripos($errText, 'idempotency_key') !== false) {
+                    $look = $pdo->prepare("SELECT id, invoice_no FROM payments WHERE idempotency_key=?");
+                    $look->execute([$idempotencyKey]);
+                    $hit = $look->fetch();
+                    if ($hit) {
+                        jsonOk(['msg' => 'Payment already recorded.', 'id' => (int)$hit['id'], 'invoice_no' => $hit['invoice_no'], 'idempotent_replay' => true]);
+                    }
                 }
+                // Invoice-number collision: another save grabbed the same number first.
+                // Retry with a freshly-computed invoice_no.
+                if ($isDup && stripos($errText, 'invoice_no') !== false && $attempt < $maxRetries) {
+                    continue;
+                }
+                throw $e;
             }
-            throw $e;
         }
         jsonOk(['msg' => 'Payment recorded successfully.', 'id' => $newId, 'invoice_no' => $invoiceNo]);
     }

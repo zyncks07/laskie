@@ -685,6 +685,15 @@ function openRateHistory(unitId, unitName, currentRate) {
   rateHistoryModal.show();
 }
 
+// Same esc() pattern used elsewhere — notes and created_by_name flow from
+// admin input, so a different admin viewing the history could otherwise be
+// XSS'd through them.
+function _rhEsc(s) {
+  const d = document.createElement('div');
+  d.appendChild(document.createTextNode(s != null ? String(s) : ''));
+  return d.innerHTML;
+}
+
 function loadRateHistory(unitId) {
   const tbody = document.getElementById('rateHistoryBody');
   tbody.innerHTML = '<tr><td colspan="5" class="text-center text-muted">Loading…</td></tr>';
@@ -693,13 +702,13 @@ function loadRateHistory(unitId) {
     if (!res.history.length) { tbody.innerHTML = '<tr><td colspan="5" class="text-center text-muted">No rate history recorded yet.</td></tr>'; return; }
     tbody.innerHTML = res.history.map((h,i) => `
       <tr>
-        <td class="fw-600">${h.effective_date}</td>
+        <td class="fw-600">${_rhEsc(h.effective_date)}</td>
         <td class="text-end fw-600 text-success">₱${parseFloat(h.monthly_rate).toLocaleString('en',{minimumFractionDigits:2})}</td>
-        <td class="text-muted" style="font-size:12px">${h.notes||'—'}</td>
-        <td style="font-size:12px">${h.created_by_name||'—'}</td>
+        <td class="text-muted" style="font-size:12px">${h.notes ? _rhEsc(h.notes) : '—'}</td>
+        <td style="font-size:12px">${h.created_by_name ? _rhEsc(h.created_by_name) : '—'}</td>
         <td class="text-center">
           ${res.history.length > 1
-            ? `<button class="btn-icon danger" title="Delete" onclick="deleteRateHistory(${h.id}, ${unitId})"><i class="fa-solid fa-trash fa-xs"></i></button>`
+            ? `<button class="btn-icon danger" title="Delete" data-id="${parseInt(h.id)}" data-uid="${parseInt(unitId)}" onclick="deleteRateHistory(+this.dataset.id, +this.dataset.uid)"><i class="fa-solid fa-trash fa-xs"></i></button>`
             : '<span class="text-muted" style="font-size:11px">Initial</span>'}
         </td>
       </tr>`).join('');

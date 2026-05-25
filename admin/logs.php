@@ -15,9 +15,11 @@ $filterAction = trim($_GET['action_type'] ?? '');
 $filterIp     = trim($_GET['ip']      ?? '');
 $search       = trim($_GET['search']  ?? '');
 
-// Build WHERE
-$where  = ['MONTH(sl.created_at)=? AND YEAR(sl.created_at)=?'];
-$params = [$filterMonth, $filterYear];
+// Build WHERE — use a sargable half-open range so idx_created_at can be used
+// instead of a full scan + post-filter via MONTH()/YEAR().
+[$periodStart, $periodEnd] = monthRange($filterMonth, $filterYear);
+$where  = ['sl.created_at >= ? AND sl.created_at < ?'];
+$params = [$periodStart, $periodEnd];
 
 if ($filterUser)   { $where[] = 'sl.user_id=?';     $params[] = $filterUser; }
 if ($filterModule) { $where[] = 'sl.module=?';       $params[] = $filterModule; }
@@ -60,8 +62,8 @@ $logs->execute($params);
 $logRows = $logs->fetchAll();
 
 // ── Unique IPs this period ────────────────────────────────────
-$ipStmt = $pdo->prepare("SELECT DISTINCT ip_address FROM system_logs WHERE MONTH(created_at)=? AND YEAR(created_at)=? AND ip_address IS NOT NULL ORDER BY ip_address");
-$ipStmt->execute([$filterMonth, $filterYear]);
+$ipStmt = $pdo->prepare("SELECT DISTINCT ip_address FROM system_logs WHERE created_at >= ? AND created_at < ? AND ip_address IS NOT NULL ORDER BY ip_address");
+$ipStmt->execute([$periodStart, $periodEnd]);
 $uniqueIps = $ipStmt->fetchAll(PDO::FETCH_COLUMN);
 
 // ── All users for filter dropdown ─────────────────────────────
