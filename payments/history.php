@@ -95,13 +95,21 @@ if ($payments) {
 $totalRefunded = money_sum(array_column($refundRows, 'amount'));
 
 // ── Fetch Service Charges (unit_charges) ──────────────────────
+// is_outstanding = 1 when the charge has no payment_id OR its linked payment
+// was voided / soft-deleted. The filtered LEFT JOIN forces such rows to come
+// back with p.id IS NULL, mirroring the soa_pdf.php fix so the rendered SoA
+// labels them "(Unpaid)" consistently.
 $serviceCharges = [];
 if ($selUnit) {
     $sq = $pdo->prepare("
-        SELECT uc.*, st.name as service_name, u.full_name as billed_by_name
+        SELECT uc.*, st.name as service_name, u.full_name as billed_by_name,
+               (uc.payment_id IS NULL OR p.id IS NULL) AS is_outstanding
         FROM unit_charges uc
         LEFT JOIN service_types st ON uc.service_type_id = st.id
         LEFT JOIN users u ON uc.created_by = u.id
+        LEFT JOIN payments p ON p.id = uc.payment_id
+                            AND p.deleted_at IS NULL
+                            AND p.status != 'voided'
         WHERE uc.unit_id = ? AND uc.charge_date BETWEEN ? AND ?
         ORDER BY uc.charge_date ASC, uc.created_at ASC
     ");
@@ -187,8 +195,12 @@ if ($selUnit && $unitInfo) {
 
     // Service charge rows from unit_charges
     foreach ($serviceCharges as $c) {
-        $period = date('F Y', mktime(0,0,0,(int)$c['period_month'],1,(int)$c['period_year']));
-        $desc   = ($c['service_name'] ?? $c['description']) . ' — ' . $period;
+        $period   = date('F Y', mktime(0,0,0,(int)$c['period_month'],1,(int)$c['period_year']));
+        $desc     = ($c['service_name'] ?? $c['description']) . ' — ' . $period;
+        // is_outstanding accounts for both NULL payment_id AND voided/deleted
+        // linked payments, so the badge stays accurate after a void/restore.
+        $unpaid   = !empty($c['is_outstanding']);
+        if ($unpaid) $desc .= ' (Unpaid)';
         $ledger[] = [
             'date'        => $c['charge_date'],
             'description' => $desc,
@@ -198,7 +210,7 @@ if ($selUnit && $unitInfo) {
             'invoice_no'  => '',
             'cashier'     => $c['billed_by_name'] ?? '',
             'id'          => (int)$c['id'],
-            'is_unpaid'   => ($c['payment_id'] === null),
+            'is_unpaid'   => $unpaid,
             'source'      => $c['source'],
         ];
     }

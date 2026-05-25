@@ -1,5 +1,6 @@
 .claude/
-uploads/
+uploads/*
+!uploads/.htaccess
 config/db.php
 .deploy_credentials
 *.log

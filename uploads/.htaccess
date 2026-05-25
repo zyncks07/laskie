@@ -1,0 +1,44 @@
+# ============================================================
+# uploads/.htaccess — Defence in depth on user-uploaded files
+# ============================================================
+# handleUpload() in config/functions.php already restricts incoming
+# extensions to a whitelist. This file is the second layer: even if
+# something bypasses the whitelist (a future code path, a renamed
+# file dropped in by mistake, an extension-handling bug), Apache
+# refuses to execute scripts and refuses to render attacker-supplied
+# HTML in the browser.
+
+# Never run anything in here as PHP or CGI.
+Options -ExecCGI -Indexes
+RemoveHandler .php .phtml .php3 .php4 .php5 .php7 .pht .phar
+RemoveType    .php .phtml .php3 .php4 .php5 .php7 .pht .phar
+<FilesMatch "\.(php|phtml|php3|php4|php5|php7|pht|phar|cgi|pl|py|rb|sh|asp|aspx|jsp)$">
+    SetHandler default-handler
+    Order Allow,Deny
+    Deny from all
+</FilesMatch>
+
+# SVG / HTML in this directory would render as the request origin —
+# refuse them entirely. Same for any file we don't expect to be here.
+<FilesMatch "\.(svg|xhtml|html?|js|wasm)$">
+    Order Allow,Deny
+    Deny from all
+</FilesMatch>
+
+# Block dotfiles and our own .htaccess from being served (Apache 2.4
+# blocks .ht* by default, but defence in depth doesn't hurt).
+<FilesMatch "^\.">
+    Order Allow,Deny
+    Deny from all
+</FilesMatch>
+
+# Force download for PDF/DOC/XLS/ZIP so a crafted file can't render
+# scripts in the browser if it slipped past the extension check. JPEG
+# / PNG / GIF / WebP stay inline so receipts can be previewed in the
+# Cash and Expenses pages.
+<IfModule mod_headers.c>
+    <FilesMatch "\.(pdf|doc|docx|xls|xlsx|zip)$">
+        Header set Content-Disposition "attachment"
+    </FilesMatch>
+    Header always set X-Content-Type-Options "nosniff"
+</IfModule>

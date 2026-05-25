@@ -51,9 +51,12 @@ Options -Indexes +FollowSymLinks
 <IfModule mod_headers.c>
     Header always set X-Content-Type-Options  "nosniff"
     Header always set X-Frame-Options         "SAMEORIGIN"
-    Header always set X-XSS-Protection        "1; mode=block"
     Header always set Referrer-Policy         "strict-origin-when-cross-origin"
     Header always unset X-Powered-By
+    # X-XSS-Protection intentionally NOT set. The header is deprecated:
+    # Chrome removed support, Firefox never implemented, and OWASP notes
+    # it can introduce vulns on legacy IE/Edge. Modern XSS defence lives
+    # in the per-page esc()/safeUrl() helpers and CSP (future work).
 </IfModule>
 
 <IfModule mod_expires.c>
