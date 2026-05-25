@@ -1,6 +1,4 @@
 <?php
-error_reporting(0);
-ini_set("display_errors", 0);
 session_start();
 require_once '../config/db.php';
 require_once '../config/functions.php';
@@ -29,6 +27,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $status    = $_POST['status'] ?? 'active';
         $notes     = nullOrStr($_POST['notes'] ?? '');
         if (!$fullName) jsonErr('Tenant full name is required.');
+        if (!in_array($status, ['active','inactive','former'], true)) jsonErr('Invalid tenant status.');
 
         if ($id) {
             // Capture the old unit before the update so we can vacate it if the tenant moves out or changes units.
@@ -38,13 +37,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
             $pdo->prepare("UPDATE tenants SET unit_id=?,full_name=?,email=?,phone=?,phone2=?,facebook=?,instagram=?,other_social=?,address=?,contract_start=?,contract_end=?,status=?,notes=?,updated_at=NOW() WHERE id=?")
                 ->execute([$unitId,$fullName,$email,$phone,$phone2,$fb,$ig,$other_s,$address,$start,$end,$status,$notes,$id]);
-            // Update new unit's occupancy status.
+            // Recompute new unit's occupancy from the truth of the tenants table.
+            // Previously this flipped to 'vacant' whenever the edited tenant went
+            // inactive/former, ignoring any other active tenants still assigned
+            // to the unit. Counting again here keeps the unit 'occupied' if
+            // someone else is still active in it.
             if ($unitId) {
-                $occ = $status === 'active' ? 'occupied' : 'vacant';
+                $stillActive = $pdo->prepare("SELECT COUNT(*) FROM tenants WHERE unit_id=? AND status='active'");
+                $stillActive->execute([$unitId]);
+                $occ = ((int)$stillActive->fetchColumn() > 0) ? 'occupied' : 'vacant';
                 $pdo->prepare("UPDATE rental_units SET status=? WHERE id=?")->execute([$occ,$unitId]);
             }
-            // If the tenant left or moved to a different unit, vacate the old unit
-            // (only if no other active tenant is still assigned to it).
+            // If the tenant moved out of the old unit, recompute occupancy there too.
             if ($oldUnitId && $oldUnitId !== $unitId) {
                 $stillOccupied = $pdo->prepare("SELECT COUNT(*) FROM tenants WHERE unit_id=? AND status='active' AND id!=?");
                 $stillOccupied->execute([$oldUnitId, $id]);
@@ -94,8 +98,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
     if ($action === 'delete_doc') {
-        $pdo->prepare("DELETE FROM tenant_docs WHERE id=?")->execute([(int)$_POST['id']]);
-        logActivity($pdo,'DELETE_DOC','Tenants',"Deleted tenant doc #".(int)$_POST['id']);
+        $docId = (int)$_POST['id'];
+        // Unlink the underlying upload too, otherwise every delete leaks a file
+        // into uploads/contracts/. Guard the prefix so a malformed file_path
+        // can't point at anything outside the uploads tree.
+        $row = $pdo->prepare("SELECT file_path FROM tenant_docs WHERE id=?");
+        $row->execute([$docId]);
+        $fp = $row->fetchColumn();
+        if ($fp && str_starts_with((string)$fp, '/uploads/')) {
+            @unlink(__DIR__ . '/..' . $fp);
+        }
+        $pdo->prepare("DELETE FROM tenant_docs WHERE id=?")->execute([$docId]);
+        logActivity($pdo,'DELETE_DOC','Tenants',"Deleted tenant doc #$docId");
         jsonOk(['msg'=>'Document removed.']);
     }
     exit;
@@ -147,7 +161,7 @@ include '../includes/header.php';
         <td><span class="badge badge-<?= $t['status'] ?>"><?= ucfirst($t['status']) ?></span></td>
         <td class="text-center">
           <button class="btn-icon" title="Edit" onclick="editTenant(<?= $t['id'] ?>)"><i class="fa-solid fa-pen fa-xs"></i></button>
-          <button class="btn-icon" title="Documents" onclick="openDocs(<?= $t['id'] ?>, '<?= clean(addslashes($t['full_name'])) ?>')"><i class="fa-solid fa-folder-open fa-xs"></i></button>
+          <button class="btn-icon" title="Documents" onclick="openDocs(<?= $t['id'] ?>, '<?= clean($t['full_name']) ?>')"><i class="fa-solid fa-folder-open fa-xs"></i></button>
         </td>
       </tr>
       <?php endforeach; ?>

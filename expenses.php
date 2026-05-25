@@ -302,8 +302,8 @@ include 'includes/header.php';
                 <td class="fw-600"><?=clean($c['name'])?></td>
                 <td style="font-size:12.5px;color:var(--text-muted)"><?=clean($c['description']??'&#8212;')?></td>
                 <td class="text-center">
-                  <button class="btn-icon" onclick="editCategory(<?=$c['id']?>,'<?=clean(addslashes($c['name']))?>','<?=clean(addslashes($c['description']??''))?>')"><i class="fa-solid fa-pen fa-xs"></i></button>
-                  <button class="btn-icon danger" onclick="deleteCategory(<?=$c['id']?>,'<?=clean(addslashes($c['name']))?>')"><i class="fa-solid fa-trash fa-xs"></i></button>
+                  <button class="btn-icon" onclick="editCategory(<?=$c['id']?>,'<?=clean($c['name'])?>','<?=clean($c['description']??'')?>')"><i class="fa-solid fa-pen fa-xs"></i></button>
+                  <button class="btn-icon danger" onclick="deleteCategory(<?=$c['id']?>,'<?=clean($c['name'])?>')"><i class="fa-solid fa-trash fa-xs"></i></button>
                 </td>
               </tr>
               <?php endforeach; ?>

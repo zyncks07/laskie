@@ -13,7 +13,8 @@ $stmt = $pdo->prepare("
            ru.unit_name, ru.due_day,
            t.full_name  AS tenant_name, t.phone AS tenant_phone, t.address AS tenant_address,
            st.name      AS service_name,
-           u.full_name  AS cashier_name, u.role AS cashier_role
+           u.full_name  AS cashier_name, u.role AS cashier_role,
+           COALESCE((SELECT SUM(r.amount) FROM refunds r WHERE r.payment_id = p.id), 0) AS refunded_total
     FROM payments p
     LEFT JOIN rental_units ru ON p.unit_id    = ru.id
     LEFT JOIN tenants t       ON p.tenant_id  = t.id
@@ -24,6 +25,35 @@ $stmt = $pdo->prepare("
 $stmt->execute([$id]);
 $pay = $stmt->fetch();
 if (!$pay) die('<p style="font-family:sans-serif;padding:2rem;color:red;">Payment not found.</p>');
+
+// Compute the receipt status banner — never claim a payment is paid when it is
+// voided, refunded, or moved to trash. Admins can still open the page for
+// reference, but the document must reflect reality so it can't be passed off
+// as a valid receipt.
+$isDeleted = !empty($pay['deleted_at']);
+$payStatus = $pay['status'] ?? 'paid';
+$netPaid   = money_sub((string)$pay['amount'], (string)$pay['refunded_total']);
+if ($isDeleted) {
+    $bannerLabel = 'DELETED — NOT A VALID RECEIPT';
+    $bannerKind  = 'danger';
+} elseif ($payStatus === 'voided') {
+    $bannerLabel = 'VOIDED — NOT A VALID RECEIPT';
+    $bannerKind  = 'danger';
+} elseif ($payStatus === 'refunded') {
+    $bannerLabel = 'FULLY REFUNDED — NOT A VALID RECEIPT';
+    $bannerKind  = 'danger';
+} elseif ($payStatus === 'partially_refunded') {
+    $bannerLabel = 'PARTIALLY REFUNDED — NET ' . money($netPaid);
+    $bannerKind  = 'warning';
+} else {
+    $bannerLabel = 'PAYMENT RECEIVED — PAID IN FULL';
+    $bannerKind  = 'success';
+}
+// Restrict casual access to invalid receipts to admin only; staff/accountant
+// must not be able to print a void/deleted/refunded invoice.
+if ($bannerKind === 'danger' && !isAdmin()) {
+    die('<p style="font-family:sans-serif;padding:2rem;color:#b91c1c;">This payment is no longer valid and the receipt cannot be displayed.</p>');
+}
 
 // Company settings
 $companyName    = getSetting($pdo, 'company_name',    'Laskie Rental Properties');
@@ -104,12 +134,31 @@ logActivity($pdo, 'PRINT_INVOICE', 'Payments', "Printed invoice {$pay['invoice_n
 
   /* Status badge */
   .inv-status-row {
-    background: var(--success-bg);
     padding: 10px 32px;
     display: flex; align-items: center; gap: 10px;
   }
-  .inv-status-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--success); }
-  .inv-status-text { font-size: 12.5px; font-weight: 700; color: var(--success); }
+  .inv-status-row.kind-success { background: var(--success-bg); }
+  .inv-status-row.kind-success .inv-status-dot  { background: var(--success); }
+  .inv-status-row.kind-success .inv-status-text { color: var(--success); }
+  .inv-status-row.kind-warning { background: #fef3c7; }
+  .inv-status-row.kind-warning .inv-status-dot  { background: #b45309; }
+  .inv-status-row.kind-warning .inv-status-text { color: #92400e; }
+  .inv-status-row.kind-danger  { background: #fee2e2; }
+  .inv-status-row.kind-danger  .inv-status-dot  { background: #b91c1c; }
+  .inv-status-row.kind-danger  .inv-status-text { color: #b91c1c; }
+  .inv-status-dot { width: 10px; height: 10px; border-radius: 50%; }
+  .inv-status-text { font-size: 12.5px; font-weight: 700; }
+  /* Big translucent watermark for non-valid receipts so a printed copy can't be mistaken. */
+  .inv-void-mark {
+    position: absolute; inset: 0;
+    display: flex; align-items: center; justify-content: center;
+    pointer-events: none;
+    font-size: 90px; font-weight: 900;
+    color: rgba(185, 28, 28, .14);
+    transform: rotate(-22deg);
+    letter-spacing: .12em;
+    z-index: 5;
+  }
 
   /* Body */
   .inv-body { padding: 28px 32px; }
@@ -196,7 +245,11 @@ logActivity($pdo, 'PRINT_INVOICE', 'Payments', "Printed invoice {$pay['invoice_n
   <button class="btn btn-primary" onclick="window.print()">🖨 Print Invoice</button>
 </div>
 
-<div class="invoice">
+<div class="invoice" style="position:relative">
+
+  <?php if ($bannerKind === 'danger'): ?>
+  <div class="inv-void-mark"><?= $isDeleted ? 'DELETED' : ($payStatus === 'voided' ? 'VOID' : 'REFUNDED') ?></div>
+  <?php endif; ?>
 
   <!-- Header -->
   <div class="inv-header">
@@ -215,10 +268,10 @@ logActivity($pdo, 'PRINT_INVOICE', 'Payments', "Printed invoice {$pay['invoice_n
     </div>
   </div>
 
-  <!-- Paid status -->
-  <div class="inv-status-row">
+  <!-- Status banner -->
+  <div class="inv-status-row kind-<?= clean($bannerKind) ?>">
     <div class="inv-status-dot"></div>
-    <div class="inv-status-text">PAYMENT RECEIVED — PAID IN FULL</div>
+    <div class="inv-status-text"><?= clean($bannerLabel) ?></div>
   </div>
 
   <div class="inv-body">

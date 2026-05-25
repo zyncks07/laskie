@@ -27,8 +27,32 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         if (!$username || !$fullName) jsonErr('Username and full name are required.');
         if (!in_array($role, ['admin','accountant','staff'])) jsonErr('Invalid role.');
+        if (!in_array($status, ['active','inactive'])) jsonErr('Invalid status.');
+
+        // Lockout safeguards: an admin must not be able to (a) demote themselves
+        // out of admin, (b) deactivate their own account, or (c) demote/deactivate
+        // the last remaining active admin. Any of these would brick admin access
+        // with no recovery path inside the app.
+        $selfId        = (int)$_SESSION['user']['id'];
+        $editingSelf   = $id && $id === $selfId;
+        $demotingSelf  = $editingSelf && $role !== 'admin';
+        $disablingSelf = $editingSelf && $status !== 'active';
+        if ($demotingSelf)  jsonErr('You cannot change your own role away from admin.');
+        if ($disablingSelf) jsonErr('You cannot deactivate your own account.');
 
         if ($id) {
+            // Block any edit that would leave zero active admins. We use a
+            // conditional COUNT to also handle the case where the row being
+            // edited is itself the affected admin.
+            if ($role !== 'admin' || $status !== 'active') {
+                $admCount = $pdo->prepare(
+                    "SELECT COUNT(*) FROM users WHERE role='admin' AND status='active' AND id!=?"
+                );
+                $admCount->execute([$id]);
+                if ((int)$admCount->fetchColumn() === 0) {
+                    jsonErr('Cannot apply: this would leave no active admin in the system.');
+                }
+            }
             // Update
             $check = $pdo->prepare("SELECT id FROM users WHERE username=? AND id!=?");
             $check->execute([$username, $id]);
@@ -60,6 +84,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if ($action === 'delete') {
         $id = (int)($_POST['id'] ?? 0);
         if ($id === (int)$_SESSION['user']['id']) jsonErr('You cannot delete your own account.');
+        // Last-admin guard — same reasoning as the save branch above.
+        $target = $pdo->prepare("SELECT role, status FROM users WHERE id=?");
+        $target->execute([$id]);
+        $t = $target->fetch();
+        if (!$t) jsonErr('Account not found.');
+        if ($t['role'] === 'admin' && $t['status'] === 'active') {
+            $admCount = $pdo->prepare("SELECT COUNT(*) FROM users WHERE role='admin' AND status='active' AND id!=?");
+            $admCount->execute([$id]);
+            if ((int)$admCount->fetchColumn() === 0) {
+                jsonErr('Cannot deactivate: this is the last active admin in the system.');
+            }
+        }
         $pdo->prepare("UPDATE users SET status='inactive' WHERE id=?")->execute([$id]);
         logActivity($pdo, 'DEACTIVATE_USER', 'Accounts', "Deactivated user #$id");
         jsonOk(['msg' => 'Account deactivated.']);

@@ -18,7 +18,7 @@ const LOGIN_LOCKOUT_WINDOW_MIN = 15;
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $username = trim($_POST['username'] ?? '');
     $password = $_POST['password'] ?? '';
-    $ip = trim(explode(',', $_SERVER['HTTP_X_FORWARDED_FOR'] ?? $_SERVER['REMOTE_ADDR'] ?? 'unknown')[0]);
+    $ip = getClientIp();
 
     // ── Lockout check: count recent failures since the last success ─
     // For an IP/username pair, only failures AFTER the most recent

@@ -217,13 +217,22 @@ function render403(): string {
     return '<!DOCTYPE html><html><head><title>Access Denied</title></head><body style="font-family:sans-serif;text-align:center;padding:4rem;color:#64748b;"><h2 style="color:#dc2626;">&#128683; Access Denied</h2><p>You do not have permission to access this page.</p><a href="../dashboard.php" style="color:#1d4ed8;">Return to Dashboard</a></body></html>';
 }
 
+// Returns the originating client IP. We deliberately ignore X-Forwarded-For:
+// Apache on this host listens directly on port 49200 with no upstream proxy
+// stripping headers, so any client could spoof XFF to forge audit rows or
+// bypass the IP arm of the login lockout. Trust REMOTE_ADDR only. If a real
+// reverse proxy is added later, define TRUSTED_PROXY_IPS in config/db.php and
+// teach this helper to honor XFF when REMOTE_ADDR is in that list.
+function getClientIp(): string {
+    return $_SERVER['REMOTE_ADDR'] ?? 'unknown';
+}
+
 // ─── System Logging ──────────────────────────────────────────
 function logActivity(PDO $pdo, string $action, string $module, string $details = ''): void {
     $user = currentUser();
     $userId = $user['id'] ?? null;
     $username = $user['username'] ?? 'system';
-    $ip = $_SERVER['HTTP_X_FORWARDED_FOR'] ?? $_SERVER['REMOTE_ADDR'] ?? 'unknown';
-    $ip = trim(explode(',', $ip)[0]);
+    $ip = getClientIp();
     try {
         $stmt = $pdo->prepare("INSERT INTO system_logs (user_id, username, action, module, details, ip_address) VALUES (?,?,?,?,?,?)");
         $stmt->execute([$userId, $username, $action, $module, $details, $ip]);

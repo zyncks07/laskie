@@ -129,6 +129,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // Stored as cash_transactions.transaction_type='vault_return': it
     // INCREASES the user's cash_on_hand and DECREASES the vault balance.
     if ($action === 'add_user_return') {
+        if (!isAdmin()) jsonErr('Admin access required.', 403);
         $userId = (int)($_POST['user_id'] ?? 0);
         $amount = (float)($_POST['amount'] ?? 0);
         $date   = trim($_POST['return_date'] ?? '');
@@ -151,6 +152,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
     if ($action === 'edit_user_return') {
+        if (!isAdmin()) jsonErr('Admin access required.', 403);
         $id     = (int)($_POST['id'] ?? 0);
         $userId = (int)($_POST['user_id'] ?? 0);
         $amount = (float)($_POST['amount'] ?? 0);
@@ -172,6 +174,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
     if ($action === 'delete_user_return') {
+        if (!isAdmin()) jsonErr('Admin access required.', 403);
         $id = (int)($_POST['id'] ?? 0);
         if (!$id) jsonErr('Return ID required.');
         $chk = $pdo->prepare("SELECT amount FROM cash_transactions WHERE id=? AND transaction_type='vault_return'");
@@ -184,6 +187,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
     if ($action === 'get_user_return') {
+        if (!isAdmin()) jsonErr('Admin access required.', 403);
         $id = (int)($_POST['id'] ?? 0);
         $r  = $pdo->prepare("SELECT * FROM cash_transactions WHERE id=? AND transaction_type='vault_return'");
         $r->execute([$id]);
@@ -278,12 +282,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 // ── Page data ─────────────────────────────────────────────────
 $selectedYear  = (int)($_GET['year'] ?? date('Y'));
-$totalRemitted     = (float)$pdo->query("SELECT COALESCE(SUM(amount),0) FROM cash_transactions WHERE transaction_type='remitted'")->fetchColumn();
-$totalDistrib      = (float)$pdo->query("SELECT COALESCE(SUM(amount),0) FROM dividend_distributions")->fetchColumn();
-$totalReturned     = (float)$pdo->query("SELECT COALESCE(SUM(amount),0) FROM dividend_returns")->fetchColumn();
-$totalUserReturned = (float)$pdo->query("SELECT COALESCE(SUM(amount),0) FROM cash_transactions WHERE transaction_type='vault_return'")->fetchColumn();
+// Sums come straight from SQL on DECIMAL(12,2) columns — exact. Combine them
+// via cents-based money helpers so the displayed vault balance can't drift.
+$totalRemitted     = (string)$pdo->query("SELECT COALESCE(SUM(amount),0) FROM cash_transactions WHERE transaction_type='remitted'")->fetchColumn();
+$totalDistrib      = (string)$pdo->query("SELECT COALESCE(SUM(amount),0) FROM dividend_distributions")->fetchColumn();
+$totalReturned     = (string)$pdo->query("SELECT COALESCE(SUM(amount),0) FROM dividend_returns")->fetchColumn();
+$totalUserReturned = (string)$pdo->query("SELECT COALESCE(SUM(amount),0) FROM cash_transactions WHERE transaction_type='vault_return'")->fetchColumn();
 // vault_return ⇒ cash leaves the vault back to a user, so it subtracts from the balance.
-$vaultBalance      = $totalRemitted - $totalDistrib + $totalReturned - $totalUserReturned;
+$vaultBalance      = money_sub(money_add(money_sub($totalRemitted, $totalDistrib), $totalReturned), $totalUserReturned);
 
 // Chart: monthly remittances per user for selected year
 $cr = $pdo->prepare("
@@ -677,8 +683,8 @@ include '../includes/header.php';
             <td class="fw-700">Total</td>
             <td></td>
             <td class="text-end fw-700"><?= money($totalDistrib) ?></td>
-            <td class="text-end fw-700" style="color:var(--warning)"><?= $totalReturned > 0 ? money($totalReturned) : '—' ?></td>
-            <td class="text-end fw-700"><?= money($totalDistrib - $totalReturned) ?></td>
+            <td class="text-end fw-700" style="color:var(--warning)"><?= money_is_pos($totalReturned) ? money($totalReturned) : '—' ?></td>
+            <td class="text-end fw-700"><?= money(money_sub($totalDistrib, $totalReturned)) ?></td>
           </tr>
         </tfoot>
       </table>

@@ -30,17 +30,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $pdo->prepare("UPDATE rental_units SET unit_name=?,unit_type_id=?,description=?,floor_area=?,monthly_rate=?,due_day=?,status=? WHERE id=?")
                 ->execute([$name,$typeId,$desc,$area,$rate,$dueDay,$status,$id]);
 
+            // Rate-history invariant: past months must keep the rate they were
+            // billed at. So if the latest history row is in the past, we APPEND
+            // a new row effective today; we only UPDATE in place when the latest
+            // row is dated today (correcting a same-day typo) or in the future
+            // (adjusting a scheduled increase).
             if ($rate !== $oldRate) {
-                $latestHist = $pdo->prepare("SELECT id FROM unit_rate_history WHERE unit_id=? ORDER BY effective_date DESC, created_at DESC LIMIT 1");
+                $latestHist = $pdo->prepare("SELECT id, effective_date FROM unit_rate_history WHERE unit_id=? ORDER BY effective_date DESC, created_at DESC LIMIT 1");
                 $latestHist->execute([$id]);
-                $histId = $latestHist->fetchColumn();
-                if ($histId !== false) {
-                    $pdo->prepare("UPDATE unit_rate_history SET monthly_rate=? WHERE id=?")->execute([$rate, $histId]);
+                $latest = $latestHist->fetch();
+                if ($latest === false) {
+                    // No history yet — seed an initial entry effective today.
+                    $pdo->prepare("INSERT INTO unit_rate_history (unit_id,monthly_rate,effective_date,notes,created_by) VALUES (?,?,CURDATE(),'Initial rate',?)")
+                        ->execute([$id, $rate, $_SESSION['user']['id']]);
+                } elseif ($latest['effective_date'] >= date('Y-m-d')) {
+                    $pdo->prepare("UPDATE unit_rate_history SET monthly_rate=? WHERE id=?")->execute([$rate, $latest['id']]);
                 } else {
-                    // No history exists yet — seed an initial entry with the corrected rate
-                    $pdo->prepare("INSERT INTO unit_rate_history (unit_id,monthly_rate,effective_date,notes,created_by) VALUES (?,?,CURDATE(),'Initial rate (corrected)',?)")
+                    $pdo->prepare("INSERT INTO unit_rate_history (unit_id,monthly_rate,effective_date,notes,created_by) VALUES (?,?,CURDATE(),'Rate change',?)")
                         ->execute([$id, $rate, $_SESSION['user']['id']]);
                 }
+                logActivity($pdo,'UPDATE_UNIT_RATE','Units',"Unit #$id rate changed " . money($oldRate) . " → " . money($rate));
             }
 
             logActivity($pdo,'UPDATE_UNIT','Units',"Updated unit #$id ($name)");
@@ -269,9 +278,9 @@ include '../includes/header.php';
             <td><span class="badge badge-<?= $u['status'] ?>"><?= ucfirst($u['status']) ?></span></td>
             <td class="truncate" style="max-width:180px"><?= clean($u['description'] ?? '—') ?></td>
             <td class="text-center">
-              <button class="btn-icon" title="Rate History" onclick="openRateHistory(<?= $u['id'] ?>, '<?= clean(addslashes($u['unit_name'])) ?>', <?= (float)$u['monthly_rate'] ?>)"><i class="fa-solid fa-chart-line fa-xs"></i></button>
+              <button class="btn-icon" title="Rate History" onclick="openRateHistory(<?= $u['id'] ?>, '<?= clean($u['unit_name']) ?>', <?= (float)$u['monthly_rate'] ?>)"><i class="fa-solid fa-chart-line fa-xs"></i></button>
               <button class="btn-icon" title="Edit" onclick="editUnit(<?= $u['id'] ?>)"><i class="fa-solid fa-pen fa-xs"></i></button>
-              <button class="btn-icon danger" title="Delete" onclick="deleteUnit(<?= $u['id'] ?>, '<?= clean(addslashes($u['unit_name'])) ?>')"><i class="fa-solid fa-trash fa-xs"></i></button>
+              <button class="btn-icon danger" title="Delete" onclick="deleteUnit(<?= $u['id'] ?>, '<?= clean($u['unit_name']) ?>')"><i class="fa-solid fa-trash fa-xs"></i></button>
             </td>
           </tr>
           <?php endforeach; ?>
@@ -298,7 +307,7 @@ include '../includes/header.php';
             <td><?= clean($t['description'] ?? '—') ?></td>
             <td class="text-center">
               <button class="btn-icon" title="Edit" onclick="editType(<?= $t['id'] ?>)"><i class="fa-solid fa-pen fa-xs"></i></button>
-              <button class="btn-icon danger" title="Delete" onclick="deleteType(<?= $t['id'] ?>, '<?= clean(addslashes($t['name'])) ?>')"><i class="fa-solid fa-trash fa-xs"></i></button>
+              <button class="btn-icon danger" title="Delete" onclick="deleteType(<?= $t['id'] ?>, '<?= clean($t['name']) ?>')"><i class="fa-solid fa-trash fa-xs"></i></button>
             </td>
           </tr>
           <?php endforeach; ?>
@@ -327,7 +336,7 @@ include '../includes/header.php';
             <td><span class="badge badge-<?= $s['is_active']?'active':'inactive' ?>"><?= $s['is_active']?'Yes':'No' ?></span></td>
             <td class="text-center">
               <button class="btn-icon" title="Edit" onclick="editService(<?= $s['id'] ?>)"><i class="fa-solid fa-pen fa-xs"></i></button>
-              <button class="btn-icon danger" title="Delete" onclick="deleteService(<?= $s['id'] ?>, '<?= clean(addslashes($s['name'])) ?>')"><i class="fa-solid fa-trash fa-xs"></i></button>
+              <button class="btn-icon danger" title="Delete" onclick="deleteService(<?= $s['id'] ?>, '<?= clean($s['name']) ?>')"><i class="fa-solid fa-trash fa-xs"></i></button>
             </td>
           </tr>
           <?php endforeach; ?>

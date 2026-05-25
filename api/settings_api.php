@@ -250,13 +250,24 @@ switch ($action) {
              email=VALUES(email), phone=VALUES(phone), phone2=VALUES(phone2),
              address=VALUES(address), status=VALUES(status), updated_at=NOW()"
         );
+        // Whitelist role/status so an attacker can't elevate accounts via a crafted
+        // JSON. The placeholder hash is intentionally invalid — admins must reset
+        // each imported user's password through the Accounts page.
+        $allowedRoles    = ['admin', 'accountant', 'staff'];
+        $allowedStatuses = ['active', 'inactive'];
+        $placeholderHash = password_hash(bin2hex(random_bytes(32)), PASSWORD_BCRYPT);
         $count = 0;
         foreach ($data['users'] as $u) {
+            $username = trim((string)($u['username'] ?? ''));
+            $fullName = trim((string)($u['full_name'] ?? ''));
+            if ($username === '' || $fullName === '') continue;
+            $role   = in_array($u['role']   ?? '', $allowedRoles,    true) ? $u['role']   : 'staff';
+            $status = in_array($u['status'] ?? '', $allowedStatuses, true) ? $u['status'] : 'active';
             $stmt->execute([
-                $u['username'] ?? '', $u['full_name'] ?? '', $u['role'] ?? 'staff',
+                $username, $fullName, $role,
                 $u['email'] ?? null, $u['phone'] ?? null, $u['phone2'] ?? null,
-                $u['address'] ?? null, $u['status'] ?? 'active',
-                '!!imported!!'
+                $u['address'] ?? null, $status,
+                $placeholderHash,
             ]);
             $count++;
         }
@@ -289,10 +300,32 @@ switch ($action) {
 
     // ── Factory Reset ─────────────────────────────────────────
     case 'factory_reset': {
+        // Server-side confirmation: the client typed RESET, but a settings-unlocked
+        // admin could otherwise wipe data with a single curl call. Require the
+        // exact phrase to land in POST before we touch anything.
+        if (trim($_POST['confirm'] ?? '') !== 'RESET') {
+            jsonErr('Confirmation phrase missing. Send confirm=RESET to proceed.');
+        }
+        // Truncate every table that holds operational/transactional rows.
+        // Tables previously omitted (unit_charges, unit_rate_history, refunds,
+        // dividend_*) left orphan rows pointing at FK targets we already wiped.
         $tables = [
-            'payments', 'cash_transactions', 'expenses', 'tenant_docs',
-            'tenants', 'rental_units', 'unit_types', 'service_types',
-            'expense_categories', 'system_logs',
+            'refunds',
+            'cash_transactions',
+            'unit_charges',
+            'unit_rate_history',
+            'payments',
+            'expenses',
+            'tenant_docs',
+            'tenants',
+            'rental_units',
+            'unit_types',
+            'service_types',
+            'expense_categories',
+            'dividend_returns',
+            'dividend_distributions',
+            'dividend_recipients',
+            'system_logs',
         ];
         $pdo->exec('SET FOREIGN_KEY_CHECKS=0');
         foreach ($tables as $t) {

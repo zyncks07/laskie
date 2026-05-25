@@ -36,16 +36,20 @@ if ($action === 'save_payment') {
         $chk = $pdo->prepare("SELECT * FROM payments WHERE id=?");
         $chk->execute([$id]);
         $chkRow = $chk->fetch();
-        if ($chkRow && $chkRow['deleted_at'])          jsonErr('Cannot edit a deleted payment. Restore it from the trash first.');
-        if ($chkRow && $chkRow['status'] === 'voided') jsonErr('Cannot edit a voided payment. Restore it first.');
-        $before = $chkRow ? array_intersect_key($chkRow, array_flip(['unit_id','tenant_id','payment_type','service_type_id','amount','payment_date','due_date','period_month','period_year','notes'])) : [];
+        if (!$chkRow)                          jsonErr('Payment not found.');
+        if ($chkRow['deleted_at'])             jsonErr('Cannot edit a deleted payment. Restore it from the trash first.');
+        if ($chkRow['status'] === 'voided')    jsonErr('Cannot edit a voided payment. Restore it first.');
+        $before = array_intersect_key($chkRow, array_flip(['unit_id','tenant_id','payment_type','service_type_id','amount','payment_date','due_date','period_month','period_year','notes']));
 
         $pdo->beginTransaction();
         try {
             $pdo->prepare("UPDATE payments SET unit_id=?,tenant_id=?,payment_type=?,service_type_id=?,amount=?,payment_date=?,due_date=?,period_month=?,period_year=?,received_by=?,notes=? WHERE id=?")
                 ->execute([$unitId,$tenantId,$type,$serviceId,$amount,$payDate,$dueDate,$periodMonth,$periodYear,$_SESSION['user']['id'],$notes,$id]);
 
-            $pdo->prepare("UPDATE cash_transactions SET amount=?,transaction_date=? WHERE reference_payment_id=?")
+            // Only sync the 'received' cash row that mirrors this payment. Refunds
+            // also store reference_payment_id, and we must not overwrite their
+            // amount/date with the payment's new values.
+            $pdo->prepare("UPDATE cash_transactions SET amount=?,transaction_date=? WHERE reference_payment_id=? AND transaction_type='received'")
                 ->execute([$amount, $payDate, $id]);
 
             if ($type === 'service') {
@@ -206,9 +210,14 @@ if ($action === 'void_payment') {
         $pdo->prepare("UPDATE payments SET status='voided' WHERE id=?")->execute([$id]);
         // Remove the cash entry so the void is immediately reflected in all balance calculations.
         $pdo->prepare("DELETE FROM cash_transactions WHERE reference_payment_id=? AND transaction_type='received'")->execute([$id]);
-        // Release the linked service charge so it reappears as outstanding.
         if ($p['payment_type'] === 'service') {
-            $pdo->prepare("UPDATE unit_charges SET payment_id=NULL WHERE payment_id=?")->execute([$id]);
+            // Pre-billed charges existed before the payment — release the link so
+            // they reappear as outstanding. Auto-collected charges were created
+            // by save_payment and have no pre-existing counterpart, so they must
+            // be deleted entirely; otherwise they show up as phantom "Unpaid"
+            // entries that inflate outstanding balances.
+            $pdo->prepare("UPDATE unit_charges SET payment_id=NULL WHERE payment_id=? AND source='pre_billed'")->execute([$id]);
+            $pdo->prepare("DELETE FROM unit_charges WHERE payment_id=? AND source='auto_collected'")->execute([$id]);
         }
         logActivity($pdo,'VOID_PAYMENT','Payments',"Voided payment #{$id} ({$p['invoice_no']}) ₱{$p['amount']}");
         $pdo->commit();
@@ -235,6 +244,25 @@ if ($action === 'restore_payment') {
         // Re-create the cash entry that was removed when this payment was voided.
         $pdo->prepare("INSERT INTO cash_transactions (user_id,transaction_type,amount,reference_payment_id,notes,transaction_date) VALUES (?,?,?,?,?,?)")
             ->execute([$p['received_by'],'received',$p['amount'],$id,"Payment received: {$p['invoice_no']}",$p['payment_date']]);
+        // Re-link the unit_charges row the same way save_payment did. Prefer an
+        // existing pre_billed outstanding charge for the same period; if none,
+        // recreate the auto_collected row that void_payment deleted.
+        if ($p['payment_type'] === 'service') {
+            $look = $pdo->prepare("SELECT id FROM unit_charges WHERE unit_id=? AND service_type_id=? AND period_month=? AND period_year=? AND payment_id IS NULL AND source='pre_billed' LIMIT 1");
+            $look->execute([$p['unit_id'], $p['service_type_id'], $p['period_month'], $p['period_year']]);
+            $existChargeId = $look->fetchColumn();
+            if ($existChargeId) {
+                $pdo->prepare("UPDATE unit_charges SET payment_id=?, amount=?, charge_date=? WHERE id=?")
+                    ->execute([$id, $p['amount'], $p['payment_date'], $existChargeId]);
+            } else {
+                $stRow = $pdo->prepare("SELECT name FROM service_types WHERE id=?");
+                $stRow->execute([$p['service_type_id']]);
+                $stName  = $stRow->fetchColumn() ?: 'Service';
+                $chgDesc = $p['notes'] ?: $stName;
+                $pdo->prepare("INSERT INTO unit_charges (unit_id,tenant_id,service_type_id,amount,description,charge_date,period_month,period_year,payment_id,source,created_by) VALUES (?,?,?,?,?,?,?,?,?,'auto_collected',?)")
+                    ->execute([$p['unit_id'], $p['tenant_id'], $p['service_type_id'], $p['amount'], $chgDesc, $p['payment_date'], $p['period_month'], $p['period_year'], $id, $p['received_by']]);
+            }
+        }
         logActivity($pdo,'RESTORE_PAYMENT','Payments',"Restored voided payment #{$id} ({$p['invoice_no']}) ₱{$p['amount']}");
         $pdo->commit();
     } catch (Throwable $e) {

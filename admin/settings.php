@@ -553,7 +553,9 @@ function doFactoryReset() {
   btn.disabled = true;
   btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Resetting...';
 
-  var fd = new FormData(); fd.append('action', 'factory_reset');
+  var fd = new FormData();
+  fd.append('action', 'factory_reset');
+  fd.append('confirm', 'RESET');
   fetch('../api/settings_api.php', {method:'POST', body:fd, credentials:'same-origin', headers: window.csrfHeaders()})
     .then(function(r) { return r.json(); })
     .then(function(res) {

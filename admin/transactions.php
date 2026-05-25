@@ -1,6 +1,4 @@
 <?php
-error_reporting(0);
-ini_set("display_errors", 0);
 session_start();
 require_once '../config/db.php';
 require_once '../config/functions.php';
@@ -139,7 +137,7 @@ if (!$showTrash && ((!$typeFilter || $typeFilter === 'vault_return') && !$unitFi
 }
 
 usort($transactions, fn($a, $b) => strcmp($b['tx_date'], $a['tx_date']));
-$grandTotal = array_sum(array_column($transactions, 'amount'));
+$grandTotal = money_sum(array_column($transactions, 'amount'));
 
 logActivity($pdo, 'VIEW_TRANSACTIONS', 'Transactions', "Viewed transaction manager ({$fromDate} to {$toDate})");
 include '../includes/header.php';
@@ -280,7 +278,7 @@ function statusBadge(string $type, string $status, ?string $deletedAt = null): s
             'vault_return' => 'var(--info)',
             default        => 'var(--success)',
         };
-        $refEsc     = addslashes(clean($tx['reference'] ?? ''));
+        $refEsc     = clean($tx['reference'] ?? '');
 
         // Navigate link to source page
         $navUrl = match($tx['tx_type']) {

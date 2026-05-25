@@ -40,12 +40,16 @@ foreach ($occupants as $occ) {
 if (!$tenant && !empty($occupants)) $tenant = end($occupants);
 
 // ── Fetch Payments ────────────────────────────────────────────
+// Voided and soft-deleted payments must not appear as credits on a tenant
+// statement — they did not change the actual amount paid. (Refunds are
+// pulled separately as offsetting debits below.)
 $q = $pdo->prepare("
     SELECT p.*, st.name AS service_name, u.full_name AS cashier_name
     FROM   payments p
     LEFT JOIN service_types st ON p.service_type_id = st.id
     LEFT JOIN users u          ON p.received_by = u.id
     WHERE  p.unit_id = ? AND p.payment_date BETWEEN ? AND ?
+      AND  p.deleted_at IS NULL AND p.status != 'voided'
     ORDER  BY p.payment_date ASC, p.created_at ASC
 ");
 $q->execute([$unitId, $dateFrom, $dateTo]);
@@ -69,12 +73,20 @@ if ($payments) {
 }
 
 // ── Fetch Service Charges ─────────────────────────────────────
+// A charge is treated as outstanding when payment_id is NULL OR the linked
+// payment has been voided/soft-deleted. The LEFT JOIN with the deleted/voided
+// filter forces such rows to have p.id IS NULL, which the ledger uses below
+// to label them "(Unpaid)" so they stay as debits with no offsetting credit.
 $pdfServiceCharges = [];
 $sq = $pdo->prepare("
-    SELECT uc.*, st.name as service_name, u.full_name as billed_by_name
+    SELECT uc.*, st.name as service_name, u.full_name as billed_by_name,
+           (uc.payment_id IS NULL OR p.id IS NULL) AS is_outstanding
     FROM unit_charges uc
     LEFT JOIN service_types st ON uc.service_type_id = st.id
     LEFT JOIN users u ON uc.created_by = u.id
+    LEFT JOIN payments p ON p.id = uc.payment_id
+                        AND p.deleted_at IS NULL
+                        AND p.status != 'voided'
     WHERE uc.unit_id = ? AND uc.charge_date BETWEEN ? AND ?
     ORDER BY uc.charge_date ASC
 ");
@@ -135,7 +147,7 @@ foreach ($pdfRefunds as $r) {
 foreach ($pdfServiceCharges as $c) {
     $period = date('F Y', mktime(0,0,0,(int)$c['period_month'],1,(int)$c['period_year']));
     $desc   = ($c['service_name'] ?? $c['description']) . ' — ' . $period;
-    if ($c['payment_id'] === null) $desc .= ' (Unpaid)';
+    if (!empty($c['is_outstanding'])) $desc .= ' (Unpaid)';
     $ledger[] = [
         'date'        => $c['charge_date'],
         'description' => $desc,

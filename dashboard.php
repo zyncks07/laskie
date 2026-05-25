@@ -45,9 +45,10 @@ $catExp->execute([$yrStart, $yrEnd]);
 $catExpData = $catExp->fetchAll();
 
 // ─── Totals ───────────────────────────────────────────────────
-$totalRev = array_sum($unitRevenue);
-$totalExp = array_sum($unitExpenses);
-$totalNet = $totalRev - $totalExp;
+// Sum in cents-based helpers to avoid float drift across many units.
+$totalRev = money_sum(array_values($unitRevenue));
+$totalExp = money_sum(array_values($unitExpenses));
+$totalNet = money_sub($totalRev, $totalExp);
 $totalUnits   = count($units);
 $occupiedUnits = count(array_filter($units, fn($u) => $u['status'] === 'occupied'));
 
@@ -244,7 +245,11 @@ include 'includes/header.php';
               $expected     = prorateFirstMonth($rate, (int)$u['due_day'], $u['contract_start'] ?? null, $curMonth, $curYear);
               $curPaid      = $u['cur_paid'];
               $curMonthPaid = money_is_pos($expected) && money_gte($curPaid, $expected);
-              $isLate       = !$curMonthPaid && money_is_pos($expected) && $today > ((int)$u['due_day'] + 10);
+              // 10-day grace period — clamped to month-end so units with
+               // due_day=30 in February (or any short month) still trigger.
+              $daysInCurMo  = (int)date('t', mktime(0,0,0,$curMonth,1,$curYear));
+              $graceDay     = min((int)$u['due_day'] + 10, $daysInCurMo);
+              $isLate       = !$curMonthPaid && money_is_pos($expected) && $today > $graceDay;
               $amountDue    = money_max('0.00', money_sub($expected, $curPaid));
           ?>
             <tr>
