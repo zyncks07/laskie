@@ -535,10 +535,17 @@ if ($action === 'process_refund') {
         $newStatus = money_gte($totalRefundedAfter, $pay['amount']) ? 'refunded' : 'partially_refunded';
         $pdo->prepare("UPDATE payments SET status=? WHERE id=?")->execute([$newStatus, $paymentId]);
 
+        // Attribute the cash outflow to the ORIGINAL cashier who's holding the
+        // collected cash — they're the one physically returning it to the
+        // tenant, so it's their cash_on_hand that should drop. Falls back to
+        // the editing admin only if the original received_by is gone (FK
+        // would have SET NULL on user delete). refunds.refunded_by still
+        // captures who APPROVED the refund (the admin).
+        $cashUserId = !empty($pay['received_by']) ? (int)$pay['received_by'] : (int)$_SESSION['user']['id'];
         $pdo->prepare("INSERT INTO cash_transactions (user_id,transaction_type,amount,reference_payment_id,notes,transaction_date) VALUES (?,?,?,?,?,?)")
-            ->execute([$_SESSION['user']['id'], 'refunded', $refundAmount, $paymentId, "Refund: {$pay['invoice_no']} — $reason", date('Y-m-d')]);
+            ->execute([$cashUserId, 'refunded', $refundAmount, $paymentId, "Refund: {$pay['invoice_no']} — $reason", date('Y-m-d')]);
 
-        logActivity($pdo,'PROCESS_REFUND','Payments',"Refunded " . money($refundAmount) . " for payment #{$paymentId} ({$pay['invoice_no']}): $reason");
+        logActivity($pdo,'PROCESS_REFUND','Payments',"Refunded " . money($refundAmount) . " for payment #{$paymentId} ({$pay['invoice_no']}): $reason (cash debited from user #$cashUserId)");
         $pdo->commit();
     } catch (Throwable $e) {
         if ($pdo->inTransaction()) $pdo->rollBack();
