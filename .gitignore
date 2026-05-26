@@ -2,6 +2,7 @@
 uploads/*
 !uploads/.htaccess
 config/db.php
+.env
 .deploy_credentials
 *.log
 vendor/

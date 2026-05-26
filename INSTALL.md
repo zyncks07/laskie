@@ -76,7 +76,7 @@ EXIT;
 ```
 
 > **Change `StrongPassword2024!` to your own strong password.**  
-> Use the same password in `config/db.php`.
+> Set the same password in `/var/www/laskie/.env` (see Step 7).
 
 ---
 
@@ -229,21 +229,30 @@ usermod -aG www-data bulik
 
 ---
 
-## STEP 7 — Update Database Config
+## STEP 7 — Configure Database Credentials
 
-Edit `config/db.php` on the server (or before uploading):
-
-```php
-define('DB_HOST', 'localhost');
-define('DB_NAME', 'laskie_rental');
-define('DB_USER', 'laskie_db_user');     // match Step 2
-define('DB_PASS', 'StrongPassword2024!'); // match Step 2
-```
+DB credentials live in `/var/www/laskie/.env` (chmod 600, owned by `www-data`).
+`config/db.php` itself is now static — it ships with the repo and just calls
+`config/env.php` to read `.env`.
 
 ```bash
-# Edit directly on server
-nano /var/www/laskie/config/db.php
+# Copy the template and fill in the password from Step 2:
+cd /var/www/laskie
+sudo cp .env.example .env
+sudo nano .env
+# Set DB_PASS=StrongPassword2024!  (or whatever you used in Step 2)
+
+# Lock it down — only the web user can read:
+sudo chown www-data:www-data .env
+sudo chmod 600 .env
 ```
+
+`.env` is gitignored, blocked by `.htaccess`, and refused by the dotfile rule
+under Apache 2.4 by default. The file never reaches the browser.
+
+> If you're upgrading from a pre-`.env` install, the old `config/db.php` with
+> inline `define()`s still works — `env.php` only fills in constants that
+> aren't already set. Migrating at your leisure is fine.
 
 ---
 
@@ -438,8 +447,12 @@ FROM users WHERE username='your_username';
 │   ├── expenses_api.php   ← Expenses API
 │   └── cash_api.php       ← Cash on hand API
 │
+├── .env                   ← DB credentials (chmod 600, gitignored)
+├── .env.example           ← Template for .env
 ├── config/
-│   ├── db.php             ← Database credentials
+│   ├── env.php            ← .env loader → defines DB_* constants
+│   ├── db.php             ← PDO bootstrap (calls env.php, then connects)
+│   ├── db.php.example     ← Template for config/db.php
 │   └── functions.php      ← Core helpers
 │
 ├── includes/
@@ -464,7 +477,7 @@ FROM users WHERE username='your_username';
 | Problem | Fix |
 |---------|-----|
 | White/blank page | Check Apache error log: `tail -f /var/log/apache2/laskie_error.log` |
-| "Database connection failed" | Check `config/db.php` credentials and MySQL is running: `systemctl status mysql` |
+| "Database connection failed" | Check `/var/www/laskie/.env` credentials (or `config/db.php` fallback) and MySQL is running: `systemctl status mysql` |
 | Upload fails | Check `uploads/` is writable: `chmod -R 775 /var/www/laskie/uploads && chown -R www-data:www-data /var/www/laskie/uploads` |
 | 403 Forbidden | Verify `AllowOverride All` in VirtualHost and `mod_rewrite` is enabled: `a2enmod rewrite` |
 | Login not working | Confirm `install.sql` was imported — check `users` table exists |

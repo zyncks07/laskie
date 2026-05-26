@@ -1,0 +1,47 @@
+<?php
+// config/db.php — template
+//
+// This is the canonical content of config/db.php for new deploys. deploy.sh
+// drops a copy of THIS file into config/db.php and writes the matching
+// credentials to /var/www/laskie/.env (chmod 600, owned by www-data).
+//
+// Legacy installs that still have a hand-edited config/db.php with hardcoded
+// define()s for DB_HOST / DB_NAME / DB_USER / DB_PASS will continue to work
+// because env.php only define()s constants that aren't already defined.
+
+require_once __DIR__ . '/env.php';
+
+// Defaults — only used when neither .env nor a prior define() set the value.
+// Production values should always come from .env.
+if (!defined('DB_HOST'))    define('DB_HOST',    'localhost');
+if (!defined('DB_NAME'))    define('DB_NAME',    'laskie_rental');
+if (!defined('DB_USER'))    define('DB_USER',    'laskie_db_user');
+if (!defined('DB_PASS'))    define('DB_PASS',    '');
+if (!defined('DB_CHARSET')) define('DB_CHARSET', 'utf8mb4');
+
+$dsn = "mysql:host=" . DB_HOST . ";dbname=" . DB_NAME . ";charset=" . DB_CHARSET . ";connect_timeout=5";
+$options = [
+    PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
+    PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+    PDO::ATTR_EMULATE_PREPARES   => false,
+];
+
+try {
+    $pdo = new PDO($dsn, DB_USER, DB_PASS, $options);
+    // Set session timezone from settings table (falling back to Asia/Manila)
+    try {
+        $tzName = $pdo->query("SELECT setting_value FROM settings WHERE setting_key='db_timezone'")->fetchColumn();
+        $tzName = ($tzName && in_array($tzName, DateTimeZone::listIdentifiers())) ? $tzName : 'Asia/Manila';
+    } catch (Exception $_e) {
+        $tzName = 'Asia/Manila';
+    }
+    date_default_timezone_set($tzName);
+    $pdo->exec("SET time_zone = '" . (new DateTime('now', new DateTimeZone($tzName)))->format('P') . "'");
+} catch (PDOException $e) {
+    if (defined('JSON_RESPONSE') && JSON_RESPONSE) {
+        header('Content-Type: application/json');
+        echo json_encode(['success' => false, 'error' => 'Database connection failed. Check config/db.php and /var/www/laskie/.env']);
+        exit;
+    }
+    die('Database connection failed. Check config/db.php and /var/www/laskie/.env');
+}
