@@ -274,7 +274,7 @@ function generateInvoiceNo(PDO $pdo): string {
 //   IMAGE_COMPRESSION_MAX_DIM  — long-edge cap in pixels (default 2000)
 //   IMAGE_COMPRESSION_QUALITY  — JPEG/WebP quality 0–100 (default 78)
 if (!defined('IMAGE_COMPRESSION_MAX_DIM')) define('IMAGE_COMPRESSION_MAX_DIM', 1600);
-if (!defined('IMAGE_COMPRESSION_QUALITY')) define('IMAGE_COMPRESSION_QUALITY', 72);
+if (!defined('IMAGE_COMPRESSION_QUALITY')) define('IMAGE_COMPRESSION_QUALITY', 62);
 
 function compressImage(string $absPath, array $opts = []): array {
     $maxDim    = (int)($opts['max_dimension'] ?? IMAGE_COMPRESSION_MAX_DIM);
