@@ -28,15 +28,17 @@ foreach ($units as $u) {
 }
 
 // ─── Monthly totals ───────────────────────────────────────────
+// Kept as canonical "0.00" strings so 12-month accumulation in the tfoot
+// matches the year stat cards exactly (no sub-cent float drift).
 $monthlyRev = []; $monthlyExp = [];
 $revStmt = $pdo->prepare("SELECT COALESCE(SUM(amount),0) FROM payments WHERE payment_date >= ? AND payment_date < ? AND deleted_at IS NULL AND status != 'voided'");
 $expStmt = $pdo->prepare("SELECT COALESCE(SUM(amount),0) FROM expenses WHERE expense_date >= ? AND expense_date < ? AND deleted_at IS NULL");
 for ($m = 1; $m <= 12; $m++) {
     [$mStart, $mEnd] = monthRange($m, $selectedYear);
     $revStmt->execute([$mStart, $mEnd]);
-    $monthlyRev[$m] = (float)$revStmt->fetchColumn();
+    $monthlyRev[$m] = (string)$revStmt->fetchColumn();
     $expStmt->execute([$mStart, $mEnd]);
-    $monthlyExp[$m] = (float)$expStmt->fetchColumn();
+    $monthlyExp[$m] = (string)$expStmt->fetchColumn();
 }
 
 // ─── Expense by category ─────────────────────────────────────
@@ -52,18 +54,26 @@ $totalNet = money_sub($totalRev, $totalExp);
 $totalUnits   = count($units);
 $occupiedUnits = count(array_filter($units, fn($u) => $u['status'] === 'occupied'));
 
+// Orphan payments/expenses: FK ON DELETE SET NULL means rows whose unit
+// was later deleted come back with unit_id=NULL. PHP keys those as ''.
+// They're included in $totalRev/$totalExp above; the per-unit table
+// also needs to surface them so on-page totals reconcile.
+$orphanRev = (string)($unitRevenue[''] ?? '0.00');
+$orphanExp = (string)($unitExpenses[''] ?? '0.00');
+
 // ─── Current month stats ─────────────────────────────────────
 $curMonth = (int)date('n');
 $curYear  = (int)date('Y');
-$cmRev = $cmExp = 0.0;
+$cmRev = '0.00';
+$cmExp = '0.00';
 if ($selectedYear === $curYear) {
     [$cmStart, $cmEnd] = monthRange($curMonth, $curYear);
     $s = $pdo->prepare("SELECT COALESCE(SUM(amount),0) FROM payments WHERE payment_date >= ? AND payment_date < ? AND deleted_at IS NULL AND status != 'voided'");
-    $s->execute([$cmStart, $cmEnd]); $cmRev = (float)$s->fetchColumn();
+    $s->execute([$cmStart, $cmEnd]); $cmRev = (string)$s->fetchColumn();
     $s = $pdo->prepare("SELECT COALESCE(SUM(amount),0) FROM expenses WHERE expense_date >= ? AND expense_date < ? AND deleted_at IS NULL");
-    $s->execute([$cmStart, $cmEnd]); $cmExp = (float)$s->fetchColumn();
+    $s->execute([$cmStart, $cmEnd]); $cmExp = (string)$s->fetchColumn();
 }
-$cmNet = $cmRev - $cmExp;
+$cmNet = money_sub($cmRev, $cmExp);
 
 // ─── Available years ──────────────────────────────────────────
 $years = $pdo->query("SELECT DISTINCT YEAR(payment_date) y FROM payments WHERE deleted_at IS NULL AND status != 'voided' UNION SELECT DISTINCT YEAR(expense_date) FROM expenses WHERE deleted_at IS NULL ORDER BY y DESC")->fetchAll(PDO::FETCH_COLUMN);
@@ -182,7 +192,7 @@ include 'includes/header.php';
       <div class="stat-icon green"><i class="fa-solid fa-chart-line"></i></div>
       <div class="stat-body">
         <div class="stat-label">Net Income</div>
-        <div class="stat-value" style="color:<?= $totalNet>=0?'var(--success)':'var(--danger)' ?>"><?= money($totalNet) ?></div>
+        <div class="stat-value" style="color:<?= money_gte($totalNet, '0.00') ? 'var(--success)' : 'var(--danger)' ?>"><?= money($totalNet) ?></div>
         <div class="stat-sub"><?= $selectedYear ?></div>
       </div>
     </div>
@@ -222,7 +232,7 @@ include 'includes/header.php';
           </div>
           <div class="col-4">
             <div class="text-muted" style="font-size:11px">Net Income</div>
-            <div class="fw-bold" style="font-size:14px;color:<?= $cmNet>=0?'var(--success)':'var(--danger)' ?>"><?= money($cmNet) ?></div>
+            <div class="fw-bold" style="font-size:14px;color:<?= money_gte($cmNet, '0.00') ? 'var(--success)' : 'var(--danger)' ?>"><?= money($cmNet) ?></div>
           </div>
         </div>
       </div>
@@ -234,9 +244,12 @@ include 'includes/header.php';
       <div class="card-header">
         <span class="card-header-title"><i class="fa-solid fa-building me-1"></i><?= date('F Y') ?> — Unit Status</span>
       </div>
-      <div class="unit-status-scroll" style="overflow-y:auto;height:680px">
-        <table class="table db-tbl mb-0">
-          <thead style="position:sticky;top:0;background:#f9fafb;z-index:1">
+      <div class="card-body py-2">
+        <!-- data-order on Status column = numeric weight so DataTables can
+             group "unpaid" rows ahead of "paid" / "vacant" when sorted asc.
+             0 = late (most urgent), 1 = unpaid not late, 2 = paid, 3 = vacant -->
+        <table class="table db-tbl mb-0" id="unitStatusTable" style="width:100%">
+          <thead>
             <tr><th>Unit</th><th>Tenant</th><th>Status</th></tr>
           </thead>
           <tbody>
@@ -245,7 +258,7 @@ include 'includes/header.php';
             <tr>
               <td class="fw-600"><?= clean($u['unit_name']) ?></td>
               <td class="text-muted">—</td>
-              <td><span class="badge" style="background:#e2e8f0;color:#64748b;font-size:10px">Vacant</span></td>
+              <td data-order="3"><span class="badge" style="background:#e2e8f0;color:#64748b;font-size:10px">Vacant</span></td>
             </tr>
           <?php else:
               $rate         = getRateForMonth($pdo, (int)$u['id'], (float)$u['monthly_rate'], $curMonth, $curYear);
@@ -253,16 +266,17 @@ include 'includes/header.php';
               $curPaid      = $u['cur_paid'];
               $curMonthPaid = money_is_pos($expected) && money_gte($curPaid, $expected);
               // 10-day grace period — clamped to month-end so units with
-               // due_day=30 in February (or any short month) still trigger.
+              // due_day=30 in February (or any short month) still trigger.
               $daysInCurMo  = (int)date('t', mktime(0,0,0,$curMonth,1,$curYear));
               $graceDay     = min((int)$u['due_day'] + 10, $daysInCurMo);
               $isLate       = !$curMonthPaid && money_is_pos($expected) && $today > $graceDay;
               $amountDue    = money_max('0.00', money_sub($expected, $curPaid));
+              $sortKey      = $curMonthPaid ? 2 : ($isLate ? 0 : 1);
           ?>
             <tr>
               <td class="fw-600"><?= clean($u['unit_name']) ?></td>
               <td style="max-width:100px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><?= clean($u['tenant_name'] ?? '—') ?></td>
-              <td>
+              <td data-order="<?= $sortKey ?>">
                 <?php if ($curMonthPaid): ?>
                   <span style="color:var(--success);font-weight:600;font-size:12px"><i class="fa-solid fa-circle-check me-1"></i>Paid</span>
                 <?php else: ?>
@@ -411,35 +425,37 @@ include 'includes/header.php';
         <button class="btn btn-sm btn-outline-secondary no-print" onclick="window.print()"><i class="fa-solid fa-print me-1"></i>Print</button>
       </div>
       <div class="table-responsive">
-        <table class="table db-tbl">
+        <table class="table db-tbl" id="monthlySummaryTable">
           <thead><tr>
             <th>Month</th><th class="text-end">Revenue</th><th class="text-end">Expenses</th><th class="text-end">Net</th>
           </tr></thead>
           <tbody>
           <?php
-          $sumRev=0; $sumExp=0;
           for($m=1;$m<=12;$m++){
-            $r=$monthlyRev[$m]; $e=$monthlyExp[$m]; $n=$r-$e;
-            $sumRev+=$r; $sumExp+=$e;
+            $r = $monthlyRev[$m];                  // canonical "0.00" string
+            $e = $monthlyExp[$m];
+            $n = money_sub($r, $e);                // cents-exact per-row net
             $isCurrent = ($selectedYear === $curYear && $m === $curMonth);
+            // data-order on month so DataTables sorts chronologically by
+            // numeric month (1..12) regardless of displayed Jan/Feb names.
           ?>
           <tr<?= $isCurrent ? ' style="background:#eff6ff;"' : '' ?>>
-            <td>
+            <td data-order="<?= $m ?>">
               <?= date('M', mktime(0,0,0,$m,1)) ?>
               <?php if ($isCurrent): ?><span class="badge ms-1" style="background:var(--primary);font-size:9px">Now</span><?php endif; ?>
             </td>
-            <td class="text-end"><?= money($r) ?></td>
-            <td class="text-end"><?= money($e) ?></td>
-            <td class="text-end fw-bold" style="color:<?= $n>=0?'var(--success)':'var(--danger)' ?>"><?= money($n) ?></td>
+            <td class="text-end" data-order="<?= (float)$r ?>"><?= money($r) ?></td>
+            <td class="text-end" data-order="<?= (float)$e ?>"><?= money($e) ?></td>
+            <td class="text-end fw-bold" data-order="<?= (float)$n ?>" style="color:<?= money_gte($n, '0.00') ? 'var(--success)' : 'var(--danger)' ?>"><?= money($n) ?></td>
           </tr>
           <?php } ?>
           </tbody>
           <tfoot><tr style="background:#f9fafb;font-weight:700">
             <td>Total</td>
-            <td class="text-end"><?= money($sumRev) ?></td>
-            <td class="text-end"><?= money($sumExp) ?></td>
-            <td class="text-end" style="color:<?= ($sumRev-$sumExp)>=0?'var(--success)':'var(--danger)' ?>"><?= money($sumRev-$sumExp) ?></td>
-          </tfoot>
+            <td class="text-end"><?= money($totalRev) ?></td>
+            <td class="text-end"><?= money($totalExp) ?></td>
+            <td class="text-end" style="color:<?= money_gte($totalNet, '0.00') ? 'var(--success)' : 'var(--danger)' ?>"><?= money($totalNet) ?></td>
+          </tr></tfoot>
         </table>
       </div>
     </div>
@@ -451,27 +467,46 @@ include 'includes/header.php';
         <span class="card-header-title"><i class="fa-solid fa-building me-1"></i>Revenue, Expenses & Net per Unit — <?= $selectedYear ?></span>
       </div>
       <div class="table-responsive">
-        <table class="table db-tbl">
+        <table class="table db-tbl" id="perUnitTable">
           <thead><tr>
             <th>Unit</th><th>Type</th><th class="text-end">Revenue</th><th class="text-end">Expenses</th><th class="text-end">Net</th>
           </tr></thead>
           <tbody>
-          <?php foreach($units as $u): $net=$unitRevenue[$u['id']]-$unitExpenses[$u['id']]; ?>
+          <?php foreach($units as $u):
+            $rev = (string)$unitRevenue[$u['id']];
+            $exp = (string)$unitExpenses[$u['id']];
+            $net = money_sub($rev, $exp);
+          ?>
           <tr>
             <td class="fw-600"><?= clean($u['unit_name']) ?></td>
             <td><span class="badge badge-staff"><?= clean($u['type_name']??'—') ?></span></td>
-            <td class="text-end"><?= money($unitRevenue[$u['id']]) ?></td>
-            <td class="text-end"><?= money($unitExpenses[$u['id']]) ?></td>
-            <td class="text-end fw-bold" style="color:<?= $net>=0?'var(--success)':'var(--danger)' ?>"><?= money($net) ?></td>
+            <td class="text-end" data-order="<?= (float)$rev ?>"><?= money($rev) ?></td>
+            <td class="text-end" data-order="<?= (float)$exp ?>"><?= money($exp) ?></td>
+            <td class="text-end fw-bold" data-order="<?= (float)$net ?>" style="color:<?= money_gte($net, '0.00') ? 'var(--success)' : 'var(--danger)' ?>"><?= money($net) ?></td>
           </tr>
           <?php endforeach; ?>
+          <?php if (money_is_pos($orphanRev) || money_is_pos($orphanExp)):
+            $orphanNet = money_sub($orphanRev, $orphanExp);
+          ?>
+          <!-- Unallocated row — sums revenue/expenses whose unit_id is NULL
+               (rows that survived a unit deletion via FK ON DELETE SET NULL).
+               Without this, $totalRev/$totalExp at the top would silently
+               disagree with the per-unit body sum below. -->
+          <tr style="background:#fef3c7">
+            <td class="fw-600" style="color:#92400e"><i class="fa-solid fa-link-slash me-1"></i>Unallocated</td>
+            <td><span class="badge bg-warning text-dark" style="font-size:10px">deleted unit</span></td>
+            <td class="text-end" data-order="<?= (float)$orphanRev ?>"><?= money($orphanRev) ?></td>
+            <td class="text-end" data-order="<?= (float)$orphanExp ?>"><?= money($orphanExp) ?></td>
+            <td class="text-end fw-bold" data-order="<?= (float)$orphanNet ?>" style="color:<?= money_gte($orphanNet, '0.00') ? 'var(--success)' : 'var(--danger)' ?>"><?= money($orphanNet) ?></td>
+          </tr>
+          <?php endif; ?>
           </tbody>
           <tfoot><tr style="background:#f9fafb;font-weight:700">
             <td colspan="2">Total</td>
             <td class="text-end"><?= money($totalRev) ?></td>
             <td class="text-end"><?= money($totalExp) ?></td>
-            <td class="text-end" style="color:<?= $totalNet>=0?'var(--success)':'var(--danger)' ?>"><?= money($totalNet) ?></td>
-          </tfoot>
+            <td class="text-end" style="color:<?= money_gte($totalNet, '0.00') ? 'var(--success)' : 'var(--danger)' ?>"><?= money($totalNet) ?></td>
+          </tr></tfoot>
         </table>
       </div>
     </div>
@@ -646,6 +681,45 @@ document.addEventListener('DOMContentLoaded', function() {
       }
     }
   });
+
+  // ── DataTables wiring for the three dashboard tables ──────────────
+  // Same dom template / language strings as my_summary.php so the look
+  // and feel matches across the app.
+  var dtDom = '<"d-flex justify-content-between align-items-center mb-2 flex-wrap gap-2"lf>rtip';
+  var dtLang = { search:'Filter:', lengthMenu:'Show _MENU_', info:'_START_–_END_ of _TOTAL_' };
+
+  if (document.getElementById('perUnitTable')) {
+    $('#perUnitTable').DataTable({
+      pageLength: 50,                          // typical install has ~30 units; one page is plenty
+      order: [[4,'desc']],                     // Net descending — best earners first
+      dom: dtDom,
+      language: dtLang
+    });
+  }
+
+  if (document.getElementById('monthlySummaryTable')) {
+    $('#monthlySummaryTable').DataTable({
+      paging: false,                           // 12 rows always; no need to paginate
+      order: [[0,'asc']],                      // chronological (uses data-order=1..12)
+      info: false,                             // hide "1–12 of 12" — would be noise
+      dom: '<"d-flex justify-content-end mb-2"f>rt',
+      language: { search:'Filter:' }
+    });
+  }
+
+  if (document.getElementById('unitStatusTable')) {
+    // scrollY keeps the previous fixed-height feel (the column used to be
+    // pinned at 680px). Search box lets the user type "vacant"/"paid"/etc.
+    // to filter; default order surfaces late > unpaid > paid > vacant.
+    $('#unitStatusTable').DataTable({
+      paging: false,
+      scrollY: '600px',
+      scrollCollapse: true,
+      order: [[2,'asc']],
+      dom: '<"d-flex justify-content-end mb-2"f>rt',
+      language: { search:'Filter:' }
+    });
+  }
 });
 </script>
 
