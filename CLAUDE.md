@@ -237,11 +237,14 @@ Global helpers attached to `window`: `showToast`, `apiPost`, `confirmDelete`, `f
 | Capability | admin | accountant | staff |
 |---|:-:|:-:|:-:|
 | Dashboard, Collection, SoA, Expenses, Cash, My Summary | ✓ | ✓ | ✓ |
+| View all staff cash-on-hand balances (`cash.php` All Staff table + cross-user filter) | ✓ | ✓ | ✗ |
 | Edit/Delete payments | ✓ | ✗ | ✗ |
 | Edit/Delete expenses | ✓ | ✗ | ✗ |
+| Edit/Delete cash transactions (own or others) | ✓ | ✗ | ✗ |
 | Manage Accounts, Tenants, Units, Categories, Settings | ✓ | ✗ | ✗ |
 | Audit Logs | ✓ | ✗ | ✗ |
 | The Vault (dividend recipients, distributions, returns) | ✓ | ✓ | ✗ |
+| Vault → User cash returns (admin-only sub-flow within Vault page) | ✓ | ✗ | ✗ |
 
 ### Already in place
 - Prepared statements only — no string-interpolated SQL anywhere in the codebase

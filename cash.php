@@ -77,8 +77,9 @@ include 'includes/header.php';
   </div>
 </div>
 
-<?php if(isAdmin()): ?>
-<!-- All Staff Balances (admin) -->
+<?php if(isAdmin() || isAccountant()): ?>
+<!-- All Staff Balances (admin + accountant — both roles can view; writes
+     and per-row edits stay admin-only via the IS_ADMIN JS gate below) -->
 <div class="card mb-3">
   <div class="card-header">
     <span class="card-header-title"><i class="fa-solid fa-users me-2"></i>All Staff Cash Balances</span>
@@ -108,7 +109,7 @@ include 'includes/header.php';
   </div>
   <div class="card-body py-2 border-bottom">
     <div class="row g-2 align-items-end">
-      <?php if(isAdmin()): ?>
+      <?php if(isAdmin() || isAccountant()): ?>
       <div class="col-6 col-md-3">
         <label class="form-label">Staff Member</label>
         <select id="fUser" class="form-select form-select-sm">
@@ -261,18 +262,23 @@ function safeUrl(u) {
   return esc(s);
 }
 
-var remitModal = null;
-var IS_ADMIN   = <?=isAdmin()?'true':'false'?>;
-var MY_ID      = <?=(int)$_SESSION['user']['id']?>;
+var remitModal    = null;
+// IS_ADMIN gates writes (Edit / Delete cash rows, choose-other-user when
+// recording a remittance). CAN_VIEW_ALL gates view-only affordances —
+// the All Staff Balances card and the Staff Member filter dropdown.
+// Accountants share view permission with admins; only admins can mutate.
+var IS_ADMIN      = <?=isAdmin()?'true':'false'?>;
+var CAN_VIEW_ALL  = <?=(isAdmin() || isAccountant())?'true':'false'?>;
+var MY_ID         = <?=(int)$_SESSION['user']['id']?>;
 
 document.addEventListener('DOMContentLoaded', function() {
   remitModal = new bootstrap.Modal(document.getElementById('remitModal'));
   loadTransactions();
-  if (IS_ADMIN) loadAllBalances();
+  if (CAN_VIEW_ALL) loadAllBalances();
 });
 
 function loadAllBalances() {
-  if (!IS_ADMIN) return;
+  if (!CAN_VIEW_ALL) return;
   document.getElementById('allBalBody').innerHTML = '<tr><td colspan="7" class="text-center py-3"><span class="spinner-border spinner-border-sm text-primary me-2"></span>Loading...</td></tr>';
   apiPost('api/cash_api.php', {action:'all_users_balance'}, function(err, res) {
     if (!res || !res.success) {
@@ -450,7 +456,7 @@ function deleteTx(id) {
       if (!res || !res.success) return showToast((res && res.error) || 'Failed.', 'error');
       showToast(res.msg, 'success');
       loadTransactions();
-      if (IS_ADMIN) loadAllBalances();
+      if (CAN_VIEW_ALL) loadAllBalances();
     });
   });
 }

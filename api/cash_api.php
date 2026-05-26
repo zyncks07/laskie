@@ -84,7 +84,10 @@ if ($action === 'list_transactions') {
     $type     = trim($_POST['type']       ?? '');
     $dateFrom = nullOrStr($_POST['date_from'] ?? '');
     $dateTo   = nullOrStr($_POST['date_to']   ?? '');
-    if (!isAdmin() && $userId !== (int)$_SESSION['user']['id']) $userId = (int)$_SESSION['user']['id'];
+    // Admins and accountants can list any user's cash transactions; everyone
+    // else is silently scoped to their own data (staff role).
+    $canViewAll = isAdmin() || isAccountant();
+    if (!$canViewAll && $userId !== (int)$_SESSION['user']['id']) $userId = (int)$_SESSION['user']['id'];
     $where = ['1=1']; $params = [];
     if ($userId) { $where[] = 'ct.user_id=?'; $params[] = $userId; }
     if ($dateFrom && $dateTo) {
@@ -144,9 +147,11 @@ if ($action === 'list_transactions') {
     ]);
 }
 
-// ── All Users Balance Summary (admin) ────────────────────────
+// ── All Users Balance Summary (admin + accountant — both view-only roles
+// for cash reconciliation). Writes against another user's cash still
+// require admin (see save_remittance / get_remittance / delete_cash_tx).
 if ($action === 'all_users_balance') {
-    requireAdmin();
+    requireRole(['admin', 'accountant']);
     $rows = $pdo->prepare("
         SELECT u.id, u.full_name, u.role,
             COALESCE(SUM(CASE WHEN ct.transaction_type='received'     THEN ct.amount ELSE 0 END),0) AS total_received,
