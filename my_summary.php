@@ -278,13 +278,13 @@ $cashSubLabel = 'End of ' . date('M Y', mktime(0, 0, 0, $selMonth, 1, $selYear))
   <div class="card-body text-center text-muted py-4" style="font-size:13px">No remittances recorded for this period.</div>
   <?php else: ?>
   <div class="table-responsive">
-    <table class="table">
+    <table class="table" id="remittancesTable">
       <thead><tr><th>Date</th><th class="text-end">Amount</th><th>Notes</th><th class="text-center">Proof</th></tr></thead>
       <tbody>
       <?php foreach($myRemits as $r): ?>
       <tr>
         <td style="font-size:12.5px"><?= clean($r['transaction_date']) ?></td>
-        <td class="text-end fw-600" style="color:var(--info)"><?= money((float)$r['amount']) ?></td>
+        <td class="text-end fw-600" style="color:var(--info)" data-order="<?= (float)$r['amount'] ?>"><?= money((float)$r['amount']) ?></td>
         <td class="cell-trunc-lg" style="font-size:12px;color:var(--text-muted)"><?= clean($r['notes']??'—') ?></td>
         <td class="text-center">
           <?php if($r['doc_path']): ?>
@@ -410,6 +410,18 @@ $(document).ready(function(){
       order: [[0,'desc']],
       columnDefs: [
         { orderable: false, targets: [4] }  // Type badge — not useful to sort
+      ],
+      dom: '<"d-flex justify-content-between align-items-center mb-2 flex-wrap gap-2"lf>rtip',
+      language: { search:'Filter:', lengthMenu:'Show _MENU_', info:'_START_–_END_ of _TOTAL_' }
+    });
+  }
+
+  if (document.getElementById('remittancesTable')) {
+    $('#remittancesTable').DataTable({
+      pageLength: 25,
+      order: [[0,'desc']],
+      columnDefs: [
+        { orderable: false, targets: [3] }  // Proof icon column — nothing useful to sort by
       ],
       dom: '<"d-flex justify-content-between align-items-center mb-2 flex-wrap gap-2"lf>rtip',
       language: { search:'Filter:', lengthMenu:'Show _MENU_', info:'_START_–_END_ of _TOTAL_' }
