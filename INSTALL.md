@@ -474,18 +474,75 @@ FROM users WHERE username='your_username';
 
 ---
 
-## BACKUP RECOMMENDATION
+## DAILY BACKUP (REQUIRED)
+
+The project ships `scripts/backup.sh`, which captures both the DB and the
+`uploads/` tree in one shot. It reads DB credentials from `config/db.php`
+(same source of truth as the app), so there's no parallel password file to
+maintain.
+
+### One-time setup on the deployed server
 
 ```bash
-# Database backup (run daily via cron)
-mysqldump -u laskie_db_user -p laskie_rental > /home/bulik/backups/laskie_$(date +%Y%m%d).sql
+# 1. Pick the destination — keep it OUTSIDE the doc root.
+sudo mkdir -p /srv/laskie-backups
+sudo chown www-data:www-data /srv/laskie-backups   # or whichever user runs cron
+sudo chmod 700 /srv/laskie-backups
 
-# Files backup
-tar -czf /home/bulik/backups/laskie_files_$(date +%Y%m%d).tar.gz /var/www/laskie/uploads
+# 2. Smoke-test the script (writes one .sql.gz + one .tar.gz, no cron yet):
+sudo -u www-data LASKIE_BACKUP_DIR=/srv/laskie-backups \
+    /var/www/laskie/scripts/backup.sh
 
-# Cron job (daily at 2am)
-crontab -e
-# Add: 0 2 * * * mysqldump -u laskie_db_user -pStrongPassword2024! laskie_rental > /home/bulik/backups/laskie_$(date +\%Y\%m\%d).sql
+ls -la /srv/laskie-backups/
+# Expect: laskie-db-YYYYMMDD_HHMMSS.sql.gz  (chmod 600)
+#         laskie-uploads-YYYYMMDD_HHMMSS.tar.gz
+#         backup.log
+zcat /srv/laskie-backups/laskie-db-*.sql.gz | head -30   # should be valid SQL
+
+# 3. Schedule daily via cron (runs as www-data, 02:30 server time):
+sudo crontab -u www-data -e
+# Add this line (one line, env then path):
+#   30 2 * * * LASKIE_BACKUP_DIR=/srv/laskie-backups /var/www/laskie/scripts/backup.sh >> /var/log/laskie-backup.log 2>&1
+
+# 4. Make sure the cron log target is writable:
+sudo touch /var/log/laskie-backup.log
+sudo chown www-data:www-data /var/log/laskie-backup.log
+```
+
+### Defaults (override per environment)
+
+| Env var | Default | Meaning |
+|---|---|---|
+| `LASKIE_BACKUP_DIR` | `$HOME/laskie-backups` | Where the .sql.gz / .tar.gz files land |
+| `LASKIE_BACKUP_RETENTION` | `14` | Days to keep on disk before pruning |
+| `LASKIE_BACKUP_LOG` | `$BACKUP_DIR/backup.log` | Per-run append log |
+
+### Off-host retention (recommended)
+
+Local 14-day retention is the floor. For the 90-day off-host requirement,
+append an rsync step at the bottom of `scripts/backup.sh` after the prune
+block — the destination varies per deployment, so it isn't baked in:
+
+```bash
+# Off-host copy (90-day retention handled on the remote side)
+rsync -avz --delete --max-delete=20 \
+    "$BACKUP_DIR/" backup@offsite.example:/laskie-backups/
+```
+
+Pair with `rclone`, `restic`, or `tarsnap` on the remote if you want
+deduped/encrypted long-term storage.
+
+### Restore
+
+```bash
+# DB:
+zcat /srv/laskie-backups/laskie-db-2026-05-26_023001.sql.gz | \
+    mysql -u laskie_db_user -p laskie_rental
+
+# Uploads (restores to /var/www/laskie/uploads/):
+tar -xzf /srv/laskie-backups/laskie-uploads-2026-05-26_023001.tar.gz \
+    -C /var/www/laskie/
+sudo chown -R www-data:www-data /var/www/laskie/uploads
 ```
 
 ---
