@@ -189,6 +189,14 @@ if ($action === 'delete_payment') {
     $pay->execute([$id]);
     $p = $pay->fetch();
     if (!$p) jsonErr('Payment not found or already deleted.');
+    // Same reasoning as void_payment: soft-deleting drops the 'received' cash
+    // row, but the 'refunded' rows would remain orphaned — the cashier's
+    // cash-on-hand would end up minus the refund amount. Refunds must be
+    // reversed first, or the payment must be purged (which CASCADE-deletes
+    // refunds and all linked cash rows).
+    if ($p['status'] === 'refunded' || $p['status'] === 'partially_refunded') {
+        jsonErr('Cannot delete a refunded payment. Reverse the refunds first or use Purge from the trash to permanently remove it.');
+    }
 
     $pdo->beginTransaction();
     try {
@@ -301,9 +309,14 @@ if ($action === 'void_payment') {
     $pay->execute([$id]);
     $p = $pay->fetch();
     if (!$p) jsonErr('Payment not found.');
-    if ($p['deleted_at'])            jsonErr('Cannot void a deleted payment. Restore it from trash first.');
-    if ($p['status'] === 'voided')   jsonErr('Payment is already voided.');
-    if ($p['status'] === 'refunded') jsonErr('Cannot void a fully refunded payment.');
+    if ($p['deleted_at'])                       jsonErr('Cannot void a deleted payment. Restore it from trash first.');
+    if ($p['status'] === 'voided')              jsonErr('Payment is already voided.');
+    if ($p['status'] === 'refunded')            jsonErr('Cannot void a fully refunded payment.');
+    // A partial refund means the tenant has already received cash back. Voiding
+    // the original receipt now would leave the 'refunded' cash entry orphaned
+    // and drag the cashier's cash-on-hand negative by the refund amount. The
+    // admin must reverse the refund first (or accept the payment as final).
+    if ($p['status'] === 'partially_refunded') jsonErr('Cannot void a partially refunded payment. Reverse the refunds first.');
     $pdo->beginTransaction();
     try {
         $pdo->prepare("UPDATE payments SET status='voided' WHERE id=?")->execute([$id]);
@@ -617,6 +630,10 @@ if ($action === 'bulk_delete_payments') {
             $pay->execute([$id]);
             $p = $pay->fetch();
             if (!$p) continue;
+            // Refunded / partially-refunded rows are skipped silently: the same
+            // reasoning as the single delete_payment path — soft-deleting would
+            // leave orphan 'refunded' cash rows and drag cash-on-hand negative.
+            if ($p['status'] === 'refunded' || $p['status'] === 'partially_refunded') continue;
 
             // Same side-effects as single delete_payment — keep cash + unit_charges consistent.
             $pdo->prepare("UPDATE payments SET deleted_at=NOW() WHERE id=?")->execute([$id]);
