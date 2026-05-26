@@ -132,13 +132,34 @@ include 'includes/header.php';
 
 <!-- Period Summary Stats -->
 <?php
+// Running cash-on-hand AS OF the end of the selected period — the same
+// formula cash.php uses for lifetime, but bounded by $selEnd so an admin
+// browsing a past month sees what was actually in their pocket at that
+// month's close rather than the period's net flow (which is a flow, not
+// a stock, and can legitimately be negative even when cash on hand is
+// strongly positive).
+$runStmt = $pdo->prepare("
+    SELECT
+        COALESCE(SUM(CASE WHEN transaction_type='received'     THEN amount ELSE 0 END),0) AS received,
+        COALESCE(SUM(CASE WHEN transaction_type='vault_return' THEN amount ELSE 0 END),0) AS vault_return,
+        COALESCE(SUM(CASE WHEN transaction_type='remitted'     THEN amount ELSE 0 END),0) AS remitted,
+        COALESCE(SUM(CASE WHEN transaction_type='expense'      THEN amount ELSE 0 END),0) AS expenses,
+        COALESCE(SUM(CASE WHEN transaction_type='refunded'     THEN amount ELSE 0 END),0) AS refunded
+    FROM cash_transactions
+    WHERE user_id=? AND transaction_date < ?
+");
+$runStmt->execute([$myId, $selEnd]);
+$run = $runStmt->fetch();
+
 $myCash = money_sub(
     money_sub(money_sub(
-        money_add($tot['total_received'], $tot['total_vault_returns']),
-        $tot['total_remitted']),
-    $tot['total_expenses']),
-    $tot['total_refunded']
+        money_add($run['received'], $run['vault_return']),
+        $run['remitted']),
+    $run['expenses']),
+    $run['refunded']
 );
+
+$cashSubLabel = 'End of ' . date('M Y', mktime(0, 0, 0, $selMonth, 1, $selYear));
 ?>
 <div class="row g-3 mb-3">
   <div class="col-6 col-md-2">
@@ -200,8 +221,8 @@ $myCash = money_sub(
       <div class="stat-icon purple"><i class="fa-solid fa-wallet"></i></div>
       <div class="stat-body">
         <div class="stat-label">Cash on Hand</div>
-        <div class="stat-value" style="font-size:17px;color:<?= money_is_pos($myCash)?'var(--success)':'var(--danger)' ?>"><?= money($myCash) ?></div>
-        <div class="stat-sub">This period</div>
+        <div class="stat-value" style="font-size:17px;color:<?= money_is_pos($myCash) || money_is_zero($myCash) ? 'var(--success)' : 'var(--danger)' ?>"><?= money($myCash) ?></div>
+        <div class="stat-sub"><?= clean($cashSubLabel) ?></div>
       </div>
     </div>
   </div>
