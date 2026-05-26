@@ -428,7 +428,9 @@ include '../includes/header.php';
     <button class="btn btn-primary btn-sm" onclick="openRemittanceModal()"><i class="fa-solid fa-arrow-down-to-line me-1"></i>Record Remittance</button>
     <button class="btn btn-success btn-sm" onclick="openDistributionModal()"><i class="fa-solid fa-money-bill-transfer me-1"></i>Distribute Dividend</button>
     <button class="btn btn-warning btn-sm" onclick="openReturnModal()"><i class="fa-solid fa-rotate-left me-1"></i>Return to Vault</button>
+    <?php if (isAdmin()): ?>
     <button class="btn btn-info btn-sm" onclick="openUserReturnModal()"><i class="fa-solid fa-hand-holding-dollar me-1"></i>Return to User</button>
+    <?php endif; ?>
     <button class="btn btn-outline-secondary btn-sm" onclick="openRecipientsModal()"><i class="fa-solid fa-users me-1"></i>Recipients</button>
   </div>
 </div>
@@ -574,7 +576,9 @@ include '../includes/header.php';
   </div>
 </div>
 
-<!-- Vault Returns to Users -->
+<?php if (isAdmin()): ?>
+<!-- Vault Returns to Users (admin-only section — accountants don't see it
+     since both the UI and the backend gate the flow on isAdmin()) -->
 <div class="card mb-4">
   <div class="card-body">
     <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
@@ -623,6 +627,7 @@ include '../includes/header.php';
     <?php endif; ?>
   </div>
 </div>
+<?php endif; /* isAdmin section close — Vault Returns to Users */ ?>
 
 <!-- Chart -->
 <div class="card mb-4">
@@ -1122,25 +1127,14 @@ foreach ($distributions  as $d)   { $distMap[$d['id']]  = $d; }
 $retMap   = [];
 foreach ($returnRecords  as $ret)  { $retMap[$ret['id']] = $ret; }
 ?>
-const DIST_DATA          = <?= json_encode($distMap,  JSON_UNESCAPED_UNICODE) ?>;
-const RET_DATA           = <?= json_encode($retMap,   JSON_UNESCAPED_UNICODE) ?>;
-const TOTAL_REMITTED     = <?= $totalRemitted ?>;
-// Total cash issued from vault back to users (admin-only flow). Server-side
-// $vaultBalance subtracts this — the client recalc must do the same or the
-// displayed balance drifts upward after every distribution/return delete.
-const TOTAL_USER_RETURNED = <?= $totalUserReturned ?>;
+// Embedded edit-source for the per-row Edit buttons in Distribution Records
+// and Return Records tables. Saves an AJAX round-trip on every pencil click.
+const DIST_DATA = <?= json_encode($distMap,  JSON_UNESCAPED_UNICODE) ?>;
+const RET_DATA  = <?= json_encode($retMap,   JSON_UNESCAPED_UNICODE) ?>;
 
-function recalcVaultBalance() {
-  const distTotal = Object.values(DIST_DATA).reduce((s,d)=>s+parseFloat(d.amount||0),0);
-  const retTotal  = Object.values(RET_DATA).reduce((s,r)=>s+parseFloat(r.amount||0),0);
-  const balance   = TOTAL_REMITTED - distTotal + retTotal - TOTAL_USER_RETURNED;
-  const fmt = v => '₱'+v.toLocaleString('en-PH',{minimumFractionDigits:2,maximumFractionDigits:2});
-  document.getElementById('vaultBalanceDisplay').textContent = fmt(balance);
-  document.getElementById('statDistTotal').textContent       = fmt(distTotal);
-  document.getElementById('statRetTotal').textContent        = fmt(retTotal);
-  const dt = document.getElementById('distTotal'); if (dt) dt.textContent = fmt(distTotal);
-  const rt = document.getElementById('retTotal');  if (rt) rt.textContent = fmt(retTotal);
-}
+// Role flag for client-side UI gating (admin-only buttons in the logs table).
+// Backend still enforces every admin-only action via isAdmin() checks.
+const IS_ADMIN = <?= isAdmin() ? 'true' : 'false' ?>;
 
 // ── Chart ────────────────────────────────────────────────────
 const CHART_COLORS = ['#1a3a8f','#0ea5e9','#15803d','#d97706','#7c3aed','#dc2626','#0891b2','#be185d'];
@@ -1269,8 +1263,12 @@ function loadLogs() {
         badge    = `<span class="badge" style="background:#e0f2fe;color:#0369a1;font-weight:600">Vault→User</span>`;
         person   = `<span style="color:#0369a1">→ ${esc(r.recipient_name||'—')}</span>`;
         amtColor = 'var(--info)';
-        actions  = `<button class="btn-icon" title="Edit" onclick="openEditUserReturn(${r.id})"><i class="fa-solid fa-pen fa-xs"></i></button>`
-                 + `<button class="btn-icon danger" title="Delete" onclick="deleteUserReturn(${r.id})"><i class="fa-solid fa-trash fa-xs"></i></button>`;
+        // user_return Edit/Delete are admin-only — accountants see the row but
+        // not the action buttons (backend would 403 them anyway).
+        actions  = IS_ADMIN
+          ? `<button class="btn-icon" title="Edit" onclick="openEditUserReturn(${r.id})"><i class="fa-solid fa-pen fa-xs"></i></button>`
+          + `<button class="btn-icon danger" title="Delete" onclick="deleteUserReturn(${r.id})"><i class="fa-solid fa-trash fa-xs"></i></button>`
+          : '';
       }
       html += `<tr>
         <td style="white-space:nowrap;color:var(--text-secondary)">${esc(r.log_date)}</td>
@@ -1345,7 +1343,7 @@ function saveDistribution() {
     notes: document.getElementById('distNotes').value
   }, (err, res) => {
     el.style.display='';
-    if (!res.success){ el.className='alert alert-danger'; el.textContent=res.error; return; }
+    if (!res || !res.success){ el.className='alert alert-danger'; el.textContent=(res && res.error)||'Save failed.'; return; }
     el.className='alert alert-success'; el.textContent=res.msg;
     setTimeout(()=>{ distributionModal.hide(); location.reload(); }, 700);
   });
@@ -1355,7 +1353,7 @@ function saveDistribution() {
 function deleteRemittance(id) {
   confirmDelete('Delete this remittance? This cannot be undone.', () => {
     apiPost('../admin/vault.php', {action:'delete_remittance', id}, (err, res) => {
-      if (!res.success){ showToast(res.error,'error'); return; }
+      if (!res || !res.success){ showToast((res && res.error)||'Delete failed.','error'); return; }
       showToast(res.msg,'success'); loadLogs();
       setTimeout(()=>location.reload(), 900);
     });
@@ -1412,7 +1410,7 @@ function saveRecipient() {
     notes: document.getElementById('recipNotes').value
   }, (err, res) => {
     el.style.display='';
-    if (!res.success){ el.className='alert alert-danger'; el.textContent=res.error; return; }
+    if (!res || !res.success){ el.className='alert alert-danger'; el.textContent=(res && res.error)||'Save failed.'; return; }
     el.className='alert alert-success'; el.textContent=res.msg;
     setTimeout(()=>{ recipientsModal.hide(); location.reload(); }, 700);
   });
@@ -1420,7 +1418,7 @@ function saveRecipient() {
 
 function toggleRecipient(id, active) {
   apiPost('../admin/vault.php', {action:'toggle_recipient', id, is_active:active}, (err, res) => {
-    if (!res.success){ showToast(res.error,'error'); return; }
+    if (!res || !res.success){ showToast((res && res.error)||'Toggle failed.','error'); return; }
     showToast(res.msg,'success');
     setTimeout(()=>location.reload(), 700);
   });
@@ -1429,7 +1427,7 @@ function toggleRecipient(id, active) {
 function deleteRecipient(id) {
   confirmDelete('Delete this recipient?', () => {
     apiPost('../admin/vault.php', {action:'delete_recipient', id}, (err, res) => {
-      if (!res.success){ showToast(res.error,'error'); return; }
+      if (!res || !res.success){ showToast((res && res.error)||'Delete failed.','error'); return; }
       showToast(res.msg,'success');
       setTimeout(()=>location.reload(), 700);
     });
