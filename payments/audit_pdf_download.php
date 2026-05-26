@@ -31,8 +31,13 @@ $html = str_replace('../assets/vendor/', pdfAssetsBaseUrl(), $html);
 try {
     $tmpPdf = renderHtmlToPdf($html);
 } catch (Throwable $e) {
+    // Log the real reason so admins can debug; show a generic message in the
+    // response. The exception text contains the chromium path and other
+    // server-internal detail that doesn't belong in a download response.
+    error_log('audit_pdf_download: ' . $e->getMessage());
+    logActivity($pdo, 'EXPORT_AUDIT_PDF_FAILED', 'Settings', substr($e->getMessage(), 0, 240));
     http_response_code(500);
-    die(htmlspecialchars($e->getMessage(), ENT_QUOTES, 'UTF-8'));
+    die('Could not generate the audit PDF. See the system audit log for details.');
 }
 
 $period = $month > 0 ? sprintf('%04d-%02d', $year, $month) : (string)$year;

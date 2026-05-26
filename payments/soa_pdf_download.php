@@ -50,8 +50,10 @@ $html = str_replace('../assets/vendor/', pdfAssetsBaseUrl(), $html);
 try {
     $tmpPdf = renderHtmlToPdf($html);
 } catch (Throwable $e) {
+    error_log('soa_pdf_download: ' . $e->getMessage());
+    logActivity($pdo, 'EXPORT_SOA_PDF_FAILED', 'SOA', substr($e->getMessage(), 0, 240));
     http_response_code(500);
-    die(htmlspecialchars($e->getMessage(), ENT_QUOTES, 'UTF-8'));
+    die('Could not generate the Statement of Account PDF. See the system audit log for details.');
 }
 
 $safeName = preg_replace('/_+/', '_', trim(preg_replace('/[^A-Za-z0-9\-_]/', '_', $unitName), '_'));

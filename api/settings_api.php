@@ -9,14 +9,41 @@ csrfRequirePost();
 $action = $_POST['action'] ?? $_GET['action'] ?? '';
 
 // ── Verify master password ────────────────────────────────────
+// Brute-force defence: count MASTER_UNLOCK_FAILED entries for the current
+// admin user_id since their last SETTINGS_UNLOCK (or epoch if they've never
+// unlocked). After 5 failures within 15 minutes, refuse further attempts
+// until the window expires. Each rejected attempt also adds a progressive
+// usleep — same shape as the login lockout in index.php.
 if ($action === 'verify_master') {
-    $pass   = $_POST['password'] ?? '';
-    $stored = getSetting($pdo, 'master_password', '');
+    $pass    = $_POST['password'] ?? '';
+    $stored  = getSetting($pdo, 'master_password', '');
+    $adminId = (int)($_SESSION['user']['id'] ?? 0);
+    $threshold = 5;   // failures
+    $windowMin = 15;  // minutes
+    $failStmt = $pdo->prepare(
+        "SELECT COUNT(*) FROM system_logs
+         WHERE action='MASTER_UNLOCK_FAILED' AND user_id = ?
+           AND created_at >= NOW() - INTERVAL $windowMin MINUTE
+           AND created_at > COALESCE(
+               (SELECT MAX(created_at) FROM system_logs
+                WHERE action='SETTINGS_UNLOCK' AND user_id = ?), '1970-01-01')"
+    );
+    $failStmt->execute([$adminId, $adminId]);
+    $recentFails = (int)$failStmt->fetchColumn();
+    if ($recentFails >= $threshold) {
+        logActivity($pdo, 'MASTER_UNLOCK_LOCKED', 'Settings', "Lockout active ($recentFails recent failures)");
+        jsonErr("Too many failed master-password attempts. Try again in $windowMin minutes.", 429);
+    }
     if ($stored && password_verify($pass, $stored)) {
         $_SESSION['settings_unlocked'] = true;
         logActivity($pdo, 'SETTINGS_UNLOCK', 'Settings', 'Settings unlocked');
         jsonOk(['msg' => 'Settings unlocked.']);
     }
+    // Progressive delay matching the login flow — slows scripted bursts;
+    // near-invisible on the first or second attempt.
+    $delaySteps = min($recentFails + 1, 5);
+    usleep($delaySteps * 250_000);
+    logActivity($pdo, 'MASTER_UNLOCK_FAILED', 'Settings', 'Incorrect master password');
     jsonErr('Incorrect master password.');
 }
 
