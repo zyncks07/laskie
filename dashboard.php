@@ -72,19 +72,26 @@ if (!in_array($selectedYear, $years)) $years[] = $selectedYear;
 rsort($years);
 
 // ─── Unit chart period dropdown data ─────────────────────────
+// MONTH() in the SELECT is a projection — the WHERE uses a sargable
+// half-open range so idx_pay_date / idx_exp_date can be used. This
+// loop runs once per year of history (small N) but adds up fast on
+// a full table scan once payments/expenses grow.
 $mnNames = ['','January','February','March','April','May','June','July','August','September','October','November','December'];
 $chartMonthsByYear = [];
 foreach ($years as $ychk) {
+    [$yChkStart, $yChkEnd] = yearRange((int)$ychk);
     $mQ = $pdo->prepare("
         SELECT DISTINCT m FROM (
             SELECT MONTH(payment_date) AS m FROM payments
-             WHERE YEAR(payment_date)=? AND deleted_at IS NULL AND status != 'voided'
+             WHERE payment_date >= ? AND payment_date < ?
+               AND deleted_at IS NULL AND status != 'voided'
             UNION
             SELECT MONTH(expense_date) FROM expenses
-             WHERE YEAR(expense_date)=? AND deleted_at IS NULL
+             WHERE expense_date >= ? AND expense_date < ?
+               AND deleted_at IS NULL
         ) sub ORDER BY m ASC
     ");
-    $mQ->execute([$ychk, $ychk]);
+    $mQ->execute([$yChkStart, $yChkEnd, $yChkStart, $yChkEnd]);
     $chartMonthsByYear[$ychk] = $mQ->fetchAll(PDO::FETCH_COLUMN);
 }
 $chartInitPeriod = ($selectedYear === $curYear)
