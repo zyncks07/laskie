@@ -27,41 +27,60 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $oldRow->execute([$id]);
             $oldRate = (float)$oldRow->fetchColumn();
 
-            $pdo->prepare("UPDATE rental_units SET unit_name=?,unit_type_id=?,description=?,floor_area=?,monthly_rate=?,due_day=?,status=? WHERE id=?")
-                ->execute([$name,$typeId,$desc,$area,$rate,$dueDay,$status,$id]);
+            // Atomic: UPDATE rental_units + (possibly) INSERT/UPDATE
+            // unit_rate_history must commit together so the cached rate
+            // and the history table can't diverge mid-write.
+            $pdo->beginTransaction();
+            try {
+                $pdo->prepare("UPDATE rental_units SET unit_name=?,unit_type_id=?,description=?,floor_area=?,monthly_rate=?,due_day=?,status=? WHERE id=?")
+                    ->execute([$name,$typeId,$desc,$area,$rate,$dueDay,$status,$id]);
 
-            // Rate-history invariant: past months must keep the rate they were
-            // billed at. So if the latest history row is in the past, we APPEND
-            // a new row effective today; we only UPDATE in place when the latest
-            // row is dated today (correcting a same-day typo) or in the future
-            // (adjusting a scheduled increase).
-            if ($rate !== $oldRate) {
-                $latestHist = $pdo->prepare("SELECT id, effective_date FROM unit_rate_history WHERE unit_id=? ORDER BY effective_date DESC, created_at DESC LIMIT 1");
-                $latestHist->execute([$id]);
-                $latest = $latestHist->fetch();
-                if ($latest === false) {
-                    // No history yet — seed an initial entry effective today.
-                    $pdo->prepare("INSERT INTO unit_rate_history (unit_id,monthly_rate,effective_date,notes,created_by) VALUES (?,?,CURDATE(),'Initial rate',?)")
-                        ->execute([$id, $rate, $_SESSION['user']['id']]);
-                } elseif ($latest['effective_date'] >= date('Y-m-d')) {
-                    $pdo->prepare("UPDATE unit_rate_history SET monthly_rate=? WHERE id=?")->execute([$rate, $latest['id']]);
-                } else {
-                    $pdo->prepare("INSERT INTO unit_rate_history (unit_id,monthly_rate,effective_date,notes,created_by) VALUES (?,?,CURDATE(),'Rate change',?)")
-                        ->execute([$id, $rate, $_SESSION['user']['id']]);
+                // Rate-history invariant: past months must keep the rate they were
+                // billed at. So if the latest history row is in the past, we APPEND
+                // a new row effective today; we only UPDATE in place when the latest
+                // row is dated today (correcting a same-day typo) or in the future
+                // (adjusting a scheduled increase).
+                if ($rate !== $oldRate) {
+                    $latestHist = $pdo->prepare("SELECT id, effective_date FROM unit_rate_history WHERE unit_id=? ORDER BY effective_date DESC, created_at DESC LIMIT 1");
+                    $latestHist->execute([$id]);
+                    $latest = $latestHist->fetch();
+                    if ($latest === false) {
+                        // No history yet — seed an initial entry effective today.
+                        $pdo->prepare("INSERT INTO unit_rate_history (unit_id,monthly_rate,effective_date,notes,created_by) VALUES (?,?,CURDATE(),'Initial rate',?)")
+                            ->execute([$id, $rate, $_SESSION['user']['id']]);
+                    } elseif ($latest['effective_date'] >= date('Y-m-d')) {
+                        $pdo->prepare("UPDATE unit_rate_history SET monthly_rate=? WHERE id=?")->execute([$rate, $latest['id']]);
+                    } else {
+                        $pdo->prepare("INSERT INTO unit_rate_history (unit_id,monthly_rate,effective_date,notes,created_by) VALUES (?,?,CURDATE(),'Rate change',?)")
+                            ->execute([$id, $rate, $_SESSION['user']['id']]);
+                    }
+                    logActivity($pdo,'UPDATE_UNIT_RATE','Units',"Unit #$id rate changed " . money($oldRate) . " → " . money($rate));
                 }
-                logActivity($pdo,'UPDATE_UNIT_RATE','Units',"Unit #$id rate changed " . money($oldRate) . " → " . money($rate));
-            }
 
-            logActivity($pdo,'UPDATE_UNIT','Units',"Updated unit #$id ($name)");
+                logActivity($pdo,'UPDATE_UNIT','Units',"Updated unit #$id ($name)");
+                $pdo->commit();
+            } catch (Throwable $e) {
+                if ($pdo->inTransaction()) $pdo->rollBack();
+                throw $e;
+            }
             jsonOk(['msg'=>'Unit updated.']);
         } else {
-            $pdo->prepare("INSERT INTO rental_units (unit_name,unit_type_id,description,floor_area,monthly_rate,due_day,status) VALUES (?,?,?,?,?,?,?)")
-                ->execute([$name,$typeId,$desc,$area,$rate,$dueDay,$status]);
-            $newUnitId = (int)$pdo->lastInsertId();
-            // Seed initial rate history so history is never empty
-            $pdo->prepare("INSERT INTO unit_rate_history (unit_id,monthly_rate,effective_date,notes,created_by) VALUES (?,?,CURDATE(),'Initial rate',?)")
-                ->execute([$newUnitId, $rate, $_SESSION['user']['id']]);
-            logActivity($pdo,'CREATE_UNIT','Units',"Created unit $name");
+            // Atomic: a unit must be born with at least one rate history row so
+            // getRateForMonth() can fall back to it. If the history INSERT
+            // fails after the unit was created, we'd ship a rate-less unit.
+            $pdo->beginTransaction();
+            try {
+                $pdo->prepare("INSERT INTO rental_units (unit_name,unit_type_id,description,floor_area,monthly_rate,due_day,status) VALUES (?,?,?,?,?,?,?)")
+                    ->execute([$name,$typeId,$desc,$area,$rate,$dueDay,$status]);
+                $newUnitId = (int)$pdo->lastInsertId();
+                $pdo->prepare("INSERT INTO unit_rate_history (unit_id,monthly_rate,effective_date,notes,created_by) VALUES (?,?,CURDATE(),'Initial rate',?)")
+                    ->execute([$newUnitId, $rate, $_SESSION['user']['id']]);
+                logActivity($pdo,'CREATE_UNIT','Units',"Created unit $name");
+                $pdo->commit();
+            } catch (Throwable $e) {
+                if ($pdo->inTransaction()) $pdo->rollBack();
+                throw $e;
+            }
             jsonOk(['msg'=>'Unit created.']);
         }
     }
@@ -168,16 +187,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if (!$unitId) jsonErr('Unit required.');
         if ($rate <= 0) jsonErr('Rate must be greater than zero.');
         if (!$effDate || !strtotime($effDate)) jsonErr('Valid effective date required.');
-        $pdo->prepare("INSERT INTO unit_rate_history (unit_id,monthly_rate,effective_date,notes,created_by) VALUES (?,?,?,?,?)")
-            ->execute([$unitId, $rate, $effDate, $notes, $_SESSION['user']['id']]);
-        // Keep rental_units.monthly_rate in sync with the latest rate
-        $pdo->prepare("UPDATE rental_units SET monthly_rate=?
-                       WHERE id=? AND ? >= (
-                           SELECT COALESCE(MAX(effective_date),'1970-01-01')
-                           FROM unit_rate_history WHERE unit_id=? AND id != LAST_INSERT_ID()
-                       )")
-            ->execute([$rate, $unitId, $effDate, $unitId]);
-        logActivity($pdo,'RATE_INCREASE','Units',"Unit #$unitId new rate ₱$rate eff. $effDate");
+        // INSERT history + conditional UPDATE rental_units must be atomic.
+        // Otherwise a failure between them leaves the history row committed
+        // while rental_units.monthly_rate stays at the old value (or vice
+        // versa) and the two reads disagree for everyone using the unit.
+        $pdo->beginTransaction();
+        try {
+            $pdo->prepare("INSERT INTO unit_rate_history (unit_id,monthly_rate,effective_date,notes,created_by) VALUES (?,?,?,?,?)")
+                ->execute([$unitId, $rate, $effDate, $notes, $_SESSION['user']['id']]);
+            $pdo->prepare("UPDATE rental_units SET monthly_rate=?
+                           WHERE id=? AND ? >= (
+                               SELECT COALESCE(MAX(effective_date),'1970-01-01')
+                               FROM unit_rate_history WHERE unit_id=? AND id != LAST_INSERT_ID()
+                           )")
+                ->execute([$rate, $unitId, $effDate, $unitId]);
+            logActivity($pdo,'RATE_INCREASE','Units',"Unit #$unitId new rate ₱$rate eff. $effDate");
+            $pdo->commit();
+        } catch (Throwable $e) {
+            if ($pdo->inTransaction()) $pdo->rollBack();
+            throw $e;
+        }
         jsonOk(['msg'=>'Rate change recorded.']);
     }
 
@@ -201,15 +230,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $cnt = $pdo->prepare("SELECT COUNT(*) FROM unit_rate_history WHERE unit_id=?");
         $cnt->execute([$unitId]);
         if ((int)$cnt->fetchColumn() <= 1) jsonErr('Cannot delete the only rate record for this unit.');
-        $pdo->prepare("DELETE FROM unit_rate_history WHERE id=?")->execute([$id]);
-        // Re-sync current rate to latest remaining history entry
-        $latest = $pdo->prepare("SELECT monthly_rate FROM unit_rate_history WHERE unit_id=? ORDER BY effective_date DESC, created_at DESC LIMIT 1");
-        $latest->execute([$unitId]);
-        $latestRate = $latest->fetchColumn();
-        if ($latestRate !== false) {
-            $pdo->prepare("UPDATE rental_units SET monthly_rate=? WHERE id=?")->execute([$latestRate, $unitId]);
+        // Atomic: DELETE the row + re-sync rental_units.monthly_rate to the new
+        // latest. Without a transaction, the DELETE could commit and the
+        // rental_units sync fail, leaving the cached rate ahead of history.
+        $pdo->beginTransaction();
+        try {
+            $pdo->prepare("DELETE FROM unit_rate_history WHERE id=?")->execute([$id]);
+            $latest = $pdo->prepare("SELECT monthly_rate FROM unit_rate_history WHERE unit_id=? ORDER BY effective_date DESC, created_at DESC LIMIT 1");
+            $latest->execute([$unitId]);
+            $latestRate = $latest->fetchColumn();
+            if ($latestRate !== false) {
+                $pdo->prepare("UPDATE rental_units SET monthly_rate=? WHERE id=?")->execute([$latestRate, $unitId]);
+            }
+            logActivity($pdo,'DELETE_RATE_HISTORY','Units',"Deleted rate history #$id for unit #$unitId");
+            $pdo->commit();
+        } catch (Throwable $e) {
+            if ($pdo->inTransaction()) $pdo->rollBack();
+            throw $e;
         }
-        logActivity($pdo,'DELETE_RATE_HISTORY','Units',"Deleted rate history #$id for unit #$unitId");
         jsonOk(['msg'=>'Rate record deleted.']);
     }
 
