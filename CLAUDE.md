@@ -272,6 +272,14 @@ Global helpers attached to `window`: `showToast`, `apiPost`, `confirmDelete`, `f
 - `config/db.php` is regenerated on the server with deployment credentials — **never commit a real-credentials version**
 - `.htaccess` is shipped as-is; ensure `mod_rewrite` is enabled
 
+### ⚠️ This dev host IS the production host
+On `192.168.9.18:49200`, Apache's `DocumentRoot` points at **`/home/bulik/apps/laskie/`** (this source repo), not `/var/www/laskie/` — the working copy IS the live deployment. Every Edit/Write here is visible to live traffic on the next HTTP request. There is no "deploy" step; `git pull` (or just editing) is the deploy. The stale `/var/www/laskie/` directory exists but Apache no longer reads from it.
+
+Implications for file work:
+- File permissions matter. Apache runs as `www-data`. Config files (`config/db.php`, `config/env.php`, `config/functions.php`, `.env`) are owned `bulik:www-data` mode 640. `bulik` is in the `www-data` group; `www-data` is NOT in the `bulik` group. A file that drifts to `bulik:bulik` 640 is unreadable by Apache → HTTP 500.
+- Edit/Write tools do NOT preserve file group on rewrite. After editing any `config/*.php`, run `sudo chown bulik:www-data <file>` (or the consolidated `sudo bash /home/bulik/laskie-recompress.sh` which restores perms across the tree).
+- Directories have setgid (`chmod g+s`) so new files inherit group `www-data`. If a directory ever loses setgid, future files there will silently 500 the site.
+
 ### Troubleshooting quick-refs
 - Blank page → `tail -f /var/log/apache2/laskie_error.log`
 - Upload fails → `chown -R www-data:www-data uploads/ && chmod -R 775 uploads/`
