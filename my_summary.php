@@ -238,7 +238,7 @@ $cashSubLabel = 'End of ' . date('M Y', mktime(0, 0, 0, $selMonth, 1, $selYear))
   <div class="card-body text-center text-muted py-4" style="font-size:13px">No collections recorded for this period.</div>
   <?php else: ?>
   <div class="table-responsive">
-    <table class="table">
+    <table class="table" id="collectionsTable">
       <thead><tr>
         <th>Date</th><th>Invoice</th><th>Unit</th><th>Tenant</th>
         <th>Type</th><th class="text-end">Amount</th><th>Notes</th>
@@ -246,12 +246,12 @@ $cashSubLabel = 'End of ' . date('M Y', mktime(0, 0, 0, $selMonth, 1, $selYear))
       <tbody>
       <?php foreach($myPayments as $p): ?>
       <tr>
-        <td style="font-size:12.5px;white-space:nowrap"><?= $p['payment_date'] ?></td>
+        <td style="font-size:12.5px;white-space:nowrap"><?= clean($p['payment_date']) ?></td>
         <td><a href="payments/invoice_print.php?id=<?=$p['id']?>" target="_blank" class="mono text-primary" style="font-size:11.5px"><?= clean($p['invoice_no']??'—') ?></a></td>
         <td style="font-size:12.5px"><?= clean($p['unit_name']??'—') ?></td>
         <td style="font-size:12.5px"><?= clean($p['tenant_name']??'—') ?></td>
         <td><?= $p['payment_type']==='rent'?'<span class="badge badge-rent">Rent</span>':'<span class="badge badge-service">'.clean($p['service_name']??'Service').'</span>' ?></td>
-        <td class="text-end fw-600" style="color:var(--success)"><?= money((float)$p['amount']) ?></td>
+        <td class="text-end fw-600" style="color:var(--success)" data-order="<?= (float)$p['amount'] ?>"><?= money((float)$p['amount']) ?></td>
         <td class="cell-trunc-lg" style="font-size:12px;color:var(--text-muted)"><?= clean($p['notes']??'—') ?></td>
       </tr>
       <?php endforeach; ?>
@@ -400,6 +400,22 @@ $cashSubLabel = 'End of ' . date('M Y', mktime(0, 0, 0, $selMonth, 1, $selYear))
 <?php $extraJs = <<<'JS'
 <script>
 $(document).ready(function(){
+  // Collections — sortable by every header, default newest-first, with the
+  // standard search + page-length controls. Amount column carries data-order
+  // attributes so it sorts numerically rather than by formatted-currency
+  // string. The Notes column stays sortable (alpha) but isn't a great key.
+  if (document.getElementById('collectionsTable')) {
+    $('#collectionsTable').DataTable({
+      pageLength: 25,
+      order: [[0,'desc']],
+      columnDefs: [
+        { orderable: false, targets: [4] }  // Type badge — not useful to sort
+      ],
+      dom: '<"d-flex justify-content-between align-items-center mb-2 flex-wrap gap-2"lf>rtip',
+      language: { search:'Filter:', lengthMenu:'Show _MENU_', info:'_START_–_END_ of _TOTAL_' }
+    });
+  }
+
   if (document.getElementById('myLogsTable')) {
     $('#myLogsTable').DataTable({
       pageLength: 25,
