@@ -62,8 +62,14 @@ if ($action === 'save_payment') {
 
         $pdo->beginTransaction();
         try {
-            $pdo->prepare("UPDATE payments SET unit_id=?,tenant_id=?,payment_type=?,service_type_id=?,amount=?,payment_date=?,due_date=?,period_month=?,period_year=?,received_by=?,notes=? WHERE id=?")
-                ->execute([$unitId,$tenantId,$type,$serviceId,$amount,$payDate,$dueDate,$periodMonth,$periodYear,$_SESSION['user']['id'],$notes,$id]);
+            // received_by is intentionally left out of the UPDATE: it records the
+            // cashier who collected the payment, not whoever last edited the row.
+            // Overwriting it would silently rewrite the cashier on the receipt and
+            // create a mismatch with cash_transactions.user_id (which we do NOT
+            // touch here). The edit itself is captured in system_logs via
+            // logChange() a few lines below.
+            $pdo->prepare("UPDATE payments SET unit_id=?,tenant_id=?,payment_type=?,service_type_id=?,amount=?,payment_date=?,due_date=?,period_month=?,period_year=?,notes=? WHERE id=?")
+                ->execute([$unitId,$tenantId,$type,$serviceId,$amount,$payDate,$dueDate,$periodMonth,$periodYear,$notes,$id]);
 
             // Only sync the 'received' cash row that mirrors this payment. Refunds
             // also store reference_payment_id, and we must not overwrite their

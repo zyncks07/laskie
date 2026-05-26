@@ -470,7 +470,12 @@ function handleUpload(
     if (!is_writable($dir)) {
         return ['path' => null, 'error' => 'Upload directory not writable. Run on server: sudo chmod -R 775 /var/www/laskie/uploads && sudo chown -R www-data:www-data /var/www/laskie/uploads'];
     }
-    $filename = date('Ymd_His') . '_' . uniqid() . '.' . $ext;
+    // uniqid() resolves to microsecond timestamp + small random bits, so two
+    // uploads in the same microsecond can collide and the second move_uploaded_
+    // _file silently overwrites the first. random_bytes(8) → 16 hex chars gives
+    // 64 bits of entropy, which is enough that practical collisions never happen
+    // even under heavy concurrency.
+    $filename = date('Ymd_His') . '_' . bin2hex(random_bytes(8)) . '.' . $ext;
     $absPath  = $dir . $filename;
     if (!move_uploaded_file($file['tmp_name'], $absPath)) {
         return ['path' => null, 'error' => 'Failed to save file. Run: sudo chown -R www-data:www-data /var/www/laskie/uploads'];
@@ -682,7 +687,7 @@ function renderHtmlToPdf(string $html): string {
     }
 
     $tmpHtml = tempnam(sys_get_temp_dir(), 'laskie_pdf_') . '.html';
-    $tmpPdf  = sys_get_temp_dir() . '/laskie_pdf_' . uniqid() . '.pdf';
+    $tmpPdf  = sys_get_temp_dir() . '/laskie_pdf_' . bin2hex(random_bytes(8)) . '.pdf';
     if (file_put_contents($tmpHtml, $html) === false) {
         throw new RuntimeException('Could not write temporary HTML file for PDF rendering.');
     }

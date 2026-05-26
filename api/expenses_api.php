@@ -42,12 +42,16 @@ if ($action === 'save_expense') {
 
         $pdo->beginTransaction();
         try {
+            // recorded_by is intentionally left out of the UPDATE — same reasoning
+            // as save_payment::received_by. The original recorder is the audit
+            // truth (and matches cash_transactions.user_id, which we don't touch);
+            // the editing admin is captured by logChange() below.
             if ($receiptPath) {
-                $pdo->prepare("UPDATE expenses SET unit_id=?,category_id=?,amount=?,expense_date=?,description=?,notes=?,receipt_path=?,receipt_url=?,recorded_by=? WHERE id=?")
-                    ->execute([$unitId,$categoryId,$amount,$expDate,$description,$notes,$receiptPath,$receiptUrl,$_SESSION['user']['id'],$id]);
+                $pdo->prepare("UPDATE expenses SET unit_id=?,category_id=?,amount=?,expense_date=?,description=?,notes=?,receipt_path=?,receipt_url=? WHERE id=?")
+                    ->execute([$unitId,$categoryId,$amount,$expDate,$description,$notes,$receiptPath,$receiptUrl,$id]);
             } else {
-                $pdo->prepare("UPDATE expenses SET unit_id=?,category_id=?,amount=?,expense_date=?,description=?,notes=?,receipt_url=?,recorded_by=? WHERE id=?")
-                    ->execute([$unitId,$categoryId,$amount,$expDate,$description,$notes,$receiptUrl,$_SESSION['user']['id'],$id]);
+                $pdo->prepare("UPDATE expenses SET unit_id=?,category_id=?,amount=?,expense_date=?,description=?,notes=?,receipt_url=? WHERE id=?")
+                    ->execute([$unitId,$categoryId,$amount,$expDate,$description,$notes,$receiptUrl,$id]);
             }
 
             $pdo->prepare("UPDATE cash_transactions SET amount=?,transaction_date=? WHERE reference_expense_id=?")
