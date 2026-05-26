@@ -77,28 +77,34 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($up['error']) jsonErr($up['error']);
         if (!$up['path']) jsonErr('Please choose a file to upload.');
 
-        // Best-effort: delete the previous avatar file if it lives in our uploads dir.
+        // Order matters: update the DB FIRST so the new avatar is the source
+        // of truth, THEN unlink the old file. The old approach unlinked
+        // before the UPDATE — if the UPDATE failed for any reason, the user
+        // would lose both the file and the reference to it.
         $prev = $pdo->prepare("SELECT avatar_path FROM users WHERE id=?");
         $prev->execute([$myId]);
         $prevPath = $prev->fetchColumn();
+
+        $pdo->prepare("UPDATE users SET avatar_path=? WHERE id=?")->execute([$up['path'], $myId]);
         if ($prevPath && str_starts_with((string)$prevPath, '/uploads/avatars/')) {
             @unlink(__DIR__ . $prevPath);
         }
-
-        $pdo->prepare("UPDATE users SET avatar_path=? WHERE id=?")->execute([$up['path'], $myId]);
         logActivity($pdo, 'UPLOAD_AVATAR', 'Accounts', "Uploaded avatar (id #$myId)");
         $refreshSession();
         jsonOk(['msg' => 'Avatar updated.', 'avatar_path' => $up['path']]);
     }
 
     if ($action === 'remove_avatar') {
+        // Same order as upload: DB first, file unlink second. If the UPDATE
+        // fails, the file stays — header.php's is_file() check renders the
+        // fallback initials anyway.
         $r = $pdo->prepare("SELECT avatar_path FROM users WHERE id=?");
         $r->execute([$myId]);
         $prevPath = $r->fetchColumn();
+        $pdo->prepare("UPDATE users SET avatar_path=NULL WHERE id=?")->execute([$myId]);
         if ($prevPath && str_starts_with((string)$prevPath, '/uploads/avatars/')) {
             @unlink(__DIR__ . $prevPath);
         }
-        $pdo->prepare("UPDATE users SET avatar_path=NULL WHERE id=?")->execute([$myId]);
         logActivity($pdo, 'REMOVE_AVATAR', 'Accounts', "Removed avatar (id #$myId)");
         $refreshSession();
         jsonOk(['msg' => 'Avatar removed.']);

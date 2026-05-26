@@ -117,14 +117,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($up['error']) jsonErr($up['error']);
         if (!$up['path']) jsonErr('Please choose a file to upload.');
 
+        // DB first, unlink old file second — see my_account.php for reasoning.
         $prev = $pdo->prepare("SELECT avatar_path FROM users WHERE id=?");
         $prev->execute([$userId]);
         $prevPath = $prev->fetchColumn();
+
+        $pdo->prepare("UPDATE users SET avatar_path=? WHERE id=?")->execute([$up['path'], $userId]);
         if ($prevPath && str_starts_with((string)$prevPath, '/uploads/avatars/')) {
             @unlink(__DIR__ . '/..' . $prevPath);
         }
-
-        $pdo->prepare("UPDATE users SET avatar_path=? WHERE id=?")->execute([$up['path'], $userId]);
         logActivity($pdo, 'UPLOAD_AVATAR_ADMIN', 'Accounts', "Uploaded avatar for user #$userId");
         // If admin updated their own avatar, refresh session so the header reflects it.
         if ($userId === (int)$_SESSION['user']['id']) {
@@ -139,10 +140,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $r = $pdo->prepare("SELECT avatar_path FROM users WHERE id=?");
         $r->execute([$userId]);
         $prevPath = $r->fetchColumn();
+        $pdo->prepare("UPDATE users SET avatar_path=NULL WHERE id=?")->execute([$userId]);
         if ($prevPath && str_starts_with((string)$prevPath, '/uploads/avatars/')) {
             @unlink(__DIR__ . '/..' . $prevPath);
         }
-        $pdo->prepare("UPDATE users SET avatar_path=NULL WHERE id=?")->execute([$userId]);
         logActivity($pdo, 'REMOVE_AVATAR_ADMIN', 'Accounts', "Removed avatar for user #$userId");
         if ($userId === (int)$_SESSION['user']['id']) {
             $_SESSION['user']['avatar_path'] = null;
