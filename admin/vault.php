@@ -20,12 +20,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $amount     = (float)($_POST['amount'] ?? 0);
         $date       = trim($_POST['remittance_date'] ?? '');
         $notes      = nullOrStr($_POST['notes'] ?? '');
+        $docUrl     = nullOrStr($_POST['doc_url'] ?? '');
+        $docPath    = null;
         if (!$remittedBy) jsonErr('Please select who is remitting.');
         if ($amount <= 0) jsonErr('Amount must be greater than zero.');
         if (!$date || !strtotime($date)) jsonErr('Valid date required.');
-        $pdo->prepare("INSERT INTO cash_transactions (user_id,transaction_type,amount,transaction_date,notes) VALUES (?,?,?,?,?)")
-            ->execute([$remittedBy,'remitted',$amount,$date,$notes]);
-        logActivity($pdo,'VAULT_REMITTANCE','Vault',"Remittance ₱$amount from user #$remittedBy");
+        // Optional proof attachment — same shape as cash_api.php::save_remittance.
+        // handleUpload stores under uploads/remittance/ with the project's
+        // standard whitelist + image auto-compression.
+        if (!empty($_FILES['doc_file']['name'])) {
+            $up = handleUpload('doc_file', 'remittance');
+            if ($up['error']) jsonErr($up['error']);
+            $docPath = $up['path'];
+        }
+        $pdo->prepare("INSERT INTO cash_transactions (user_id,transaction_type,amount,transaction_date,notes,doc_path,doc_url) VALUES (?,?,?,?,?,?,?)")
+            ->execute([$remittedBy,'remitted',$amount,$date,$notes,$docPath,$docUrl]);
+        logActivity($pdo,'VAULT_REMITTANCE','Vault',"Remittance ₱$amount from user #$remittedBy" . ($docPath || $docUrl ? ' (with proof)' : ''));
         jsonOk(['msg'=>'Remittance recorded.']);
     }
 
@@ -766,9 +776,16 @@ include '../includes/header.php';
           <label class="form-label">Date</label>
           <input type="date" id="remDate" class="form-control">
         </div>
-        <div class="mb-0">
+        <div class="mb-3">
           <label class="form-label">Notes <span class="text-muted">(optional)</span></label>
           <textarea id="remNotes" class="form-control" rows="2" placeholder="e.g. Weekly cash deposit"></textarea>
+        </div>
+        <div class="mb-0">
+          <label class="form-label">Proof of Remittance <span class="text-muted">(optional)</span></label>
+          <div class="form-text mb-1">Upload file (photo, receipt, etc.)</div>
+          <input type="file" class="form-control form-control-sm" id="remFile" accept=".jpg,.jpeg,.png,.pdf">
+          <div class="form-text mt-1">Or external URL</div>
+          <input type="url" class="form-control form-control-sm mt-1" id="remUrl" placeholder="https://drive.google.com/...">
         </div>
       </div>
       <div class="modal-footer">
@@ -1278,21 +1295,28 @@ function openRemittanceModal() {
   document.getElementById('remAmount').value = '';
   document.getElementById('remDate').value   = new Date().toISOString().slice(0,10);
   document.getElementById('remNotes').value  = '';
+  document.getElementById('remFile').value   = '';
+  document.getElementById('remUrl').value    = '';
   document.getElementById('remMsg').style.display = 'none';
   remittanceModal.show();
 }
 
 function saveRemittance() {
   const el = document.getElementById('remMsg');
-  apiPost('../admin/vault.php', {
-    action:'add_remittance',
-    remitted_by: document.getElementById('remBy').value,
-    amount: document.getElementById('remAmount').value,
-    remittance_date: document.getElementById('remDate').value,
-    notes: document.getElementById('remNotes').value
-  }, (err, res) => {
+  // FormData (not a plain object) so the optional file upload rides along.
+  // apiPost passes FormData through unchanged.
+  const fd = new FormData();
+  fd.append('action',          'add_remittance');
+  fd.append('remitted_by',     document.getElementById('remBy').value);
+  fd.append('amount',          document.getElementById('remAmount').value);
+  fd.append('remittance_date', document.getElementById('remDate').value);
+  fd.append('notes',           document.getElementById('remNotes').value);
+  fd.append('doc_url',         document.getElementById('remUrl').value);
+  const file = document.getElementById('remFile').files[0];
+  if (file) fd.append('doc_file', file);
+  apiPost('../admin/vault.php', fd, (err, res) => {
     el.style.display='';
-    if (!res.success){ el.className='alert alert-danger'; el.textContent=res.error; return; }
+    if (!res || !res.success){ el.className='alert alert-danger'; el.textContent=(res && res.error)||'Save failed.'; return; }
     el.className='alert alert-success'; el.textContent=res.msg;
     setTimeout(()=>{ remittanceModal.hide(); location.reload(); }, 700);
   });
