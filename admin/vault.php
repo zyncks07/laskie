@@ -1096,6 +1096,7 @@ const recipientsModal   = new bootstrap.Modal(document.getElementById('recipient
 const editDistModal     = new bootstrap.Modal(document.getElementById('editDistModal'));
 const returnModal       = new bootstrap.Modal(document.getElementById('returnModal'));
 const editReturnModal   = new bootstrap.Modal(document.getElementById('editReturnModal'));
+const userReturnModal   = new bootstrap.Modal(document.getElementById('userReturnModal'));
 
 // ── Embedded page data (no AJAX needed to read these) ────────
 <?php
@@ -1513,12 +1514,6 @@ function deleteReturn(id) {
 }
 
 // ── Vault Returns to Users (admin issues cash from vault back to a user) ──
-window.userReturnModal = null;
-document.addEventListener('DOMContentLoaded', () => {
-  const el = document.getElementById('userReturnModal');
-  if (el) window.userReturnModal = new bootstrap.Modal(el);
-});
-
 function openUserReturnModal() {
   document.getElementById('userReturnTitle').textContent = 'Issue Cash from Vault to User';
   document.getElementById('userReturnId').value     = '';
@@ -1529,7 +1524,7 @@ function openUserReturnModal() {
   document.getElementById('userReturnMsg').style.display = 'none';
   document.getElementById('userReturnSaveBtn').disabled = false;
   document.getElementById('userReturnSaveBtn').innerHTML = '<i class="fa-solid fa-check me-1"></i>Issue Cash';
-  window.userReturnModal && window.userReturnModal.show();
+  userReturnModal.show();
 }
 
 function openEditUserReturn(id) {
@@ -1545,7 +1540,7 @@ function openEditUserReturn(id) {
     document.getElementById('userReturnMsg').style.display = 'none';
     document.getElementById('userReturnSaveBtn').disabled = false;
     document.getElementById('userReturnSaveBtn').innerHTML = '<i class="fa-solid fa-check me-1"></i>Save Changes';
-    window.userReturnModal && window.userReturnModal.show();
+    userReturnModal.show();
   });
 }
 
@@ -1572,7 +1567,7 @@ function saveUserReturn() {
       return;
     }
     showToast(res.msg, 'success');
-    window.userReturnModal && window.userReturnModal.hide();
+    userReturnModal.hide();
     // Cheap refresh: reload the page so the row + balance + chart all re-render correctly.
     setTimeout(() => location.reload(), 400);
   });
