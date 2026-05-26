@@ -35,34 +35,53 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $oldRow->execute([$id]);
             $oldUnitId = (int)($oldRow->fetchColumn() ?: 0) ?: null;
 
-            $pdo->prepare("UPDATE tenants SET unit_id=?,full_name=?,email=?,phone=?,phone2=?,facebook=?,instagram=?,other_social=?,address=?,contract_start=?,contract_end=?,status=?,notes=?,updated_at=NOW() WHERE id=?")
-                ->execute([$unitId,$fullName,$email,$phone,$phone2,$fb,$ig,$other_s,$address,$start,$end,$status,$notes,$id]);
-            // Recompute new unit's occupancy from the truth of the tenants table.
-            // Previously this flipped to 'vacant' whenever the edited tenant went
-            // inactive/former, ignoring any other active tenants still assigned
-            // to the unit. Counting again here keeps the unit 'occupied' if
-            // someone else is still active in it.
-            if ($unitId) {
-                $stillActive = $pdo->prepare("SELECT COUNT(*) FROM tenants WHERE unit_id=? AND status='active'");
-                $stillActive->execute([$unitId]);
-                $occ = ((int)$stillActive->fetchColumn() > 0) ? 'occupied' : 'vacant';
-                $pdo->prepare("UPDATE rental_units SET status=? WHERE id=?")->execute([$occ,$unitId]);
-            }
-            // If the tenant moved out of the old unit, recompute occupancy there too.
-            if ($oldUnitId && $oldUnitId !== $unitId) {
-                $stillOccupied = $pdo->prepare("SELECT COUNT(*) FROM tenants WHERE unit_id=? AND status='active' AND id!=?");
-                $stillOccupied->execute([$oldUnitId, $id]);
-                if ((int)$stillOccupied->fetchColumn() === 0) {
-                    $pdo->prepare("UPDATE rental_units SET status='vacant' WHERE id=?")->execute([$oldUnitId]);
+            // Atomic: UPDATE tenants + up-to-two UPDATE rental_units commit
+            // together. Without this, a failure between the tenant update and
+            // the occupancy resync leaves rental_units.status disagreeing
+            // with the tenants table.
+            $pdo->beginTransaction();
+            try {
+                $pdo->prepare("UPDATE tenants SET unit_id=?,full_name=?,email=?,phone=?,phone2=?,facebook=?,instagram=?,other_social=?,address=?,contract_start=?,contract_end=?,status=?,notes=?,updated_at=NOW() WHERE id=?")
+                    ->execute([$unitId,$fullName,$email,$phone,$phone2,$fb,$ig,$other_s,$address,$start,$end,$status,$notes,$id]);
+                // Recompute new unit's occupancy from the truth of the tenants table.
+                // Previously this flipped to 'vacant' whenever the edited tenant went
+                // inactive/former, ignoring any other active tenants still assigned
+                // to the unit. Counting again here keeps the unit 'occupied' if
+                // someone else is still active in it.
+                if ($unitId) {
+                    $stillActive = $pdo->prepare("SELECT COUNT(*) FROM tenants WHERE unit_id=? AND status='active'");
+                    $stillActive->execute([$unitId]);
+                    $occ = ((int)$stillActive->fetchColumn() > 0) ? 'occupied' : 'vacant';
+                    $pdo->prepare("UPDATE rental_units SET status=? WHERE id=?")->execute([$occ,$unitId]);
                 }
+                // If the tenant moved out of the old unit, recompute occupancy there too.
+                if ($oldUnitId && $oldUnitId !== $unitId) {
+                    $stillOccupied = $pdo->prepare("SELECT COUNT(*) FROM tenants WHERE unit_id=? AND status='active' AND id!=?");
+                    $stillOccupied->execute([$oldUnitId, $id]);
+                    if ((int)$stillOccupied->fetchColumn() === 0) {
+                        $pdo->prepare("UPDATE rental_units SET status='vacant' WHERE id=?")->execute([$oldUnitId]);
+                    }
+                }
+                logActivity($pdo, 'UPDATE_TENANT', 'Tenants', "Updated tenant #$id ($fullName)");
+                $pdo->commit();
+            } catch (Throwable $e) {
+                if ($pdo->inTransaction()) $pdo->rollBack();
+                throw $e;
             }
-            logActivity($pdo, 'UPDATE_TENANT', 'Tenants', "Updated tenant #$id ($fullName)");
             jsonOk(['msg'=>'Tenant updated.']);
         } else {
-            $pdo->prepare("INSERT INTO tenants (unit_id,full_name,email,phone,phone2,facebook,instagram,other_social,address,contract_start,contract_end,status,notes,created_by) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
-                ->execute([$unitId,$fullName,$email,$phone,$phone2,$fb,$ig,$other_s,$address,$start,$end,$status,$notes,$_SESSION['user']['id']]);
-            if ($unitId && $status === 'active') $pdo->prepare("UPDATE rental_units SET status='occupied' WHERE id=?")->execute([$unitId]);
-            logActivity($pdo, 'CREATE_TENANT', 'Tenants', "Created tenant $fullName");
+            // Atomic: tenant creation may bump the unit to 'occupied'.
+            $pdo->beginTransaction();
+            try {
+                $pdo->prepare("INSERT INTO tenants (unit_id,full_name,email,phone,phone2,facebook,instagram,other_social,address,contract_start,contract_end,status,notes,created_by) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+                    ->execute([$unitId,$fullName,$email,$phone,$phone2,$fb,$ig,$other_s,$address,$start,$end,$status,$notes,$_SESSION['user']['id']]);
+                if ($unitId && $status === 'active') $pdo->prepare("UPDATE rental_units SET status='occupied' WHERE id=?")->execute([$unitId]);
+                logActivity($pdo, 'CREATE_TENANT', 'Tenants', "Created tenant $fullName");
+                $pdo->commit();
+            } catch (Throwable $e) {
+                if ($pdo->inTransaction()) $pdo->rollBack();
+                throw $e;
+            }
             jsonOk(['msg'=>'Tenant added.']);
         }
     }

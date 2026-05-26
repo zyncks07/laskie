@@ -157,11 +157,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
     // ── Global Due Day ────────────────────────────────────────
+    // Atomic: applying the global default touches every unit AND the
+    // settings row that records the default. A failure between them
+    // would leave the displayed default disagreeing with reality.
     if ($action === 'set_due_day') {
         $day = max(1, min(28, (int)($_POST['due_day'] ?? 5)));
-        $pdo->prepare("UPDATE rental_units SET due_day=?")->execute([$day]);
-        $pdo->prepare("UPDATE settings SET setting_value=? WHERE setting_key='default_due_day'")->execute([$day]);
-        logActivity($pdo,'SET_GLOBAL_DUE_DAY','Settings',"Set global due day to $day for all units");
+        $pdo->beginTransaction();
+        try {
+            $pdo->prepare("UPDATE rental_units SET due_day=?")->execute([$day]);
+            $pdo->prepare("UPDATE settings SET setting_value=? WHERE setting_key='default_due_day'")->execute([$day]);
+            logActivity($pdo,'SET_GLOBAL_DUE_DAY','Settings',"Set global due day to $day for all units");
+            $pdo->commit();
+        } catch (Throwable $e) {
+            if ($pdo->inTransaction()) $pdo->rollBack();
+            throw $e;
+        }
         jsonOk(['msg'=>"Due day updated to the {$day}th for all rental units."]);
     }
 
