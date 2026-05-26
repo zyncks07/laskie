@@ -213,9 +213,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     if ($action === 'delete_recipient') {
         $id = (int)($_POST['id'] ?? 0);
-        $cnt = $pdo->prepare("SELECT COUNT(*) FROM dividend_distributions WHERE recipient_id=?");
-        $cnt->execute([$id]);
-        if ((int)$cnt->fetchColumn() > 0) jsonErr('Cannot delete: recipient has distribution history. Deactivate instead.');
+        // Check BOTH distribution and return history. The dividend_returns FK
+        // is RESTRICT (no ON DELETE clause in install.sql) so MySQL would bounce
+        // the DELETE anyway, but with a generic FK error rather than the
+        // user-friendly message — fail clean here.
+        $cntDist = $pdo->prepare("SELECT COUNT(*) FROM dividend_distributions WHERE recipient_id=?");
+        $cntDist->execute([$id]);
+        if ((int)$cntDist->fetchColumn() > 0) jsonErr('Cannot delete: recipient has distribution history. Deactivate instead.');
+        $cntRet = $pdo->prepare("SELECT COUNT(*) FROM dividend_returns WHERE recipient_id=?");
+        $cntRet->execute([$id]);
+        if ((int)$cntRet->fetchColumn() > 0) jsonErr('Cannot delete: recipient has return history. Deactivate instead.');
         $pdo->prepare("DELETE FROM dividend_recipients WHERE id=?")->execute([$id]);
         logActivity($pdo,'DELETE_RECIPIENT','Vault',"Deleted recipient #$id");
         jsonOk(['msg'=>'Recipient deleted.']);
@@ -225,6 +232,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $id     = (int)($_POST['id'] ?? 0);
         $active = (int)($_POST['is_active'] ?? 1);
         $pdo->prepare("UPDATE dividend_recipients SET is_active=? WHERE id=?")->execute([$active,$id]);
+        // Every other recipient operation (save, delete) is audit-logged; keep
+        // this one consistent so admins have a record of who flipped a recipient
+        // active/inactive and when.
+        logActivity($pdo, 'TOGGLE_RECIPIENT', 'Vault', ($active ? 'Activated' : 'Deactivated') . " recipient #$id");
         jsonOk(['msg'=>$active ? 'Recipient activated.' : 'Recipient deactivated.']);
     }
 
@@ -1093,14 +1104,18 @@ foreach ($distributions  as $d)   { $distMap[$d['id']]  = $d; }
 $retMap   = [];
 foreach ($returnRecords  as $ret)  { $retMap[$ret['id']] = $ret; }
 ?>
-const DIST_DATA      = <?= json_encode($distMap,  JSON_UNESCAPED_UNICODE) ?>;
-const RET_DATA       = <?= json_encode($retMap,   JSON_UNESCAPED_UNICODE) ?>;
-const TOTAL_REMITTED = <?= $totalRemitted ?>;
+const DIST_DATA          = <?= json_encode($distMap,  JSON_UNESCAPED_UNICODE) ?>;
+const RET_DATA           = <?= json_encode($retMap,   JSON_UNESCAPED_UNICODE) ?>;
+const TOTAL_REMITTED     = <?= $totalRemitted ?>;
+// Total cash issued from vault back to users (admin-only flow). Server-side
+// $vaultBalance subtracts this — the client recalc must do the same or the
+// displayed balance drifts upward after every distribution/return delete.
+const TOTAL_USER_RETURNED = <?= $totalUserReturned ?>;
 
 function recalcVaultBalance() {
   const distTotal = Object.values(DIST_DATA).reduce((s,d)=>s+parseFloat(d.amount||0),0);
   const retTotal  = Object.values(RET_DATA).reduce((s,r)=>s+parseFloat(r.amount||0),0);
-  const balance   = TOTAL_REMITTED - distTotal + retTotal;
+  const balance   = TOTAL_REMITTED - distTotal + retTotal - TOTAL_USER_RETURNED;
   const fmt = v => '₱'+v.toLocaleString('en-PH',{minimumFractionDigits:2,maximumFractionDigits:2});
   document.getElementById('vaultBalanceDisplay').textContent = fmt(balance);
   document.getElementById('statDistTotal').textContent       = fmt(distTotal);
@@ -1327,11 +1342,10 @@ function deleteDistribution(id) {
     apiPost('../admin/vault.php', {action:'delete_distribution', id}, (err, res) => {
       if (!res || !res.success){ showToast((res&&res.error)||'Delete failed.','error'); return; }
       showToast(res.msg,'success');
-      const row = document.querySelector(`tr[data-dist-id="${id}"]`);
-      if (row) row.remove();
-      delete DIST_DATA[id];
-      recalcVaultBalance();
-      loadLogs();
+      // Full reload — the Recipient Stats card, dividend chart, and table
+      // tfoots are server-rendered and stay stale otherwise. All other delete
+      // handlers on this page do the same.
+      setTimeout(() => location.reload(), 400);
     });
   });
 }
@@ -1492,11 +1506,8 @@ function deleteReturn(id) {
     apiPost('../admin/vault.php', {action:'delete_return', id}, (err, res) => {
       if (!res || !res.success){ showToast((res&&res.error)||'Delete failed.','error'); return; }
       showToast(res.msg,'success');
-      const row = document.querySelector(`tr[data-ret-id="${id}"]`);
-      if (row) row.remove();
-      delete RET_DATA[id];
-      recalcVaultBalance();
-      loadLogs();
+      // Full reload — see deleteDistribution comment.
+      setTimeout(() => location.reload(), 400);
     });
   });
 }
