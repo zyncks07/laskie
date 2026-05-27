@@ -36,9 +36,10 @@ if ($action === 'save_expense') {
     if ($id) {
         requireAdmin(); // Only admins may edit existing expenses
         // Fetch before state for audit trail
-        $oldRow = $pdo->prepare("SELECT unit_id, category_id, amount, expense_date, description, notes FROM expenses WHERE id=?");
+        $oldRow = $pdo->prepare("SELECT unit_id, category_id, amount, expense_date, description, notes FROM expenses WHERE id=? AND deleted_at IS NULL");
         $oldRow->execute([$id]);
-        $before = $oldRow->fetch() ?: [];
+        $before = $oldRow->fetch();
+        if (!$before) jsonErr('Expense not found.');
 
         $pdo->beginTransaction();
         try {
