@@ -56,7 +56,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             // Capture before-state for audit diff.
             $prevRow = $pdo->prepare("SELECT username, full_name, role, email, status FROM users WHERE id=?");
             $prevRow->execute([$id]);
-            $before = $prevRow->fetch() ?: [];
+            $before = $prevRow->fetch();
+            if (!$before) jsonErr('User not found.');
             // Update
             $check = $pdo->prepare("SELECT id FROM users WHERE username=? AND id!=?");
             $check->execute([$username, $id]);
