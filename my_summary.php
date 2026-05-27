@@ -192,7 +192,7 @@ $cashSubLabel = 'End of ' . date('M Y', mktime(0, 0, 0, $selMonth, 1, $selYear))
       </div>
     </div>
   </div>
-  <?php if ((float)$tot['total_vault_returns'] > 0): ?>
+  <?php if (money_is_pos($tot['total_vault_returns'])): ?>
   <div class="col-6 col-md-2">
     <div class="stat-card">
       <div class="stat-icon teal"><i class="fa-solid fa-hand-holding-dollar"></i></div>
@@ -204,7 +204,7 @@ $cashSubLabel = 'End of ' . date('M Y', mktime(0, 0, 0, $selMonth, 1, $selYear))
     </div>
   </div>
   <?php endif; ?>
-  <?php if ((float)$tot['total_refunded'] > 0): ?>
+  <?php if (money_is_pos($tot['total_refunded'])): ?>
   <div class="col-6 col-md-2">
     <div class="stat-card">
       <div class="stat-icon amber"><i class="fa-solid fa-rotate-left"></i></div>

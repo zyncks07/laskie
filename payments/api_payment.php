@@ -460,7 +460,8 @@ if ($action === 'monthly_summary') {
             $row['pay_status']      = 'gray';
             continue;
         }
-        $rate         = getRateForMonth($pdo, (int)$row['id'], (float)$row['monthly_rate'], $month, $year);
+        $rate                = getRateForMonth($pdo, (int)$row['id'], (float)$row['monthly_rate'], $month, $year);
+        $row['monthly_rate'] = number_format($rate, 2, '.', ''); // reflect history-adjusted rate in the display column
         $expected     = prorateFirstMonth($rate, (int)$row['due_day'], $row['contract_start'] ?? null, $month, $year);
         $paid         = $row['rent_paid'];
         $unpaidRent   = money_max('0.00', money_sub($expected, $paid));

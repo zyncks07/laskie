@@ -378,15 +378,15 @@ table.ledger tfoot td{padding:10px 8px;font-weight:700;border-top:2px solid var(
           <td><?=clean($row['description'])?></td>
           <td class="mono" style="font-size:10.5px;color:var(--muted)"><?=clean($row['invoice_no']??'—')?></td>
           <td style="font-size:11px;color:var(--muted)"><?=clean($row['cashier']??'—')?></td>
-          <td class="r" style="color:<?=$row['debit']>0?'var(--danger)':'var(--muted)'?>">
-            <?=$row['debit']>0?money($row['debit']):'—'?>
+          <td class="r" style="color:<?=money_is_pos($row['debit'])?'var(--danger)':'var(--muted)'?>">
+            <?=money_is_pos($row['debit'])?money($row['debit']):'—'?>
           </td>
-          <td class="r" style="color:<?=$row['credit']>0?'var(--success)':'var(--muted)'?>;font-weight:<?=$row['credit']>0?'600':'400'?>">
-            <?=$row['credit']>0?money($row['credit']):'—'?>
+          <td class="r" style="color:<?=money_is_pos($row['credit'])?'var(--success)':'var(--muted)'?>;font-weight:<?=money_is_pos($row['credit'])?'600':'400'?>">
+            <?=money_is_pos($row['credit'])?money($row['credit']):'—'?>
           </td>
-          <td class="r" style="font-weight:600;color:<?=$row['balance']>0?'var(--danger)':($row['balance']<0?'var(--info)':'var(--success)')?>">
-            <?php if($row['balance']>0): echo money($row['balance']);
-            elseif($row['balance']<0): echo '('.money(abs($row['balance'])).') CR';
+          <td class="r" style="font-weight:600;color:<?=money_is_pos($row['balance'])?'var(--danger)':(money_lt($row['balance'],'0.00')?'var(--info)':'var(--success)')?>">
+            <?php if(money_is_pos($row['balance'])): echo money($row['balance']);
+            elseif(money_lt($row['balance'],'0.00')): echo '('.money(money_abs($row['balance'])).') CR';
             else: echo '—'; endif; ?>
           </td>
         </tr>
@@ -400,9 +400,9 @@ table.ledger tfoot td{padding:10px 8px;font-weight:700;border-top:2px solid var(
             <td colspan="4">TOTALS</td>
             <td class="r" style="color:var(--danger)"><?=money($totalDebit)?></td>
             <td class="r" style="color:var(--success)"><?=money($totalCredit)?></td>
-            <td class="r" style="color:<?=$finalBal>0?'var(--danger)':($finalBal<0?'var(--info)':'var(--success)')?>">
-              <?php if($finalBal>0): echo money($finalBal).' DR';
-              elseif($finalBal<0): echo '('.money(abs($finalBal)).') CR';
+            <td class="r" style="color:<?=money_is_pos($finalBal)?'var(--danger)':(money_lt($finalBal,'0.00')?'var(--info)':'var(--success)')?>">
+              <?php if(money_is_pos($finalBal)): echo money($finalBal).' DR';
+              elseif(money_lt($finalBal,'0.00')): echo '('.money(money_abs($finalBal)).') CR';
               else: echo 'BALANCED'; endif; ?>
             </td>
           </tr>
@@ -421,7 +421,7 @@ table.ledger tfoot td{padding:10px 8px;font-weight:700;border-top:2px solid var(
           <span class="bal-label">Total Paid</span>
           <span class="bal-value" style="color:var(--success)"><?=money($totalCredit)?></span>
         </div>
-        <?php if ($totalRefunded > 0): ?>
+        <?php if (money_is_pos($totalRefunded)): ?>
         <div class="bal-item">
           <span class="bal-label">Total Refunded</span>
           <span class="bal-value" style="color:var(--danger)"><?=money($totalRefunded)?></span>
@@ -430,10 +430,10 @@ table.ledger tfoot td{padding:10px 8px;font-weight:700;border-top:2px solid var(
       </div>
       <div class="balance-final">
         <div class="lbl">Outstanding Balance</div>
-        <div class="val"><?=money(abs($finalBal))?></div>
+        <div class="val"><?=money(money_abs($finalBal))?></div>
         <div class="status">
-          <?php if($finalBal>0): ?>Amount Due<?php
-          elseif($finalBal<0): ?>Overpaid (Credit)<?php
+          <?php if(money_is_pos($finalBal)): ?>Amount Due<?php
+          elseif(money_lt($finalBal,'0.00')): ?>Overpaid (Credit)<?php
           else: ?>Fully Settled ✓<?php endif; ?>
         </div>
       </div>
