@@ -139,7 +139,7 @@ include '../includes/header.php';
             <select class="form-select" id="payService" onchange="onServiceChange(this.value)">
               <option value="">— Select service —</option>
               <?php foreach ($serviceTypes as $s): ?>
-              <option value="<?= $s['id'] ?>" data-amount="<?= $s['default_amount'] ?>"><?= clean($s['name']) ?><?= $s['default_amount'] > 0 ? ' — ' . money((float)$s['default_amount']) : ' (variable)' ?></option>
+              <option value="<?= $s['id'] ?>" data-amount="<?= $s['default_amount'] ?>"><?= clean($s['name']) ?><?= money_is_pos($s['default_amount']) ? ' — ' . money($s['default_amount']) : ' (variable)' ?></option>
               <?php endforeach; ?>
             </select>
           </div>

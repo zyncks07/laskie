@@ -396,7 +396,7 @@ include '../includes/header.php';
           <tr>
             <td class="fw-600 cell-trunc"><?= clean($s['name']) ?></td>
             <td class="cell-trunc-lg"><?= clean($s['description'] ?? '—') ?></td>
-            <td class="text-end"><?= $s['default_amount'] > 0 ? money((float)$s['default_amount']) : '<span class="text-muted">Variable</span>' ?></td>
+            <td class="text-end"><?= money_is_pos($s['default_amount']) ? money($s['default_amount']) : '<span class="text-muted">Variable</span>' ?></td>
             <td><span class="badge badge-<?= $s['is_active']?'active':'inactive' ?>"><?= $s['is_active']?'Yes':'No' ?></span></td>
             <td class="text-center">
               <button class="btn-icon" title="Edit" onclick="editService(<?= $s['id'] ?>)"><i class="fa-solid fa-pen fa-xs"></i></button>

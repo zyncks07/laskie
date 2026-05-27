@@ -47,7 +47,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         $prevRow = $pdo->prepare("SELECT full_name, email, phone, phone2, address FROM users WHERE id=?");
         $prevRow->execute([$myId]);
-        $before = $prevRow->fetch() ?: [];
+        $before = $prevRow->fetch();
+        if (!$before) jsonErr('Account not found.');
         $pdo->prepare("UPDATE users SET full_name=?,email=?,phone=?,phone2=?,address=? WHERE id=?")
             ->execute([$fullName, $email, $phone, $phone2, $address, $myId]);
         logChange($pdo, 'UPDATE_OWN_PROFILE', 'Accounts', $before,

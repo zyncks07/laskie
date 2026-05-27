@@ -747,7 +747,7 @@ include '../includes/header.php';
         </thead>
         <tbody>
           <?php foreach ($recipientStats as $r): ?>
-          <?php $net = (float)$r['total_received'] - (float)$r['total_returned']; ?>
+          <?php $net = money_sub($r['total_received'], $r['total_returned']); ?>
           <tr>
             <td>
               <?= clean($r['name']) ?>
@@ -757,8 +757,8 @@ include '../includes/header.php';
               <?php if ($r['notes']): ?><div class="text-muted" style="font-size:11px"><?= clean($r['notes']) ?></div><?php endif; ?>
             </td>
             <td class="text-center text-muted"><?= (int)$r['dist_count'] ?>×</td>
-            <td class="text-end text-success"><?= money((float)$r['total_received']) ?></td>
-            <td class="text-end" style="color:var(--warning)"><?= $r['total_returned'] > 0 ? money((float)$r['total_returned']) : '—' ?></td>
+            <td class="text-end text-success"><?= money($r['total_received']) ?></td>
+            <td class="text-end" style="color:var(--warning)"><?= money_is_pos($r['total_returned']) ? money($r['total_returned']) : '—' ?></td>
             <td class="text-end fw-600 text-success"><?= money($net) ?></td>
           </tr>
           <?php endforeach; ?>
@@ -995,7 +995,7 @@ include '../includes/header.php';
               <tr>
                 <td class="fw-600"><?= clean($r['name']) ?></td>
                 <td class="text-muted" style="font-size:12px"><?= clean($r['notes']??'') ?: '—' ?></td>
-                <td class="text-end text-success fw-600"><?= money((float)$r['total_received']) ?></td>
+                <td class="text-end text-success fw-600"><?= money($r['total_received']) ?></td>
                 <td class="text-center">
                   <?php if ($r['is_active']): ?>
                   <span class="badge" style="background:var(--success-bg);color:var(--success)">Active</span>
