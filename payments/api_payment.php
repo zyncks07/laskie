@@ -577,16 +577,17 @@ if ($action === 'save_charge') {
     if (!$description) jsonErr('Description is required.');
 
     if ($chargeId) {
-        $chk = $pdo->prepare("SELECT payment_id FROM unit_charges WHERE id=?");
+        $chk = $pdo->prepare("SELECT service_type_id, amount, description, charge_date, period_month, period_year, payment_id FROM unit_charges WHERE id=?");
         $chk->execute([$chargeId]);
         $chkRow = $chk->fetch();
         if (!$chkRow) jsonErr('Charge not found.');
         if ($chkRow['payment_id'] !== null) jsonErr('Cannot edit a paid charge. Refund the payment first.');
+        $before = array_intersect_key($chkRow, array_flip(['service_type_id','amount','description','charge_date','period_month','period_year']));
         $pdo->beginTransaction();
         try {
             $pdo->prepare("UPDATE unit_charges SET service_type_id=?,amount=?,description=?,charge_date=?,period_month=?,period_year=? WHERE id=? AND payment_id IS NULL")
                 ->execute([$serviceId,$amount,$description,$chargeDate,$periodMonth,$periodYear,$chargeId]);
-            logActivity($pdo,'UPDATE_CHARGE','Charges',"Updated service charge #$chargeId: $description " . money($amount));
+            logChange($pdo,'UPDATE_CHARGE','Charges',$before,['service_type_id'=>$serviceId,'amount'=>$amount,'description'=>$description,'charge_date'=>$chargeDate,'period_month'=>$periodMonth,'period_year'=>$periodYear]);
             $pdo->commit();
         } catch (Throwable $e) { if ($pdo->inTransaction()) $pdo->rollBack(); throw $e; }
         jsonOk(['msg' => 'Charge updated.', 'id' => $chargeId]);

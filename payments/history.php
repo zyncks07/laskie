@@ -352,7 +352,7 @@ include '../includes/header.php';
       </div>
     </div>
   </div>
-  <?php if ($totalRefunded > 0): ?>
+  <?php if (money_is_pos($totalRefunded)): ?>
   <div class="col-6 col-md-3">
     <div class="stat-card">
       <div class="stat-icon red"><i class="fa-solid fa-rotate-left"></i></div>
@@ -378,7 +378,7 @@ include '../includes/header.php';
       </div>
     </div>
   </div>
-  <?php if ($totalRefunded <= 0): ?>
+  <?php if (!money_is_pos($totalRefunded)): ?>
   <div class="col-6 col-md-3">
     <div class="stat-card">
       <div class="stat-icon amber"><i class="fa-solid fa-calendar"></i></div>
