@@ -581,15 +581,23 @@ if ($action === 'save_charge') {
         $chkRow = $chk->fetch();
         if (!$chkRow) jsonErr('Charge not found.');
         if ($chkRow['payment_id'] !== null) jsonErr('Cannot edit a paid charge. Refund the payment first.');
-        $pdo->prepare("UPDATE unit_charges SET service_type_id=?,amount=?,description=?,charge_date=?,period_month=?,period_year=? WHERE id=? AND payment_id IS NULL")
-            ->execute([$serviceId,$amount,$description,$chargeDate,$periodMonth,$periodYear,$chargeId]);
-        logActivity($pdo,'UPDATE_CHARGE','Charges',"Updated service charge #$chargeId: $description ₱$amount");
+        $pdo->beginTransaction();
+        try {
+            $pdo->prepare("UPDATE unit_charges SET service_type_id=?,amount=?,description=?,charge_date=?,period_month=?,period_year=? WHERE id=? AND payment_id IS NULL")
+                ->execute([$serviceId,$amount,$description,$chargeDate,$periodMonth,$periodYear,$chargeId]);
+            logActivity($pdo,'UPDATE_CHARGE','Charges',"Updated service charge #$chargeId: $description " . money($amount));
+            $pdo->commit();
+        } catch (Throwable $e) { if ($pdo->inTransaction()) $pdo->rollBack(); throw $e; }
         jsonOk(['msg' => 'Charge updated.', 'id' => $chargeId]);
     } else {
-        $pdo->prepare("INSERT INTO unit_charges (unit_id,tenant_id,service_type_id,amount,description,charge_date,period_month,period_year,source,created_by) VALUES (?,?,?,?,?,?,?,?,'pre_billed',?)")
-            ->execute([$unitId,$tenantId,$serviceId,$amount,$description,$chargeDate,$periodMonth,$periodYear,$_SESSION['user']['id']]);
-        $newChargeId = (int)$pdo->lastInsertId();
-        logActivity($pdo,'CREATE_CHARGE','Charges',"Created service charge #$newChargeId: $description ₱$amount for unit #$unitId");
+        $pdo->beginTransaction();
+        try {
+            $pdo->prepare("INSERT INTO unit_charges (unit_id,tenant_id,service_type_id,amount,description,charge_date,period_month,period_year,source,created_by) VALUES (?,?,?,?,?,?,?,?,'pre_billed',?)")
+                ->execute([$unitId,$tenantId,$serviceId,$amount,$description,$chargeDate,$periodMonth,$periodYear,$_SESSION['user']['id']]);
+            $newChargeId = (int)$pdo->lastInsertId();
+            logActivity($pdo,'CREATE_CHARGE','Charges',"Created service charge #$newChargeId: $description " . money($amount) . " for unit #$unitId");
+            $pdo->commit();
+        } catch (Throwable $e) { if ($pdo->inTransaction()) $pdo->rollBack(); throw $e; }
         jsonOk(['msg' => 'Service charge added.', 'id' => $newChargeId]);
     }
 }

@@ -30,10 +30,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if (!in_array($status, ['active','inactive','former'], true)) jsonErr('Invalid tenant status.');
 
         if ($id) {
-            // Capture the old unit before the update so we can vacate it if the tenant moves out or changes units.
-            $oldRow = $pdo->prepare("SELECT unit_id FROM tenants WHERE id=?");
+            // Capture before-state: old unit for occupancy resync + full field
+            // set for the audit diff.
+            $oldRow = $pdo->prepare("SELECT unit_id, full_name, status, contract_start, contract_end FROM tenants WHERE id=?");
             $oldRow->execute([$id]);
-            $oldUnitId = (int)($oldRow->fetchColumn() ?: 0) ?: null;
+            $beforeRow = $oldRow->fetch() ?: [];
+            $oldUnitId = (int)($beforeRow['unit_id'] ?: 0) ?: null;
 
             // Atomic: UPDATE tenants + up-to-two UPDATE rental_units commit
             // together. Without this, a failure between the tenant update and
@@ -62,7 +64,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         $pdo->prepare("UPDATE rental_units SET status='vacant' WHERE id=?")->execute([$oldUnitId]);
                     }
                 }
-                logActivity($pdo, 'UPDATE_TENANT', 'Tenants', "Updated tenant #$id ($fullName)");
+                $after = ['unit_id'=>$unitId,'full_name'=>$fullName,'status'=>$status,'contract_start'=>$start,'contract_end'=>$end];
+                logChange($pdo, 'UPDATE_TENANT', 'Tenants', $beforeRow, $after);
                 $pdo->commit();
             } catch (Throwable $e) {
                 if ($pdo->inTransaction()) $pdo->rollBack();

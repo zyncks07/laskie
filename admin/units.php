@@ -18,14 +18,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $typeId   = (int)($_POST['unit_type_id'] ?? 0) ?: null;
         $desc     = nullOrStr($_POST['description'] ?? '');
         $area     = nullOrStr($_POST['floor_area'] ?? '');
-        $rate     = (float)($_POST['monthly_rate'] ?? 0);
+        $rate     = trim((string)($_POST['monthly_rate'] ?? '0'));
         $dueDay   = max(1, min(28, (int)($_POST['due_day'] ?? 5)));
         $status   = $_POST['status'] ?? 'vacant';
         if (!$name) jsonErr('Unit name is required.');
         if ($id) {
-            $oldRow = $pdo->prepare("SELECT monthly_rate FROM rental_units WHERE id=?");
+            $oldRow = $pdo->prepare("SELECT unit_name, monthly_rate, due_day, status FROM rental_units WHERE id=?");
             $oldRow->execute([$id]);
-            $oldRate = (float)$oldRow->fetchColumn();
+            $before  = $oldRow->fetch() ?: [];
+            $oldRate = $before['monthly_rate'] ?? '0';
 
             // Atomic: UPDATE rental_units + (possibly) INSERT/UPDATE
             // unit_rate_history must commit together so the cached rate
@@ -40,7 +41,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 // a new row effective today; we only UPDATE in place when the latest
                 // row is dated today (correcting a same-day typo) or in the future
                 // (adjusting a scheduled increase).
-                if ($rate !== $oldRate) {
+                if (money_cmp($rate, $oldRate) !== 0) {
                     $latestHist = $pdo->prepare("SELECT id, effective_date FROM unit_rate_history WHERE unit_id=? ORDER BY effective_date DESC, created_at DESC LIMIT 1");
                     $latestHist->execute([$id]);
                     $latest = $latestHist->fetch();
@@ -57,7 +58,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     logActivity($pdo,'UPDATE_UNIT_RATE','Units',"Unit #$id rate changed " . money($oldRate) . " → " . money($rate));
                 }
 
-                logActivity($pdo,'UPDATE_UNIT','Units',"Updated unit #$id ($name)");
+                $after = ['unit_name'=>$name,'monthly_rate'=>$rate,'due_day'=>$dueDay,'status'=>$status];
+                logChange($pdo,'UPDATE_UNIT','Units',$before,$after);
                 $pdo->commit();
             } catch (Throwable $e) {
                 if ($pdo->inTransaction()) $pdo->rollBack();
@@ -191,11 +193,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // ── Rate History ──────────────────────────────────────────
     if ($action === 'save_rate_increase') {
         $unitId   = (int)($_POST['unit_id']   ?? 0);
-        $rate     = (float)($_POST['monthly_rate'] ?? 0);
+        $rate     = trim((string)($_POST['monthly_rate'] ?? '0'));
         $effDate  = trim($_POST['effective_date'] ?? '');
         $notes    = nullOrStr($_POST['notes'] ?? '');
         if (!$unitId) jsonErr('Unit required.');
-        if ($rate <= 0) jsonErr('Rate must be greater than zero.');
+        if (!money_is_pos($rate)) jsonErr('Rate must be greater than zero.');
         if (!$effDate || !strtotime($effDate)) jsonErr('Valid effective date required.');
         // INSERT history + conditional UPDATE rental_units must be atomic.
         // Otherwise a failure between them leaves the history row committed

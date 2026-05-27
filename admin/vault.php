@@ -77,6 +77,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     if ($action === 'delete_distribution') {
         $id = (int)($_POST['id'] ?? 0);
+        if (!$id) jsonErr('Distribution ID required.');
+        $chk = $pdo->prepare("SELECT id FROM dividend_distributions WHERE id=?");
+        $chk->execute([$id]);
+        if (!$chk->fetch()) jsonErr('Distribution not found.');
         $pdo->prepare("DELETE FROM dividend_distributions WHERE id=?")->execute([$id]);
         logActivity($pdo,'DELETE_DIVIDEND_DIST','Vault',"Deleted distribution #$id");
         jsonOk(['msg'=>'Distribution deleted.']);
@@ -165,11 +169,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if ($action === 'add_user_return') {
         if (!isAdmin()) jsonErr('Admin access required.', 403);
         $userId = (int)($_POST['user_id'] ?? 0);
-        $amount = (float)($_POST['amount'] ?? 0);
+        $amount = trim((string)($_POST['amount'] ?? '0'));
         $date   = trim($_POST['return_date'] ?? '');
         $notes  = nullOrStr($_POST['notes'] ?? '');
-        if (!$userId)                  jsonErr('Please select a user.');
-        if (!money_is_pos($amount))    jsonErr('Amount must be greater than zero.');
+        if (!$userId)                    jsonErr('Please select a user.');
+        if (!money_is_pos($amount))      jsonErr('Amount must be greater than zero.');
         if (!$date || !strtotime($date)) jsonErr('Valid date required.');
         // Confirm the target user actually exists + is active
         $u = $pdo->prepare("SELECT full_name FROM users WHERE id=? AND status='active'");
@@ -177,11 +181,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $name = $u->fetchColumn();
         if (!$name) jsonErr('Selected user is not active or does not exist.');
 
-        $pdo->prepare(
-            "INSERT INTO cash_transactions (user_id,transaction_type,amount,transaction_date,notes)
-             VALUES (?,'vault_return',?,?,?)"
-        )->execute([$userId, $amount, $date, $notes]);
-        logActivity($pdo,'VAULT_USER_RETURN','Vault',"Issued " . money($amount) . " from vault to $name (user #$userId)");
+        $pdo->beginTransaction();
+        try {
+            $pdo->prepare(
+                "INSERT INTO cash_transactions (user_id,transaction_type,amount,transaction_date,notes)
+                 VALUES (?,'vault_return',?,?,?)"
+            )->execute([$userId, $amount, $date, $notes]);
+            logActivity($pdo,'VAULT_USER_RETURN','Vault',"Issued " . money($amount) . " from vault to $name (user #$userId)");
+            $pdo->commit();
+        } catch (Throwable $e) { $pdo->rollBack(); throw $e; }
         jsonOk(['msg' => "Issued " . money($amount) . " from vault to $name."]);
     }
 
@@ -189,21 +197,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if (!isAdmin()) jsonErr('Admin access required.', 403);
         $id     = (int)($_POST['id'] ?? 0);
         $userId = (int)($_POST['user_id'] ?? 0);
-        $amount = (float)($_POST['amount'] ?? 0);
+        $amount = trim((string)($_POST['amount'] ?? '0'));
         $date   = trim($_POST['return_date'] ?? '');
         $notes  = nullOrStr($_POST['notes'] ?? '');
-        if (!$id)                      jsonErr('Return ID required.');
-        if (!$userId)                  jsonErr('Please select a user.');
-        if (!money_is_pos($amount))    jsonErr('Amount must be greater than zero.');
+        if (!$id)                        jsonErr('Return ID required.');
+        if (!$userId)                    jsonErr('Please select a user.');
+        if (!money_is_pos($amount))      jsonErr('Amount must be greater than zero.');
         if (!$date || !strtotime($date)) jsonErr('Valid date required.');
         $chk = $pdo->prepare("SELECT id FROM cash_transactions WHERE id=? AND transaction_type='vault_return'");
         $chk->execute([$id]);
         if (!$chk->fetch()) jsonErr('Vault return not found.');
-        $pdo->prepare(
-            "UPDATE cash_transactions SET user_id=?, amount=?, transaction_date=?, notes=?
-             WHERE id=? AND transaction_type='vault_return'"
-        )->execute([$userId, $amount, $date, $notes, $id]);
-        logActivity($pdo,'EDIT_VAULT_USER_RETURN','Vault',"Edited vault return #$id (" . money($amount) . " to user #$userId)");
+        $pdo->beginTransaction();
+        try {
+            $pdo->prepare(
+                "UPDATE cash_transactions SET user_id=?, amount=?, transaction_date=?, notes=?
+                 WHERE id=? AND transaction_type='vault_return'"
+            )->execute([$userId, $amount, $date, $notes, $id]);
+            logActivity($pdo,'EDIT_VAULT_USER_RETURN','Vault',"Edited vault return #$id (" . money($amount) . " to user #$userId)");
+            $pdo->commit();
+        } catch (Throwable $e) { $pdo->rollBack(); throw $e; }
         jsonOk(['msg' => 'Vault return updated.']);
     }
 
@@ -236,8 +248,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $notes = nullOrStr($_POST['notes'] ?? '');
         if (!$name) jsonErr('Name is required.');
         if ($id) {
+            $prev = $pdo->prepare("SELECT name, notes FROM dividend_recipients WHERE id=?");
+            $prev->execute([$id]);
+            $before = $prev->fetch() ?: [];
             $pdo->prepare("UPDATE dividend_recipients SET name=?,notes=? WHERE id=?")->execute([$name,$notes,$id]);
-            logActivity($pdo,'UPDATE_RECIPIENT','Vault',"Updated recipient #$id ($name)");
+            logChange($pdo,'UPDATE_RECIPIENT','Vault',$before,['name'=>$name,'notes'=>$notes]);
         } else {
             $pdo->prepare("INSERT INTO dividend_recipients (name,notes) VALUES (?,?)")->execute([$name,$notes]);
             logActivity($pdo,'ADD_RECIPIENT','Vault',"Added recipient: $name");
