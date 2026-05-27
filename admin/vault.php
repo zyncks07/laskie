@@ -65,6 +65,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if (!$recipientId) jsonErr('Please select a recipient.');
         if (!money_is_pos($amount)) jsonErr('Amount must be greater than zero.');
         if (!$date || !strtotime($date)) jsonErr('Valid date required.');
+        $rChk = $pdo->prepare("SELECT id FROM dividend_recipients WHERE id=?");
+        $rChk->execute([$recipientId]);
+        if (!$rChk->fetch()) jsonErr('Recipient not found.');
         $pdo->beginTransaction();
         try {
             $pdo->prepare("INSERT INTO dividend_distributions (recipient_id,amount,distribution_date,notes,created_by) VALUES (?,?,?,?,?)")
@@ -96,14 +99,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if (!$recipientId) jsonErr('Please select a recipient.');
         if (!money_is_pos($amount)) jsonErr('Amount must be greater than zero.');
         if (!$date || !strtotime($date)) jsonErr('Valid date required.');
-        $chk = $pdo->prepare("SELECT id FROM dividend_distributions WHERE id=?");
+        $chk = $pdo->prepare("SELECT recipient_id, amount, distribution_date, notes FROM dividend_distributions WHERE id=?");
         $chk->execute([$id]);
-        if (!$chk->fetch()) jsonErr('Distribution not found.');
+        $before = $chk->fetch();
+        if (!$before) jsonErr('Distribution not found.');
         $pdo->beginTransaction();
         try {
             $pdo->prepare("UPDATE dividend_distributions SET recipient_id=?,amount=?,distribution_date=?,notes=? WHERE id=?")
                 ->execute([$recipientId,$amount,$date,$notes,$id]);
-            logActivity($pdo,'EDIT_DIVIDEND_DIST','Vault',"Edited distribution #$id (" . money($amount) . " to recipient #$recipientId)");
+            logChange($pdo,'EDIT_DIVIDEND_DIST','Vault',$before,['recipient_id'=>$recipientId,'amount'=>$amount,'distribution_date'=>$date,'notes'=>$notes]);
             $pdo->commit();
         } catch (Throwable $e) { $pdo->rollBack(); throw $e; }
         jsonOk(['msg'=>'Distribution updated.']);
@@ -117,6 +121,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if (!$recipientId) jsonErr('Please select a recipient.');
         if (!money_is_pos($amount)) jsonErr('Amount must be greater than zero.');
         if (!$date || !strtotime($date)) jsonErr('Valid date required.');
+        $rChk = $pdo->prepare("SELECT id FROM dividend_recipients WHERE id=?");
+        $rChk->execute([$recipientId]);
+        if (!$rChk->fetch()) jsonErr('Recipient not found.');
         $pdo->beginTransaction();
         try {
             $pdo->prepare("INSERT INTO dividend_returns (recipient_id,amount,return_date,notes,created_by) VALUES (?,?,?,?,?)")
@@ -147,14 +154,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if (!$recipientId) jsonErr('Please select a recipient.');
         if (!money_is_pos($amount)) jsonErr('Amount must be greater than zero.');
         if (!$date || !strtotime($date)) jsonErr('Valid date required.');
-        $chk = $pdo->prepare("SELECT id FROM dividend_returns WHERE id=?");
+        $chk = $pdo->prepare("SELECT recipient_id, amount, return_date, notes FROM dividend_returns WHERE id=?");
         $chk->execute([$id]);
-        if (!$chk->fetch()) jsonErr('Return not found.');
+        $before = $chk->fetch();
+        if (!$before) jsonErr('Return not found.');
         $pdo->beginTransaction();
         try {
             $pdo->prepare("UPDATE dividend_returns SET recipient_id=?,amount=?,return_date=?,notes=? WHERE id=?")
                 ->execute([$recipientId,$amount,$date,$notes,$id]);
-            logActivity($pdo,'EDIT_DIVIDEND_RETURN','Vault',"Edited return #$id (" . money($amount) . " from recipient #$recipientId)");
+            logChange($pdo,'EDIT_DIVIDEND_RETURN','Vault',$before,['recipient_id'=>$recipientId,'amount'=>$amount,'return_date'=>$date,'notes'=>$notes]);
             $pdo->commit();
         } catch (Throwable $e) { $pdo->rollBack(); throw $e; }
         jsonOk(['msg'=>'Return updated.']);
@@ -204,16 +212,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if (!$userId)                    jsonErr('Please select a user.');
         if (!money_is_pos($amount))      jsonErr('Amount must be greater than zero.');
         if (!$date || !strtotime($date)) jsonErr('Valid date required.');
-        $chk = $pdo->prepare("SELECT id FROM cash_transactions WHERE id=? AND transaction_type='vault_return'");
+        $chk = $pdo->prepare("SELECT user_id, amount, transaction_date, notes FROM cash_transactions WHERE id=? AND transaction_type='vault_return'");
         $chk->execute([$id]);
-        if (!$chk->fetch()) jsonErr('Vault return not found.');
+        $before = $chk->fetch();
+        if (!$before) jsonErr('Vault return not found.');
         $pdo->beginTransaction();
         try {
             $pdo->prepare(
                 "UPDATE cash_transactions SET user_id=?, amount=?, transaction_date=?, notes=?
                  WHERE id=? AND transaction_type='vault_return'"
             )->execute([$userId, $amount, $date, $notes, $id]);
-            logActivity($pdo,'EDIT_VAULT_USER_RETURN','Vault',"Edited vault return #$id (" . money($amount) . " to user #$userId)");
+            logChange($pdo,'EDIT_VAULT_USER_RETURN','Vault',$before,['user_id'=>$userId,'amount'=>$amount,'transaction_date'=>$date,'notes'=>$notes]);
             $pdo->commit();
         } catch (Throwable $e) { $pdo->rollBack(); throw $e; }
         jsonOk(['msg' => 'Vault return updated.']);

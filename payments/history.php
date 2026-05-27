@@ -366,15 +366,15 @@ include '../includes/header.php';
   <?php endif; ?>
   <div class="col-6 col-md-3">
     <div class="stat-card">
-      <div class="stat-icon <?=$finalBal>0?'red':($finalBal<0?'purple':'green')?>">
+      <div class="stat-icon <?=money_is_pos($finalBal)?'red':(money_lt($finalBal,'0.00')?'purple':'green')?>">
         <i class="fa-solid fa-scale-balanced"></i>
       </div>
       <div class="stat-body">
         <div class="stat-label">Outstanding Balance</div>
-        <div class="stat-value" style="font-size:17px;color:<?=$finalBal>0?'var(--danger)':($finalBal<0?'var(--info)':'var(--success)')?>">
-          <?=money(abs($finalBal))?>
+        <div class="stat-value" style="font-size:17px;color:<?=money_is_pos($finalBal)?'var(--danger)':(money_lt($finalBal,'0.00')?'var(--info)':'var(--success)')?>">
+          <?=money(money_abs($finalBal))?>
         </div>
-        <div class="stat-sub"><?=$finalBal>0?'Due':($finalBal<0?'Overpaid (CR)':'Fully settled')?></div>
+        <div class="stat-sub"><?=money_is_pos($finalBal)?'Due':(money_lt($finalBal,'0.00')?'Overpaid (CR)':'Fully settled')?></div>
       </div>
     </div>
   </div>
@@ -464,20 +464,20 @@ include '../includes/header.php';
         </td>
         <td style="font-size:12px;color:var(--text-muted)"><?=clean($row['cashier']??'—')?></td>
         <td class="text-end">
-          <?php if($row['debit']>0): ?>
+          <?php if(money_is_pos($row['debit'])): ?>
             <span style="color:var(--danger);font-weight:500"><?=money($row['debit'])?></span>
           <?php else: ?><span class="text-muted">—</span><?php endif; ?>
         </td>
         <td class="text-end">
-          <?php if($row['credit']>0): ?>
+          <?php if(money_is_pos($row['credit'])): ?>
             <span style="color:var(--success);font-weight:600"><?=money($row['credit'])?></span>
           <?php else: ?><span class="text-muted">—</span><?php endif; ?>
         </td>
         <td class="text-end fw-600">
-          <?php if($row['balance']>0): ?>
+          <?php if(money_is_pos($row['balance'])): ?>
             <span style="color:var(--danger)"><?=money($row['balance'])?></span>
-          <?php elseif($row['balance']<0): ?>
-            <span style="color:var(--info)">(<?=money(abs($row['balance']))?>) CR</span>
+          <?php elseif(money_lt($row['balance'],'0.00')): ?>
+            <span style="color:var(--info)">(<?=money(money_abs($row['balance']))?>) CR</span>
           <?php else: ?>
             <span style="color:var(--success)">—</span>
           <?php endif; ?>
@@ -507,9 +507,9 @@ include '../includes/header.php';
           <td colspan="4" style="font-size:13px">TOTALS</td>
           <td class="text-end" style="color:var(--danger)"><?=money($totalDebit)?></td>
           <td class="text-end" style="color:var(--success)"><?=money($totalCredit)?></td>
-          <td class="text-end" style="color:<?=$finalBal>0?'var(--danger)':($finalBal<0?'var(--info)':'var(--success)')?>">
-            <?php if($finalBal>0): ?><?=money($finalBal)?> <small>DR</small>
-            <?php elseif($finalBal<0): ?>(<?=money(abs($finalBal))?>) <small>CR</small>
+          <td class="text-end" style="color:<?=money_is_pos($finalBal)?'var(--danger)':(money_lt($finalBal,'0.00')?'var(--info)':'var(--success)')?>">
+            <?php if(money_is_pos($finalBal)): ?><?=money($finalBal)?> <small>DR</small>
+            <?php elseif(money_lt($finalBal,'0.00')): ?>(<?=money(money_abs($finalBal))?>) <small>CR</small>
             <?php else: ?>BALANCED<?php endif; ?>
           </td>
           <td class="no-print"></td>
@@ -572,6 +572,12 @@ include '../includes/header.php';
 
 <?php $extraJs = <<<'JS'
 <script>
+function esc(s) {
+  var d = document.createElement('div');
+  d.appendChild(document.createTextNode(s != null ? String(s) : ''));
+  return d.innerHTML;
+}
+
 $(document).ready(function(){
   if (document.getElementById('ledgerTable')) {
     $('#ledgerTable').DataTable({
@@ -593,7 +599,7 @@ function openRefundModal(paymentId, invoiceNo, amount, alreadyRefunded) {
   var maxRefund = amount - alreadyRefunded;
   document.getElementById('refPaymentId').value = paymentId;
   document.getElementById('refPaymentInfo').innerHTML =
-    '<strong>' + invoiceNo + '</strong> &nbsp;·&nbsp; Original: <strong>₱' + fmt(amount) + '</strong>' +
+    '<strong>' + esc(invoiceNo) + '</strong> &nbsp;·&nbsp; Original: <strong>₱' + fmt(amount) + '</strong>' +
     (alreadyRefunded > 0 ? ' &nbsp;·&nbsp; Already refunded: <strong>₱' + fmt(alreadyRefunded) + '</strong>' : '');
   document.getElementById('refAmount').value = maxRefund.toFixed(2);
   document.getElementById('refAmount').max   = maxRefund.toFixed(2);

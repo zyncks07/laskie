@@ -31,15 +31,22 @@ if ($action === 'save_remittance') {
         $tx->execute([$id]);
         $before = $tx->fetch();
         if (!$before) jsonErr('Remittance not found or cannot be edited.');
-        if ($docPath) {
-            $pdo->prepare("UPDATE cash_transactions SET user_id=?,amount=?,notes=?,doc_path=?,doc_url=?,transaction_date=? WHERE id=?")
-                ->execute([$userId,$amount,$notes,$docPath,$docUrl,$txDate,$id]);
-        } else {
-            $pdo->prepare("UPDATE cash_transactions SET user_id=?,amount=?,notes=?,doc_url=?,transaction_date=? WHERE id=?")
-                ->execute([$userId,$amount,$notes,$docUrl,$txDate,$id]);
+        $pdo->beginTransaction();
+        try {
+            if ($docPath) {
+                $pdo->prepare("UPDATE cash_transactions SET user_id=?,amount=?,notes=?,doc_path=?,doc_url=?,transaction_date=? WHERE id=?")
+                    ->execute([$userId,$amount,$notes,$docPath,$docUrl,$txDate,$id]);
+            } else {
+                $pdo->prepare("UPDATE cash_transactions SET user_id=?,amount=?,notes=?,doc_url=?,transaction_date=? WHERE id=?")
+                    ->execute([$userId,$amount,$notes,$docUrl,$txDate,$id]);
+            }
+            $after = ['user_id'=>$userId,'amount'=>$amount,'notes'=>$notes,'transaction_date'=>$txDate];
+            logChange($pdo,'UPDATE_REMITTANCE','Cash',array_intersect_key($before,array_flip(['user_id','amount','notes','transaction_date'])),$after);
+            $pdo->commit();
+        } catch (Throwable $e) {
+            if ($pdo->inTransaction()) $pdo->rollBack();
+            throw $e;
         }
-        $after = ['user_id'=>$userId,'amount'=>$amount,'notes'=>$notes,'transaction_date'=>$txDate];
-        logChange($pdo,'UPDATE_REMITTANCE','Cash',array_intersect_key($before,array_flip(['user_id','amount','notes','transaction_date'])),$after);
         jsonOk(['msg' => 'Remittance updated successfully.']);
     } else {
         $pdo->prepare("INSERT INTO cash_transactions (user_id,transaction_type,amount,notes,doc_path,doc_url,transaction_date) VALUES (?,?,?,?,?,?,?)")

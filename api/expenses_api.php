@@ -245,8 +245,12 @@ if ($action === 'save_category') {
     $desc = nullOrStr($_POST['description'] ?? '');
     if (!$name) jsonErr('Category name is required.');
     if ($id) {
+        $prev = $pdo->prepare("SELECT name, description FROM expense_categories WHERE id=?");
+        $prev->execute([$id]);
+        $before = $prev->fetch();
+        if (!$before) jsonErr('Category not found.');
         $pdo->prepare("UPDATE expense_categories SET name=?,description=? WHERE id=?")->execute([$name,$desc,$id]);
-        logActivity($pdo,'UPDATE_EXPENSE_CAT','Expenses',"Updated expense category #$id ($name)");
+        logChange($pdo,'UPDATE_EXPENSE_CAT','Expenses',$before,['name'=>$name,'description'=>$desc]);
     } else {
         $pdo->prepare("INSERT INTO expense_categories (name,description) VALUES (?,?)")->execute([$name,$desc]);
         logActivity($pdo,'CREATE_EXPENSE_CAT','Expenses',"Created expense category: $name");

@@ -94,6 +94,7 @@ function money_lte($a, $b): bool { return money_cmp($a, $b) <= 0; }
 function money_max($a, $b): string { return money_gt($a, $b) ? from_cents(to_cents($a)) : from_cents(to_cents($b)); }
 function money_is_zero($a): bool  { return to_cents($a) === 0; }
 function money_is_pos($a): bool   { return to_cents($a) >  0; }
+function money_abs($a): string    { return from_cents(abs(to_cents($a))); }
 
 function fmtDate(?string $date, string $format = 'M j, Y'): string {
     if (!$date) return '—';
