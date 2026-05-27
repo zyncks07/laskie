@@ -45,9 +45,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $address  = nullOrStr($_POST['address'] ?? '');
         if (!$fullName) jsonErr('Full name is required.');
 
+        $prevRow = $pdo->prepare("SELECT full_name, email, phone, phone2, address FROM users WHERE id=?");
+        $prevRow->execute([$myId]);
+        $before = $prevRow->fetch() ?: [];
         $pdo->prepare("UPDATE users SET full_name=?,email=?,phone=?,phone2=?,address=? WHERE id=?")
             ->execute([$fullName, $email, $phone, $phone2, $address, $myId]);
-        logActivity($pdo, 'UPDATE_OWN_PROFILE', 'Accounts', "Self-updated profile (id #$myId)");
+        logChange($pdo, 'UPDATE_OWN_PROFILE', 'Accounts', $before,
+            ['full_name'=>$fullName,'email'=>$email,'phone'=>$phone,'phone2'=>$phone2,'address'=>$address]);
         $refreshSession();
         jsonOk(['msg' => 'Profile updated.']);
     }

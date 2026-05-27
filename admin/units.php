@@ -111,8 +111,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $desc = nullOrStr($_POST['description'] ?? '');
         if (!$name) jsonErr('Type name is required.');
         if ($id) {
+            $prev = $pdo->prepare("SELECT name, description FROM unit_types WHERE id=?");
+            $prev->execute([$id]);
+            $before = $prev->fetch();
+            if (!$before) jsonErr('Unit type not found.');
             $pdo->prepare("UPDATE unit_types SET name=?,description=? WHERE id=?")->execute([$name,$desc,$id]);
-            logActivity($pdo,'UPDATE_UNIT_TYPE','Units',"Updated unit type #$id ($name)");
+            logChange($pdo,'UPDATE_UNIT_TYPE','Units',$before,['name'=>$name,'description'=>$desc]);
         } else {
             $pdo->prepare("INSERT INTO unit_types (name,description) VALUES (?,?)")->execute([$name,$desc]);
             logActivity($pdo,'CREATE_UNIT_TYPE','Units',"Created unit type $name");
@@ -139,8 +143,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $active = (int)($_POST['is_active'] ?? 1);
         if (!$name) jsonErr('Service name is required.');
         if ($id) {
+            $prev = $pdo->prepare("SELECT name, description, default_amount, is_active FROM service_types WHERE id=?");
+            $prev->execute([$id]);
+            $before = $prev->fetch();
+            if (!$before) jsonErr('Service type not found.');
             $pdo->prepare("UPDATE service_types SET name=?,description=?,default_amount=?,is_active=? WHERE id=?")->execute([$name,$desc,$amount,$active,$id]);
-            logActivity($pdo,'UPDATE_SERVICE_TYPE','Units',"Updated service type #$id ($name)");
+            logChange($pdo,'UPDATE_SERVICE_TYPE','Units',$before,['name'=>$name,'description'=>$desc,'default_amount'=>$amount,'is_active'=>$active]);
         } else {
             $pdo->prepare("INSERT INTO service_types (name,description,default_amount,is_active) VALUES (?,?,?,?)")->execute([$name,$desc,$amount,$active]);
             logActivity($pdo,'CREATE_SERVICE_TYPE','Units',"Created service type $name");
@@ -153,6 +161,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $chk = $pdo->prepare("SELECT COUNT(*) FROM payments WHERE service_type_id=?");
         $chk->execute([$id]);
         if ($chk->fetchColumn() > 0) jsonErr('Cannot delete: service type is used in existing payments.');
+        // unit_charges uses ON DELETE SET NULL, so deleting would silently orphan
+        // pre-billed charge rows, stripping the service label from SOA reports.
+        $chkUc = $pdo->prepare("SELECT COUNT(*) FROM unit_charges WHERE service_type_id=?");
+        $chkUc->execute([$id]);
+        if ($chkUc->fetchColumn() > 0) jsonErr('Cannot delete: service type has outstanding pre-billed charges. Remove those charges first.');
         $pdo->prepare("DELETE FROM service_types WHERE id=?")->execute([$id]);
         logActivity($pdo,'DELETE_SERVICE_TYPE','Units',"Deleted service type #$id");
         jsonOk(['msg'=>'Service type deleted.']);
