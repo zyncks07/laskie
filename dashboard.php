@@ -519,7 +519,7 @@ var CHART_DATA = {
   catTotals:   <?= json_encode(array_map(fn($r) => (float)$r['total'], $catExpData)) ?>,
   monthLabels: <?= json_encode(['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']) ?>,
   monthRev:    <?= json_encode(array_values($monthlyRev)) ?>,
-  monthNet:    <?= json_encode(array_map(fn($m) => $monthlyRev[$m] - $monthlyExp[$m], range(1,12))) ?>
+  monthNet:    <?= json_encode(array_map(fn($m) => (float)money_sub($monthlyRev[$m], $monthlyExp[$m]), range(1,12))) ?>
 };
 var UNIT_CHART_API  = '<?= pageUrl('api/unit_chart_api.php') ?>';
 var UNIT_CHART_INIT = '<?= $chartInitPeriod ?>';

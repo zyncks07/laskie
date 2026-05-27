@@ -354,6 +354,16 @@ When editing this codebase:
 - If a bug fix requires a data correction (e.g., removing an erroneous row), **stop and describe the proposed change** to the user first. Only execute it after receiving explicit approval for that specific row/operation.
 - When in doubt about whether a query is safe to run, default to showing the query and asking the user to run it themselves.
 
+## 13. Intentional design decisions — apparent-bug exceptions
+
+These look like bugs but are **deliberate choices**. Do not "fix" them without a design discussion.
+
+### `admin/vault.php` — Accountants can delete vault remittances (no `isAdmin()` on `delete_remittance`)
+`delete_remittance` in `admin/vault.php` intentionally has **no `isAdmin()` guard**, so accountants can delete any `transaction_type='remitted'` cash transaction via the Vault page. The Vault workflow expects accountants to have full CRUD over remittances they record on behalf of staff. The role-matrix entry "Edit/Delete cash transactions (own or others) — admin only" refers specifically to `cash_api.php::delete_cash_tx` (the general-purpose endpoint); vault-context remittance management is a separate, deliberately accountant-accessible sub-flow. Do **not** add `requireAdmin()` to this action.
+
+### `api/settings_api.php` — Master password hashed at bcrypt cost 10, not the app-standard 12
+`change_master` at line 111 uses `password_hash($new, PASSWORD_BCRYPT)` (default cost 10), while all user passwords use `['cost' => 12]`. This is **intentional**: the master password is re-verified on every Settings page unlock — potentially several times per admin session — so the lower cost avoids noticeable latency in the UI. The placeholder hash at line 285 (`import_accounts`) also uses default cost intentionally; it is a throwaway credential that admins must reset immediately via the Accounts page. Do **not** unify these to cost 12.
+
 ---
 
 *Last updated: see `git log -- CLAUDE.md` · Project version: see `APP_VERSION` in `config/functions.php`.*

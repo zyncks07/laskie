@@ -454,8 +454,10 @@ function handleUpload(
         if ($info === false) {
             return ['path' => null, 'error' => 'File is not a valid image.'];
         }
-        // getimagesize returns mime type — restrict further if caller asked for JPEG only.
-        if (in_array('jpg', $allowed) || in_array('jpeg', $allowed)) {
+        // getimagesize returns mime type — restrict further only when the entire
+        // allowed list is JPEG variants (i.e. JPEG-only upload context).
+        $jpegOnly = count($allowed) > 0 && !array_diff($allowed, ['jpg', 'jpeg']);
+        if ($jpegOnly) {
             if (!in_array($info['mime'], ['image/jpeg', 'image/pjpeg'])) {
                 return ['path' => null, 'error' => 'File is not a JPEG (got: ' . $info['mime'] . ').'];
             }

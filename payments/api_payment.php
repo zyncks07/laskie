@@ -19,15 +19,15 @@ if ($action === 'save_payment') {
     $tenantId    = (int)($_POST['tenant_id'] ?? 0) ?: null;
     $type        = $_POST['payment_type'] ?? 'rent';
     $serviceId   = (int)($_POST['service_type_id'] ?? 0) ?: null;
-    $amount      = (float)($_POST['amount'] ?? 0);
+    $amount      = trim((string)($_POST['amount'] ?? '0'));
     $payDate     = $_POST['payment_date'] ?? date('Y-m-d');
     $dueDate     = nullOrStr($_POST['due_date'] ?? '');
     $periodMonth = (int)($_POST['period_month'] ?? date('n'));
     $periodYear  = (int)($_POST['period_year']  ?? date('Y'));
     $notes       = nullOrStr($_POST['notes'] ?? '');
 
-    if (!$unitId)    jsonErr('Rental unit is required.');
-    if ($amount <= 0) jsonErr('Amount must be greater than zero.');
+    if (!$unitId)             jsonErr('Rental unit is required.');
+    if (!money_is_pos($amount)) jsonErr('Amount must be greater than zero.');
     if (!in_array($type, ['rent','service'])) jsonErr('Invalid payment type.');
 
     if ($id) {

@@ -26,8 +26,16 @@ $transactions = [];
 
 if (!$typeFilter || $typeFilter === 'payment') {
     $deletedClause = $showTrash ? 'p.deleted_at IS NOT NULL' : 'p.deleted_at IS NULL';
-    $dateField     = $showTrash ? 'DATE(p.deleted_at)' : 'p.payment_date';
-    $w = ["$dateField BETWEEN ? AND ?", $deletedClause]; $par = [$fromDate, $toDate];
+    if ($showTrash) {
+        // deleted_at is a TIMESTAMP — use a half-open range to stay sargable.
+        $delFrom = $fromDate . ' 00:00:00';
+        $delTo   = date('Y-m-d', strtotime($toDate . ' +1 day')) . ' 00:00:00';
+        $w = ['p.deleted_at >= ? AND p.deleted_at < ?', $deletedClause];
+    } else {
+        $w = ['p.payment_date BETWEEN ? AND ?', $deletedClause];
+        $delFrom = $fromDate; $delTo = $toDate;
+    }
+    $par = [$delFrom, $delTo];
     if ($unitFilter) { $w[] = 'p.unit_id=?'; $par[] = $unitFilter; }
     if ($userFilter) { $w[] = 'p.received_by=?'; $par[] = $userFilter; }
     $q = $pdo->prepare("
@@ -67,7 +75,10 @@ if (!$showTrash && (!$typeFilter || $typeFilter === 'expense')) {
     $q->execute($par);
     $transactions = array_merge($transactions, $q->fetchAll());
 } elseif ($showTrash && (!$typeFilter || $typeFilter === 'expense')) {
-    $w = ['DATE(e.deleted_at) BETWEEN ? AND ?', 'e.deleted_at IS NOT NULL']; $par = [$fromDate, $toDate];
+    // deleted_at is a TIMESTAMP — use a half-open range to stay sargable.
+    $delFrom = $fromDate . ' 00:00:00';
+    $delTo   = date('Y-m-d', strtotime($toDate . ' +1 day')) . ' 00:00:00';
+    $w = ['e.deleted_at >= ? AND e.deleted_at < ?', 'e.deleted_at IS NOT NULL']; $par = [$delFrom, $delTo];
     if ($unitFilter) { $w[] = 'e.unit_id=?'; $par[] = $unitFilter; }
     if ($userFilter) { $w[] = 'e.recorded_by=?'; $par[] = $userFilter; }
     $q = $pdo->prepare("

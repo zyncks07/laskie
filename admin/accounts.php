@@ -53,6 +53,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     jsonErr('Cannot apply: this would leave no active admin in the system.');
                 }
             }
+            // Capture before-state for audit diff.
+            $prevRow = $pdo->prepare("SELECT username, full_name, role, email, status FROM users WHERE id=?");
+            $prevRow->execute([$id]);
+            $before = $prevRow->fetch() ?: [];
             // Update
             $check = $pdo->prepare("SELECT id FROM users WHERE username=? AND id!=?");
             $check->execute([$username, $id]);
@@ -65,7 +69,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $pdo->prepare("UPDATE users SET username=?,full_name=?,role=?,email=?,phone=?,phone2=?,address=?,status=? WHERE id=?")
                     ->execute([$username,$fullName,$role,$email,$phone,$phone2,$address,$status,$id]);
             }
-            logActivity($pdo, 'UPDATE_USER', 'Accounts', "Updated user #$id ($username)");
+            $after = ['username'=>$username,'full_name'=>$fullName,'role'=>$role,'email'=>$email,'status'=>$status];
+            if ($password) $after['password_changed'] = true;
+            logChange($pdo, 'UPDATE_USER', 'Accounts', $before, $after);
             jsonOk(['msg' => 'Account updated successfully.']);
         } else {
             // Create

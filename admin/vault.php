@@ -17,14 +17,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     if ($action === 'add_remittance') {
         $remittedBy = (int)($_POST['remitted_by'] ?? 0);
-        $amount     = (float)($_POST['amount'] ?? 0);
+        $amount     = trim((string)($_POST['amount'] ?? '0'));
         $date       = trim($_POST['remittance_date'] ?? '');
         $notes      = nullOrStr($_POST['notes'] ?? '');
         $docUrl     = nullOrStr($_POST['doc_url'] ?? '');
         $docPath    = null;
         if (!$remittedBy) jsonErr('Please select who is remitting.');
-        if ($amount <= 0) jsonErr('Amount must be greater than zero.');
+        if (!money_is_pos($amount)) jsonErr('Amount must be greater than zero.');
         if (!$date || !strtotime($date)) jsonErr('Valid date required.');
+        // Confirm the target user actually exists + is active (mirrors add_user_return).
+        $uChk = $pdo->prepare("SELECT full_name FROM users WHERE id=? AND status='active'");
+        $uChk->execute([$remittedBy]);
+        if (!$uChk->fetchColumn()) jsonErr('Selected user is not active or does not exist.');
         // Optional proof attachment — same shape as cash_api.php::save_remittance.
         // handleUpload stores under uploads/remittance/ with the project's
         // standard whitelist + image auto-compression.
@@ -33,9 +37,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if ($up['error']) jsonErr($up['error']);
             $docPath = $up['path'];
         }
-        $pdo->prepare("INSERT INTO cash_transactions (user_id,transaction_type,amount,transaction_date,notes,doc_path,doc_url) VALUES (?,?,?,?,?,?,?)")
-            ->execute([$remittedBy,'remitted',$amount,$date,$notes,$docPath,$docUrl]);
-        logActivity($pdo,'VAULT_REMITTANCE','Vault',"Remittance ₱$amount from user #$remittedBy" . ($docPath || $docUrl ? ' (with proof)' : ''));
+        $pdo->beginTransaction();
+        try {
+            $pdo->prepare("INSERT INTO cash_transactions (user_id,transaction_type,amount,transaction_date,notes,doc_path,doc_url) VALUES (?,?,?,?,?,?,?)")
+                ->execute([$remittedBy,'remitted',$amount,$date,$notes,$docPath,$docUrl]);
+            logActivity($pdo,'VAULT_REMITTANCE','Vault',"Remittance " . money($amount) . " from user #$remittedBy" . ($docPath || $docUrl ? ' (with proof)' : ''));
+            $pdo->commit();
+        } catch (Throwable $e) { $pdo->rollBack(); throw $e; }
         jsonOk(['msg'=>'Remittance recorded.']);
     }
 
@@ -51,15 +59,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     if ($action === 'add_distribution') {
         $recipientId = (int)($_POST['recipient_id'] ?? 0);
-        $amount      = (float)($_POST['amount'] ?? 0);
+        $amount      = trim((string)($_POST['amount'] ?? '0'));
         $date        = trim($_POST['distribution_date'] ?? '');
         $notes       = nullOrStr($_POST['notes'] ?? '');
         if (!$recipientId) jsonErr('Please select a recipient.');
-        if ($amount <= 0) jsonErr('Amount must be greater than zero.');
+        if (!money_is_pos($amount)) jsonErr('Amount must be greater than zero.');
         if (!$date || !strtotime($date)) jsonErr('Valid date required.');
-        $pdo->prepare("INSERT INTO dividend_distributions (recipient_id,amount,distribution_date,notes,created_by) VALUES (?,?,?,?,?)")
-            ->execute([$recipientId,$amount,$date,$notes,$_SESSION['user']['id']]);
-        logActivity($pdo,'DIVIDEND_DISTRIBUTION','Vault',"Distributed ₱$amount to recipient #$recipientId");
+        $pdo->beginTransaction();
+        try {
+            $pdo->prepare("INSERT INTO dividend_distributions (recipient_id,amount,distribution_date,notes,created_by) VALUES (?,?,?,?,?)")
+                ->execute([$recipientId,$amount,$date,$notes,$_SESSION['user']['id']]);
+            logActivity($pdo,'DIVIDEND_DISTRIBUTION','Vault',"Distributed " . money($amount) . " to recipient #$recipientId");
+            $pdo->commit();
+        } catch (Throwable $e) { $pdo->rollBack(); throw $e; }
         jsonOk(['msg'=>'Dividend distribution recorded.']);
     }
 
@@ -73,33 +85,41 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if ($action === 'edit_distribution') {
         $id          = (int)($_POST['id'] ?? 0);
         $recipientId = (int)($_POST['recipient_id'] ?? 0);
-        $amount      = (float)($_POST['amount'] ?? 0);
+        $amount      = trim((string)($_POST['amount'] ?? '0'));
         $date        = trim($_POST['distribution_date'] ?? '');
         $notes       = nullOrStr($_POST['notes'] ?? '');
         if (!$id) jsonErr('Distribution ID required.');
         if (!$recipientId) jsonErr('Please select a recipient.');
-        if ($amount <= 0) jsonErr('Amount must be greater than zero.');
+        if (!money_is_pos($amount)) jsonErr('Amount must be greater than zero.');
         if (!$date || !strtotime($date)) jsonErr('Valid date required.');
         $chk = $pdo->prepare("SELECT id FROM dividend_distributions WHERE id=?");
         $chk->execute([$id]);
         if (!$chk->fetch()) jsonErr('Distribution not found.');
-        $pdo->prepare("UPDATE dividend_distributions SET recipient_id=?,amount=?,distribution_date=?,notes=? WHERE id=?")
-            ->execute([$recipientId,$amount,$date,$notes,$id]);
-        logActivity($pdo,'EDIT_DIVIDEND_DIST','Vault',"Edited distribution #$id (₱$amount to recipient #$recipientId)");
+        $pdo->beginTransaction();
+        try {
+            $pdo->prepare("UPDATE dividend_distributions SET recipient_id=?,amount=?,distribution_date=?,notes=? WHERE id=?")
+                ->execute([$recipientId,$amount,$date,$notes,$id]);
+            logActivity($pdo,'EDIT_DIVIDEND_DIST','Vault',"Edited distribution #$id (" . money($amount) . " to recipient #$recipientId)");
+            $pdo->commit();
+        } catch (Throwable $e) { $pdo->rollBack(); throw $e; }
         jsonOk(['msg'=>'Distribution updated.']);
     }
 
     if ($action === 'add_return') {
         $recipientId = (int)($_POST['recipient_id'] ?? 0);
-        $amount      = (float)($_POST['amount'] ?? 0);
+        $amount      = trim((string)($_POST['amount'] ?? '0'));
         $date        = trim($_POST['return_date'] ?? '');
         $notes       = nullOrStr($_POST['notes'] ?? '');
         if (!$recipientId) jsonErr('Please select a recipient.');
-        if ($amount <= 0) jsonErr('Amount must be greater than zero.');
+        if (!money_is_pos($amount)) jsonErr('Amount must be greater than zero.');
         if (!$date || !strtotime($date)) jsonErr('Valid date required.');
-        $pdo->prepare("INSERT INTO dividend_returns (recipient_id,amount,return_date,notes,created_by) VALUES (?,?,?,?,?)")
-            ->execute([$recipientId,$amount,$date,$notes,$_SESSION['user']['id']]);
-        logActivity($pdo,'DIVIDEND_RETURN','Vault',"Return ₱$amount from recipient #$recipientId");
+        $pdo->beginTransaction();
+        try {
+            $pdo->prepare("INSERT INTO dividend_returns (recipient_id,amount,return_date,notes,created_by) VALUES (?,?,?,?,?)")
+                ->execute([$recipientId,$amount,$date,$notes,$_SESSION['user']['id']]);
+            logActivity($pdo,'DIVIDEND_RETURN','Vault',"Return " . money($amount) . " from recipient #$recipientId");
+            $pdo->commit();
+        } catch (Throwable $e) { $pdo->rollBack(); throw $e; }
         jsonOk(['msg'=>'Return to vault recorded.']);
     }
 
@@ -116,19 +136,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if ($action === 'edit_return') {
         $id          = (int)($_POST['id'] ?? 0);
         $recipientId = (int)($_POST['recipient_id'] ?? 0);
-        $amount      = (float)($_POST['amount'] ?? 0);
+        $amount      = trim((string)($_POST['amount'] ?? '0'));
         $date        = trim($_POST['return_date'] ?? '');
         $notes       = nullOrStr($_POST['notes'] ?? '');
         if (!$id) jsonErr('Return ID required.');
         if (!$recipientId) jsonErr('Please select a recipient.');
-        if ($amount <= 0) jsonErr('Amount must be greater than zero.');
+        if (!money_is_pos($amount)) jsonErr('Amount must be greater than zero.');
         if (!$date || !strtotime($date)) jsonErr('Valid date required.');
         $chk = $pdo->prepare("SELECT id FROM dividend_returns WHERE id=?");
         $chk->execute([$id]);
         if (!$chk->fetch()) jsonErr('Return not found.');
-        $pdo->prepare("UPDATE dividend_returns SET recipient_id=?,amount=?,return_date=?,notes=? WHERE id=?")
-            ->execute([$recipientId,$amount,$date,$notes,$id]);
-        logActivity($pdo,'EDIT_DIVIDEND_RETURN','Vault',"Edited return #$id (₱$amount from recipient #$recipientId)");
+        $pdo->beginTransaction();
+        try {
+            $pdo->prepare("UPDATE dividend_returns SET recipient_id=?,amount=?,return_date=?,notes=? WHERE id=?")
+                ->execute([$recipientId,$amount,$date,$notes,$id]);
+            logActivity($pdo,'EDIT_DIVIDEND_RETURN','Vault',"Edited return #$id (" . money($amount) . " from recipient #$recipientId)");
+            $pdo->commit();
+        } catch (Throwable $e) { $pdo->rollBack(); throw $e; }
         jsonOk(['msg'=>'Return updated.']);
     }
 

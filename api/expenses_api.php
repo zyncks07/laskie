@@ -15,14 +15,14 @@ if ($action === 'save_expense') {
     $id          = (int)($_POST['id'] ?? 0);
     $unitId      = (int)($_POST['unit_id'] ?? 0) ?: null;
     $categoryId  = (int)($_POST['category_id'] ?? 0) ?: null;
-    $amount      = (float)($_POST['amount'] ?? 0);
+    $amount      = trim((string)($_POST['amount'] ?? '0'));
     $expDate     = $_POST['expense_date'] ?? date('Y-m-d');
     $description = trim($_POST['description'] ?? '');
     $notes       = nullOrStr($_POST['notes'] ?? '');
     $receiptUrl  = nullOrStr($_POST['receipt_url'] ?? '');
     $receiptPath = null;
 
-    if ($amount <= 0)   jsonErr('Amount must be greater than zero.');
+    if (!money_is_pos($amount)) jsonErr('Amount must be greater than zero.');
     if (!$description)  jsonErr('Description is required.');
     if (empty($_SESSION['user']['id'])) jsonErr('No logged-in user. Expenses must be recorded by a system user.');
 

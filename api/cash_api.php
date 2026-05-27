@@ -13,13 +13,13 @@ $action = $_POST['action'] ?? $_GET['action'] ?? '';
 if ($action === 'save_remittance') {
     $id      = (int)($_POST['id'] ?? 0);
     $userId  = (int)($_POST['user_id'] ?? $_SESSION['user']['id']);
-    $amount  = (float)($_POST['amount'] ?? 0);
+    $amount  = trim((string)($_POST['amount'] ?? '0'));
     $txDate  = $_POST['transaction_date'] ?? date('Y-m-d');
     $notes   = nullOrStr($_POST['notes'] ?? '');
     $docUrl  = nullOrStr($_POST['doc_url'] ?? '');
     $docPath = null;
     if ($userId !== (int)$_SESSION['user']['id'] && !isAdmin()) jsonErr('You can only record your own remittances.');
-    if ($amount <= 0) jsonErr('Amount must be greater than zero.');
+    if (!money_is_pos($amount)) jsonErr('Amount must be greater than zero.');
     if (!empty($_FILES['doc_file']['name'])) {
         $up = handleUpload('doc_file', 'remittance');
         if ($up['error']) jsonErr($up['error']);
