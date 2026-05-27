@@ -25,8 +25,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($id) {
             $oldRow = $pdo->prepare("SELECT unit_name, monthly_rate, due_day, status FROM rental_units WHERE id=?");
             $oldRow->execute([$id]);
-            $before  = $oldRow->fetch() ?: [];
-            $oldRate = $before['monthly_rate'] ?? '0';
+            $before  = $oldRow->fetch();
+            if (!$before) jsonErr('Unit not found.');
+            $oldRate = $before['monthly_rate'];
 
             // Atomic: UPDATE rental_units + (possibly) INSERT/UPDATE
             // unit_rate_history must commit together so the cached rate

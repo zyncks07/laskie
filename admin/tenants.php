@@ -34,8 +34,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             // set for the audit diff.
             $oldRow = $pdo->prepare("SELECT unit_id, full_name, status, contract_start, contract_end FROM tenants WHERE id=?");
             $oldRow->execute([$id]);
-            $beforeRow = $oldRow->fetch() ?: [];
-            $oldUnitId = (int)($beforeRow['unit_id'] ?: 0) ?: null;
+            $beforeRow = $oldRow->fetch();
+            if (!$beforeRow) jsonErr('Tenant not found.');
+            $oldUnitId = !empty($beforeRow['unit_id']) ? (int)$beforeRow['unit_id'] : null;
 
             // Atomic: UPDATE tenants + up-to-two UPDATE rental_units commit
             // together. Without this, a failure between the tenant update and
