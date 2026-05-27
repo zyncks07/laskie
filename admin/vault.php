@@ -259,9 +259,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($id) {
             $prev = $pdo->prepare("SELECT name, notes FROM dividend_recipients WHERE id=?");
             $prev->execute([$id]);
-            $before = $prev->fetch() ?: [];
+            $before = $prev->fetch();
+            if (!$before) jsonErr('Recipient not found.');
             $pdo->prepare("UPDATE dividend_recipients SET name=?,notes=? WHERE id=?")->execute([$name,$notes,$id]);
-            logChange($pdo,'UPDATE_RECIPIENT','Vault',$before,['name'=>$name,'notes'=>$notes]);
+            logChange($pdo,'UPDATE_RECIPIENT','Vault',(array)$before,['name'=>$name,'notes'=>$notes]);
         } else {
             $pdo->prepare("INSERT INTO dividend_recipients (name,notes) VALUES (?,?)")->execute([$name,$notes]);
             logActivity($pdo,'ADD_RECIPIENT','Vault',"Added recipient: $name");
