@@ -355,10 +355,19 @@ Most of the items above were addressed in dedicated bug-fix commits. If you're i
 - `5315708` — `deploy.sh` hardened: env-var password handling, credentials moved outside web root.
 - `770de28` — migration 008: `refunded_by` nullability + redundant-index cleanup.
 
-### Current state (as of `ui/magix-redesign`, May 2026)
-- **Audit:** all PHP entry points + helpers have been read line-by-line across 4 sessions; `my_account.php`, `config/env.php`, and the CLI-only `seed_spreadsheet.php` were the last unaudited files and came back clean. No known open code bugs.
-- **In-flight work:** the **Magix UI redesign** (`ui/magix-redesign` branch) — see §7's redesign-token-layer note. Cosmetic; partially rolled out (dashboard + login migrated, rest pending).
-- **One pending ops task:** `migrations/008_schema_fixes.sql` is written/committed but **not yet applied to the live DB** (running it needs explicit user authorization per §12's DB policy).
+**Feature + hardening sprint (May 2026, branch `ui/magix-redesign`):**
+- `6ab0d78` — Magix UI redesign: `assets/css/laskie-tokens.css` token layer; dark-card dashboard + restyled Chart.js; login restyle. Cosmetic (see §7).
+- `fce5671` — **net refunds in reports**: revenue + rent-paid status now subtract each payment's refunds (see invariant #6).
+- `4c49561` — **cash-gated refunds + cashier selector**: `process_refund` takes `cashier_id`, hard-blocks when that cashier's cash on hand is short; `getUserCashOnHand()` helper added.
+- `d7cd6c2` — **vault cash-request + notifications** (migration 009): `api/requests_api.php`, `admin/requests.php`, topbar bell; approve auto-issues the `vault_return` (see §4).
+- `6742e1c` — security: constant-time login (dummy-hash verify on missing user, `index.php`) + acting-admin fallback when restoring a payment whose collector was deleted (`api_payment.php` restore paths).
+- `f79811b` — concurrency hardening: `reject_request`/`cancel_request` wrapped in txn + `FOR UPDATE` (mirror `approve_request`); `process_refund` locks the cashier row before the cash gate; `notifyUser` truncates message to `VARCHAR(500)`.
+
+### Current state (branch `ui/magix-redesign`, May 2026)
+- **Audit:** all PHP entry points + helpers read line-by-line across 5 sessions; the latest sweep covered the new vault-request/refund code (commit `f79811b`). **No known open code bugs.** Two findings were settled as intentional/won't-fix and one batch as false positives — see memory `deferred-bug-findings`; don't re-flag `save_charge` (open to all roles, §13).
+- **DB schema:** live DB is current through **migration 009** (009 applied this session; 008's `refunded_by` nullability is in place). Fresh installs get the same via `install.sql` (mirrors all migrations).
+- **Magix redesign:** partially rolled out — `dashboard.php` + `index.php` (login) migrated to `--laskie-*` tokens; other pages still use the original `app.css` look (see §7's redesign-token-layer note). Cosmetic; ongoing.
+- **Git:** branch is **pushed** to `origin/ui/magix-redesign`; **no PR opened** (working directly on the branch by user preference; the working tree *is* the live deploy per §10). `master` is behind.
 
 ---
 
