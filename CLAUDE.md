@@ -56,6 +56,7 @@
 ├── expenses.php           # Expense entry + listing
 ├── cash.php               # Cash on hand per user
 ├── my_summary.php         # Per-user activity summary
+├── my_account.php         # Self-service profile/password/avatar editor (any logged-in user)
 ├── install.sql            # Schema + seed (run once)
 ├── .htaccess              # PHP ini values, security headers, mime caching
 │
@@ -81,10 +82,12 @@
 ├── api/
 │   ├── cash_api.php       # Cash transactions CRUD
 │   ├── expenses_api.php   # Expense CRUD
-│   └── settings_api.php   # System settings CRUD
+│   ├── settings_api.php   # System settings CRUD
+│   └── unit_chart_api.php # Dashboard "Revenue vs Expenses by Unit" chart data (JSON)
 │
 ├── config/
-│   ├── db.php             # PDO connection (credentials baked in by deploy.sh)
+│   ├── db.php             # PDO connection (thin template; calls env.php + connects)
+│   ├── env.php            # .env loader → define()s DB_* constants (see §11 #6)
 │   └── functions.php      # Helpers — see §6
 │
 ├── includes/
@@ -92,9 +95,10 @@
 │   └── footer.php         # JS includes + shared inline helpers
 │
 ├── assets/
-│   ├── css/app.css        # Design system (see §7)
-│   ├── js/app.js          # Global JS helpers
-│   └── vendor/            # All third-party CSS/JS (self-hosted)
+│   ├── css/app.css            # Base design system (see §7)
+│   ├── css/laskie-tokens.css  # Magix redesign token layer — loaded after app.css (see §7)
+│   ├── js/app.js              # Global JS helpers
+│   └── vendor/                # All third-party CSS/JS (self-hosted)
 │
 └── uploads/               # User-uploaded files — writable by www-data
     ├── contracts/   receipts/   docs/   remittance/
@@ -190,6 +194,13 @@ Helpers Claude should reuse rather than re-implement:
   - Semantic: `--success`/`--danger`/`--warning`/`--info` each paired with a `-bg` token
 - **Radius:** 8 px (`--radius`) for inputs/buttons, 12 px (`--radius-lg`) for cards
 - **Shadow:** very subtle — `var(--shadow-sm)` is the default; cards never use Bootstrap default shadow
+
+### ⚠️ Redesign token layer — `assets/css/laskie-tokens.css` (in progress on `ui/magix-redesign`)
+A second `:root` token layer for the **"Magix" visual refresh** lives in `laskie-tokens.css`, which `header.php` (and `index.php`) load **after** `app.css` so its tokens win where used. It is a *parallel* palette, not a replacement — `app.css` tokens (navy `--primary`, etc.) still drive every page that hasn't been migrated.
+
+- **Namespace:** all redesign tokens are prefixed `--laskie-*` (warm amber/teal/coral/indigo palette + `--laskie-card-bg`/`--laskie-card-dark`, `--laskie-ink*` text scale, `--laskie-radius-*`, `--laskie-shadow-*`).
+- **Adoption so far:** `dashboard.php` (full "dark-card" treatment + restyled Chart.js), `index.php` (login), and small token swaps in `footer.php`, `app.js`, `admin/settings.php` Danger Zone. **Everything else still uses the original `app.css` look.**
+- **Rule for the next agent:** when touching a redesign-migrated page use `--laskie-*` tokens; on un-migrated pages keep using the `app.css` tokens. Never hard-code a hex — if a needed shade is missing, add it to whichever `:root` layer that page consumes. Every `--laskie-*` reference must be defined in `laskie-tokens.css` (an undefined `var()` silently breaks the rule).
 
 ### Component library (already in `app.css`)
 - `.card`, `.card-header`, `.card-body`, `.card-footer`
@@ -325,6 +336,18 @@ Most of the items above were addressed in dedicated bug-fix commits. If you're i
 - `2aa97c9` — 8 fixes: monthly_summary historical rate lookup, void_payment unit_charges release + transaction wrap, restore_payment cash re-creation, get_unit_payments voided filter, due_day month-overflow capping, cash.php XSS hardening, requireLogin redirect fix, my_summary footer totals via money_sum.
 - `10e7888` — voided/deleted filter across dashboard + report queries; dynamic unit chart with period selector.
 - `ee46d87` — schema fixes, atomic transactions, CSRF, tests, vault returns.
+
+**Security/bug-fix sprint #90–#110 (3 audit sessions, May 2026 — see commits below):** the whole PHP surface was swept for onclick-XSS (→ data-attribute pattern), float-money drift (→ server-side `money_*`), missing role guards, upload-before-auth, ownership checks, and input whitelists.
+- `2aa9065` — #90–#97: inactive-recipient gate, upload-before-auth, refund-btn admin guard, server-side `total_paid`/`max_refund`, sargable period queries, avatar existence check.
+- `992464f` — #98–#105: onclick XSS (tenants/units), `fmt_money` symbol escape, soa_pdf phone/email escape, unit-status whitelist, service-amount float→string, `delete_doc` tenant-ownership check, contract date validation.
+- `b8096ff` — #106–#110: onclick XSS (expenses/accounts/transactions), server-side All-Staff cash totals, migration 008.
+- `5315708` — `deploy.sh` hardened: env-var password handling, credentials moved outside web root.
+- `770de28` — migration 008: `refunded_by` nullability + redundant-index cleanup.
+
+### Current state (as of `ui/magix-redesign`, May 2026)
+- **Audit:** all PHP entry points + helpers have been read line-by-line across 4 sessions; `my_account.php`, `config/env.php`, and the CLI-only `seed_spreadsheet.php` were the last unaudited files and came back clean. No known open code bugs.
+- **In-flight work:** the **Magix UI redesign** (`ui/magix-redesign` branch) — see §7's redesign-token-layer note. Cosmetic; partially rolled out (dashboard + login migrated, rest pending).
+- **One pending ops task:** `migrations/008_schema_fixes.sql` is written/committed but **not yet applied to the live DB** (running it needs explicit user authorization per §12's DB policy).
 
 ---
 
