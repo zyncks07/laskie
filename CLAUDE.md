@@ -65,6 +65,7 @@
 │   ├── tenants.php
 │   ├── units.php          # Units + unit_types + service_types + rate history
 │   ├── transactions.php   # Soft-deleted / voided payments — restore UI
+│   ├── requests.php       # Review/approve vault cash requests (approve auto-issues vault_return)
 │   ├── vault.php          # Dividend recipients, distributions, returns
 │   ├── logs.php           # system_logs audit viewer
 │   └── settings.php       # Settings + master password change
@@ -83,7 +84,8 @@
 │   ├── cash_api.php       # Cash transactions CRUD
 │   ├── expenses_api.php   # Expense CRUD
 │   ├── settings_api.php   # System settings CRUD
-│   └── unit_chart_api.php # Dashboard "Revenue vs Expenses by Unit" chart data (JSON)
+│   ├── unit_chart_api.php # Dashboard "Revenue vs Expenses by Unit" chart data (JSON)
+│   └── requests_api.php   # Vault cash requests + in-app notifications (create/approve/reject + bell feed)
 │
 ├── config/
 │   ├── db.php             # PDO connection (thin template; calls env.php + connects)
@@ -136,6 +138,10 @@ Read [`install.sql`](install.sql) for the authoritative DDL. Highlights:
 ### Dividends ("The Vault")
 - `dividend_recipients`, `dividend_distributions`, `dividend_returns` — money flowing out to (and back from) owners/investors.
 
+### Vault cash requests & notifications (migration 009)
+- `vault_requests` — a staff/accountant request to have cash returned from the Vault (deposit refunds, unexpected expenses after remitting). `status` ∈ {`pending`,`approved`,`rejected`,`cancelled`}. **Approving (admin) auto-issues a `vault_return` `cash_transactions` row** crediting the requester and stores its id in `cash_tx_id`. See `api/requests_api.php`.
+- `notifications` — per-user in-app feed for the topbar bell. New requests notify all admins; decisions notify the requester. Pull-based (page-load + ~15s poll); **separate from `system_logs`** (which stays the immutable audit trail).
+
 ### Settings & FX
 - `settings` — key/value; sensitive keys: `master_password` (bcrypt hash), `currency_symbol`, `invoice_prefix`, `company_*`, `db_timezone`
 
@@ -150,7 +156,7 @@ These are the rules that keep the books consistent. Any change in this area requ
 3. **Every collected payment creates a `cash_transactions` row** with `transaction_type='received'` and `reference_payment_id` set. If you record a payment without also creating its cash entry, the cash-on-hand report will drift.
 4. **Service payments must touch `unit_charges`.** Either link to an existing pre-billed row (`UPDATE`, attach `payment_id`) or create a new `auto_collected` row. See `payments/api_payment.php` action `save_payment`.
 5. **Soft delete, never hard delete** for `payments` and `expenses`. Hard deletes break the audit trail and unbalance cash reports.
-6. **Voided payments are still in the table.** Always filter `WHERE deleted_at IS NULL AND status != 'voided'` when summing for reports.
+6. **Voided payments are still in the table; refunds must be netted.** Always filter `WHERE deleted_at IS NULL AND status != 'voided'` when summing payments for reports, AND subtract each payment's refunds so a refunded receipt doesn't count as income. The canonical pattern is `SUM(p.amount - COALESCE(r.refsum,0))` via `LEFT JOIN (SELECT payment_id, SUM(amount) AS refsum FROM refunds GROUP BY payment_id) r` (see `dashboard.php`, `api_payment.php` `monthly_summary` / `get_unit_payments`). The SoA ledger (`history.php`) instead lists refunds as separate debit rows — already net. Cash-on-hand already nets `refunded` cash rows (see invariant for `getUserCashOnHand()`).
 7. **Invoice numbers are sequential per year.** `generateInvoiceNo()` uses `MAX(...) + 1` on `INV-YYYY-%`. If you change the format, write a migration that backfills.
 8. **All money columns are `DECIMAL(12,2)`.** PHP-side they are read as float — be aware of float drift; sum in SQL when possible.
 9. **All audit-relevant mutations call `logActivity()` or `logChange()`** with module, action, and details. Don't skip this for "small" admin edits.
@@ -177,6 +183,8 @@ Helpers Claude should reuse rather than re-implement:
 | `prorateFirstMonth($rate, $dueDay, $contractStart, $m, $y)` | First-month proration |
 | `chargeDate($dueDay, $contractStart, $m, $y)` | Returns correct charge date (proration-aware) |
 | `getUnitPaymentStatus($pdo, $unitId, $m, $y)` | Returns `'green'`/`'amber'`/`'red'`/`'gray'` for the unit-status grid |
+| `getUserCashOnHand($pdo, $userId)` | Authoritative per-user cash on hand (`received + vault_return − remitted − expenses − refunded`). Use for any "enough cash?" gate (e.g. refund cashier check) |
+| `notifyUser($pdo, $userId, $type, $msg, $link?, $reqId?)` / `notifyAdmins(...)` | Insert in-app notification(s) for the topbar bell. Best-effort (try/catch); store **raw** text (render escapes) |
 | `jsonOk([...])` / `jsonErr($msg, $code=400)` | JSON response shorthand for `/api/` and `/payments/api_payment.php` |
 | `clean($v)` | `htmlspecialchars` wrapper — **use in every PHP echo into HTML** |
 | `nullOrStr($v)` | Trim → null-if-empty (for nullable VARCHAR columns) |
@@ -256,6 +264,9 @@ Global helpers attached to `window`: `showToast`, `apiPost`, `confirmDelete`, `f
 | Audit Logs | ✓ | ✗ | ✗ |
 | The Vault (dividend recipients, distributions, returns) | ✓ | ✓ | ✗ |
 | Vault → User cash returns (admin-only sub-flow within Vault page) | ✓ | ✗ | ✗ |
+| Request cash from the Vault (`cash.php` → `requests_api.php create_request`) | ✓ | ✓ | ✓ |
+| Approve/reject cash requests (`admin/requests.php`; approve auto-issues the `vault_return`) | ✓ | ✗ | ✗ |
+| Process a payment refund — admin picks the cashier; refund is hard-gated on that cashier's cash-on-hand | ✓ | ✗ | ✗ |
 
 ### Already in place
 - Prepared statements only — no string-interpolated SQL anywhere in the codebase
@@ -383,6 +394,9 @@ These look like bugs but are **deliberate choices**. Do not "fix" them without a
 
 ### `admin/vault.php` — Accountants can delete vault remittances (no `isAdmin()` on `delete_remittance`)
 `delete_remittance` in `admin/vault.php` intentionally has **no `isAdmin()` guard**, so accountants can delete any `transaction_type='remitted'` cash transaction via the Vault page. The Vault workflow expects accountants to have full CRUD over remittances they record on behalf of staff. The role-matrix entry "Edit/Delete cash transactions (own or others) — admin only" refers specifically to `cash_api.php::delete_cash_tx` (the general-purpose endpoint); vault-context remittance management is a separate, deliberately accountant-accessible sub-flow. Do **not** add `requireAdmin()` to this action.
+
+### `payments/api_payment.php` — `save_charge` has no `requireAdmin()` (any logged-in user can create/edit pre-billed charges)
+The `save_charge` action intentionally has **no role guard** beyond `requireLogin()`, and the "Add Service Charge" button in `payments/collection.php` is shown to all roles. This is a **deliberate workflow choice** (confirmed 2026-05-30): staff/accountants pre-bill service charges during collection. Note the asymmetry — `delete_charge` and editing an already-PAID charge *are* admin-only (you can add/edit an unpaid charge but only an admin can delete one or touch a paid one). Do **not** add `requireAdmin()` to `save_charge`.
 
 ### `api/settings_api.php` — Master password hashed at bcrypt cost 10, not the app-standard 12
 `change_master` at line 111 uses `password_hash($new, PASSWORD_BCRYPT)` (default cost 10), while all user passwords use `['cost' => 12]`. This is **intentional**: the master password is re-verified on every Settings page unlock — potentially several times per admin session — so the lower cost avoids noticeable latency in the UI. The placeholder hash at line 285 (`import_accounts`) also uses default cost intentionally; it is a throwaway credential that admins must reset immediately via the Accounts page. Do **not** unify these to cost 12.

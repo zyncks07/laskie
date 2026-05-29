@@ -37,9 +37,14 @@ include 'includes/header.php';
 
 <div class="page-header">
   <h1 class="page-title"><i class="fa-solid fa-hand-holding-dollar me-2 text-primary-custom"></i>Cash on Hand</h1>
-  <button class="btn btn-sm btn-primary" onclick="openRemitModal()">
-    <i class="fa-solid fa-paper-plane me-1"></i>Record Remittance
-  </button>
+  <div class="d-flex gap-2">
+    <button class="btn btn-sm btn-outline-primary" onclick="openVaultRequestModal()">
+      <i class="fa-solid fa-vault me-1"></i>Request Cash from Vault
+    </button>
+    <button class="btn btn-sm btn-primary" onclick="openRemitModal()">
+      <i class="fa-solid fa-paper-plane me-1"></i>Record Remittance
+    </button>
+  </div>
 </div>
 
 <!-- My Cash Hero -->
@@ -246,7 +251,68 @@ include 'includes/header.php';
   </div>
 </div>
 
+<!-- Request Cash from Vault Modal -->
+<div class="modal fade" id="vaultRequestModal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="fa-solid fa-vault me-2"></i>Request Cash from Vault</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="alert alert-info py-2" style="font-size:12.5px">Ask an admin to return cash to you from the Vault — for a tenant deposit refund or an unexpected expense after you've remitted. You'll be notified when it's approved.</div>
+        <div class="mb-3">
+          <label class="form-label">Amount (&#8369;) *</label>
+          <input type="number" step="0.01" min="0.01" class="form-control" id="vrAmount" placeholder="0.00">
+        </div>
+        <div class="mb-3">
+          <label class="form-label">For *</label>
+          <select class="form-select" id="vrType">
+            <option value="refund_fund">Tenant refund (e.g. deposit return)</option>
+            <option value="expense_fund">Unexpected expense</option>
+            <option value="other">Other</option>
+          </select>
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Purpose / details *</label>
+          <textarea class="form-control" id="vrPurpose" rows="2" placeholder="e.g. 2-month deposit refund for tenant at 359-A, lease ended"></textarea>
+        </div>
+        <div id="vrMsg" style="display:none"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
+        <button class="btn btn-primary btn-sm" onclick="submitVaultRequest()"><i class="fa-solid fa-paper-plane me-1"></i>Submit Request</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <script>
+var vaultRequestModal = null;
+function openVaultRequestModal() {
+  if (!vaultRequestModal) vaultRequestModal = new bootstrap.Modal(document.getElementById('vaultRequestModal'));
+  document.getElementById('vrAmount').value = '';
+  document.getElementById('vrPurpose').value = '';
+  document.getElementById('vrType').value = 'refund_fund';
+  document.getElementById('vrMsg').style.display = 'none';
+  vaultRequestModal.show();
+}
+function submitVaultRequest() {
+  var msgEl = document.getElementById('vrMsg');
+  var amount = parseFloat(document.getElementById('vrAmount').value);
+  var purpose = document.getElementById('vrPurpose').value.trim();
+  if (!amount || amount <= 0) { msgEl.className='alert alert-danger'; msgEl.textContent='Enter a valid amount.'; msgEl.style.display=''; return; }
+  if (!purpose) { msgEl.className='alert alert-danger'; msgEl.textContent='Purpose is required.'; msgEl.style.display=''; return; }
+  apiPost('api/requests_api.php', {
+    action: 'create_request', amount: amount, purpose: purpose,
+    request_type: document.getElementById('vrType').value
+  }, function (err, res) {
+    if (!res || !res.success) { msgEl.className='alert alert-danger'; msgEl.textContent=(res&&res.error)||'Failed.'; msgEl.style.display=''; return; }
+    vaultRequestModal.hide();
+    showToast(res.msg, 'success');
+  });
+}
+
 function esc(s) {
   var d = document.createElement('div');
   d.appendChild(document.createTextNode(s != null ? String(s) : ''));

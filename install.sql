@@ -281,6 +281,46 @@ CREATE TABLE IF NOT EXISTS dividend_returns (
     FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
 );
 
+-- Vault cash requests (staff/accountant → admin approval → auto vault_return)
+CREATE TABLE IF NOT EXISTS vault_requests (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    requested_by INT NOT NULL,
+    request_type ENUM('refund_fund','expense_fund','other') NOT NULL DEFAULT 'other',
+    amount DECIMAL(12,2) NOT NULL,
+    purpose VARCHAR(255) NOT NULL,
+    reference_payment_id INT DEFAULT NULL,
+    status ENUM('pending','approved','rejected','cancelled') NOT NULL DEFAULT 'pending',
+    reviewed_by INT DEFAULT NULL,
+    reviewed_at DATETIME DEFAULT NULL,
+    decision_note VARCHAR(255) DEFAULT NULL,
+    cash_tx_id INT DEFAULT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_vr_status (status),
+    INDEX idx_vr_requested_by (requested_by),
+    FOREIGN KEY (requested_by) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (reviewed_by) REFERENCES users(id) ON DELETE SET NULL,
+    FOREIGN KEY (reference_payment_id) REFERENCES payments(id) ON DELETE SET NULL,
+    FOREIGN KEY (cash_tx_id) REFERENCES cash_transactions(id) ON DELETE SET NULL
+);
+
+-- In-app notifications (topbar bell; per-user, pull-based)
+CREATE TABLE IF NOT EXISTS notifications (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    user_id INT NOT NULL,
+    type VARCHAR(40) NOT NULL,
+    message VARCHAR(500) NOT NULL,
+    link VARCHAR(255) DEFAULT NULL,
+    vault_request_id INT DEFAULT NULL,
+    is_read TINYINT(1) NOT NULL DEFAULT 0,
+    read_at DATETIME DEFAULT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_n_user_unread (user_id, is_read),
+    INDEX idx_n_created_at (created_at),
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (vault_request_id) REFERENCES vault_requests(id) ON DELETE CASCADE
+);
+
 -- System Settings
 CREATE TABLE IF NOT EXISTS settings (
     id INT AUTO_INCREMENT PRIMARY KEY,

@@ -24,6 +24,14 @@ if ($userAvatar && !is_file(__DIR__ . '/..' . $userAvatar)) {
 $appName = getSetting($pdo, 'app_name', 'Laskie Rental PMS');
 $currentPage = basename($_SERVER['PHP_SELF'], '.php');
 
+// Pending vault-cash requests, for the admin sidebar badge. Guarded so the app
+// keeps working before migration 009 creates the table.
+$pendingReqCount = 0;
+if (isAdmin()) {
+    try { $pendingReqCount = (int)$pdo->query("SELECT COUNT(*) FROM vault_requests WHERE status='pending'")->fetchColumn(); }
+    catch (Throwable $_) { $pendingReqCount = 0; }
+}
+
 // $depth is provided by the including page (root pages: ''; subdir pages: '../').
 // Fall back to a URL-path heuristic only if the caller forgot to set it.
 // Note: assetUrl() / pageUrl() (driven by BASE_URL) are the preferred way to
@@ -127,6 +135,10 @@ if (!isset($depth)) {
     <a href="<?= $depth ?>admin/transactions.php" class="sidebar-nav-item <?= ($currentPage==='transactions')?'active':'' ?>">
       <i class="fa-solid fa-rectangle-list"></i> Transactions
     </a>
+    <a href="<?= $depth ?>admin/requests.php" class="sidebar-nav-item <?= ($currentPage==='requests')?'active':'' ?>">
+      <i class="fa-solid fa-hand-holding-dollar"></i> Cash Requests
+      <?php if ($pendingReqCount > 0): ?><span class="badge ms-auto" style="background:var(--laskie-coral,#D85A30);color:#fff;font-size:10px"><?= $pendingReqCount ?></span><?php endif; ?>
+    </a>
     <a href="<?= $depth ?>admin/settings.php" class="sidebar-nav-item <?= ($currentPage==='settings')?'active':'' ?>">
       <i class="fa-solid fa-gear"></i> Settings
     </a>
@@ -155,6 +167,19 @@ if (!isset($depth)) {
   </button>
   <div class="topbar-title"><?= clean($pageTitle ?? 'Dashboard') ?></div>
   <div class="topbar-right">
+    <div class="topbar-notif" style="position:relative">
+      <button id="notifBell" class="btn-icon" title="Notifications" aria-label="Notifications" onclick="toggleNotifPanel(event)" style="position:relative">
+        <i class="fa-solid fa-bell"></i>
+        <span id="notifBadge" style="display:none;position:absolute;top:-3px;right:-3px;min-width:16px;height:16px;padding:0 4px;border-radius:8px;background:var(--laskie-coral,#D85A30);color:#fff;font-size:10px;line-height:16px;font-weight:700;text-align:center"></span>
+      </button>
+      <div id="notifPanel" style="display:none;position:absolute;right:0;top:calc(100% + 8px);width:320px;max-height:420px;overflow-y:auto;background:#fff;border:1px solid var(--laskie-divider,#e5e7eb);border-radius:12px;box-shadow:0 8px 28px rgba(0,0,0,.14);z-index:1080">
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border-bottom:1px solid var(--laskie-divider,#eee)">
+          <strong style="font-size:13px">Notifications</strong>
+          <a href="#" onclick="markAllNotifs(event)" style="font-size:11.5px;text-decoration:none;color:var(--laskie-amber,#b45309)">Mark all read</a>
+        </div>
+        <div id="notifList" style="padding:2px 0"><div style="padding:14px;color:#999;font-size:12.5px">No notifications.</div></div>
+      </div>
+    </div>
     <a href="<?= $depth ?>my_account.php" class="topbar-user text-decoration-none" style="color:inherit" title="My Account">
       <?php if ($userAvatar): ?>
         <img src="<?= clean($userAvatar) ?>" alt="" style="width:32px;height:32px;border-radius:50%;object-fit:cover">

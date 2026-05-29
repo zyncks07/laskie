@@ -33,3 +33,5 @@ done
 | 005 | `005_add_composite_indexes.sql` | Composite indexes on `payments`, `expenses`, `cash_transactions`, `unit_charges` matching real WHERE patterns (audited, not guessed) |
 | 006 | `006_extend_cash_tx_enum_vault_return.sql` | Add `'vault_return'` to `cash_transactions.transaction_type` for the Vault → User return flow |
 | 007 | `007_add_user_avatar.sql` | Add `users.avatar_path` for uploaded profile pictures |
+| 008 | `008_schema_fixes.sql` | `refunds.refunded_by` nullability + `ON DELETE SET NULL`; schema-consistency fixes |
+| 009 | `009_add_vault_requests_notifications.sql` | Add `vault_requests` + `notifications` for the vault-cash request/approval + in-app notification feature |

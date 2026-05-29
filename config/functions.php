@@ -273,6 +273,27 @@ function getUserCashOnHand(PDO $pdo, int $userId): string {
     );
 }
 
+// ─── In-app Notifications ────────────────────────────────────
+// Insert one notification row for a recipient. Wrapped in try/catch (like
+// logActivity) so a missing table or transient error never breaks the caller's
+// main flow. $link is an app-relative path the bell dropdown navigates to.
+function notifyUser(PDO $pdo, int $userId, string $type, string $message, ?string $link = null, ?int $vaultRequestId = null): void {
+    try {
+        $pdo->prepare("INSERT INTO notifications (user_id, type, message, link, vault_request_id) VALUES (?,?,?,?,?)")
+            ->execute([$userId, $type, $message, $link, $vaultRequestId]);
+    } catch (Exception $e) { /* silent — notifications are best-effort */ }
+}
+
+// Notify every active admin (recipients of new vault-cash requests).
+function notifyAdmins(PDO $pdo, string $type, string $message, ?string $link = null, ?int $vaultRequestId = null): void {
+    try {
+        $admins = $pdo->query("SELECT id FROM users WHERE role='admin' AND status='active'")->fetchAll(PDO::FETCH_COLUMN);
+        foreach ($admins as $aid) {
+            notifyUser($pdo, (int)$aid, $type, $message, $link, $vaultRequestId);
+        }
+    } catch (Exception $e) { /* silent */ }
+}
+
 // ─── Invoice Number Generator ────────────────────────────────
 function generateInvoiceNo(PDO $pdo): string {
     $prefix = 'INV';
