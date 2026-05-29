@@ -236,8 +236,11 @@ if ($action === 'restore_deleted_payment') {
         $existing = $pdo->prepare("SELECT id FROM cash_transactions WHERE reference_payment_id=? AND transaction_type='received' LIMIT 1");
         $existing->execute([$id]);
         if (!$existing->fetchColumn()) {
+            // Fall back to the acting admin if the original collector was deleted
+            // (received_by SET NULL) — cash_transactions.user_id is NOT NULL.
+            $cashUserId = $p['received_by'] ?: (int)$_SESSION['user']['id'];
             $pdo->prepare("INSERT INTO cash_transactions (user_id,transaction_type,amount,reference_payment_id,notes,transaction_date) VALUES (?,?,?,?,?,?)")
-                ->execute([$p['received_by'],'received',$p['amount'],$id,"Payment received: {$p['invoice_no']}",$p['payment_date']]);
+                ->execute([$cashUserId,'received',$p['amount'],$id,"Payment received: {$p['invoice_no']}",$p['payment_date']]);
         }
         if ($p['payment_type'] === 'service') {
             $look = $pdo->prepare("SELECT id FROM unit_charges WHERE unit_id=? AND service_type_id=? AND period_month=? AND period_year=? AND payment_id IS NULL AND source='pre_billed' LIMIT 1");
@@ -354,8 +357,11 @@ if ($action === 'restore_payment') {
     try {
         $pdo->prepare("UPDATE payments SET status='paid' WHERE id=?")->execute([$id]);
         // Re-create the cash entry that was removed when this payment was voided.
+        // Fall back to the acting admin if the original collector was deleted
+        // (received_by SET NULL) — cash_transactions.user_id is NOT NULL.
+        $cashUserId = $p['received_by'] ?: (int)$_SESSION['user']['id'];
         $pdo->prepare("INSERT INTO cash_transactions (user_id,transaction_type,amount,reference_payment_id,notes,transaction_date) VALUES (?,?,?,?,?,?)")
-            ->execute([$p['received_by'],'received',$p['amount'],$id,"Payment received: {$p['invoice_no']}",$p['payment_date']]);
+            ->execute([$cashUserId,'received',$p['amount'],$id,"Payment received: {$p['invoice_no']}",$p['payment_date']]);
         // Re-link the unit_charges row the same way save_payment did. Prefer an
         // existing pre_billed outstanding charge for the same period; if none,
         // recreate the auto_collected row that void_payment deleted.

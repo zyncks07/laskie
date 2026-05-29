@@ -14,6 +14,10 @@ $error = '';
 // happened in the last WINDOW_MIN minutes. Reset on any LOGIN_SUCCESS row.
 const LOGIN_LOCKOUT_THRESHOLD = 5;
 const LOGIN_LOCKOUT_WINDOW_MIN = 15;
+// Throwaway cost-12 bcrypt hash verified when a username doesn't exist, so a
+// missing/inactive account can't be distinguished from a wrong password by
+// response timing (user enumeration). Cost matches real users.password_hash.
+const LOGIN_DUMMY_HASH = '$2y$12$INHCPgxR95wGppVB8iHD9u.MTL4zFrwNHAS76VtysD/2ME/h6BgUa';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $username = trim($_POST['username'] ?? '');
@@ -49,7 +53,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $stmt->execute([$username]);
         $user = $stmt->fetch();
 
-        if ($user && password_verify($password, $user['password_hash'])) {
+        // Always run exactly one bcrypt verify — against a dummy hash when no
+        // user row exists — so timing can't reveal which usernames are valid.
+        $hashToCheck = $user['password_hash'] ?? LOGIN_DUMMY_HASH;
+        $passwordOk  = password_verify($password, $hashToCheck);
+
+        if ($user && $passwordOk) {
             // Defence-in-depth: fresh session id + fresh CSRF token on every successful login.
             session_regenerate_id(true);
             unset($_SESSION['csrf_token']);
