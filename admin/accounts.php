@@ -209,7 +209,7 @@ include '../includes/header.php';
         <td class="text-center">
           <button class="btn-icon" title="Edit" onclick="editUser(<?= $u['id'] ?>)"><i class="fa-solid fa-pen fa-xs"></i></button>
           <?php if($u['id'] != $_SESSION['user']['id']): ?>
-          <button class="btn-icon danger" title="Deactivate" onclick="deactivateUser(<?= $u['id'] ?>, '<?= clean($u['full_name']) ?>')"><i class="fa-solid fa-ban fa-xs"></i></button>
+          <button class="btn-icon danger" title="Deactivate" data-id="<?=$u['id']?>" data-name="<?=clean($u['full_name'])?>" onclick="deactivateUser(+this.dataset.id,this.dataset.name)"><i class="fa-solid fa-ban fa-xs"></i></button>
           <?php endif; ?>
         </td>
       </tr>

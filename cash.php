@@ -163,7 +163,7 @@ include 'includes/header.php';
   </div>
 
   <!-- Period summary strip -->
-  <div class="d-flex gap-3 flex-wrap px-3 py-2 border-bottom" style="background:#f9fafb;font-size:12.5px">
+  <div class="d-flex gap-3 flex-wrap px-3 py-2 border-bottom" style="background:#faf7ef;font-size:12.5px">
     <span>Received: <strong id="pRec">&#8212;</strong></span>
     <span style="color:var(--text-muted)">|</span>
     <span>Remitted: <strong id="pRem">&#8212;</strong></span>
@@ -285,15 +285,13 @@ function loadAllBalances() {
       document.getElementById('allBalBody').innerHTML = '<tr><td colspan="7" class="text-center text-danger">Failed to load.</td></tr>';
       return;
     }
-    var html = '', totR = 0, totM = 0, totE = 0, totV = 0;
+    var html = '';
     for (var i = 0; i < res.users.length; i++) {
       var u = res.users[i];
-      var r = parseFloat(u.total_received)      || 0;
-      var m = parseFloat(u.total_remitted)      || 0;
-      var e = parseFloat(u.total_expenses)      || 0;
-      var v = parseFloat(u.total_vault_returns) || 0;
-      var c = parseFloat(u.cash_on_hand)        || 0;
-      totR += r; totM += m; totE += e; totV += v;
+      var r = parseFloat(u.total_received) || 0;
+      var m = parseFloat(u.total_remitted) || 0;
+      var e = parseFloat(u.total_expenses) || 0;
+      var c = parseFloat(u.cash_on_hand)   || 0;
       var cashColor = c > 0 ? 'var(--warning)' : (c < 0 ? 'var(--danger)' : 'var(--success)');
       var roleBadge = '<span class="badge badge-' + esc(u.role) + '">' + esc(u.role.charAt(0).toUpperCase() + u.role.slice(1)) + '</span>';
       html += '<tr>';
@@ -306,8 +304,12 @@ function loadAllBalances() {
       html += '<td class="text-center"><button class="btn-icon" title="View" onclick="filterByUser(' + parseInt(u.id) + ')"><i class="fa-solid fa-eye fa-xs"></i></button></td>';
       html += '</tr>';
     }
-    var totNet = totR + totV - totM - totE;
-    html += '<tr style="background:#f0f4ff;font-weight:700;border-top:2px solid var(--border)">';
+    var t = res.totals || {};
+    var totR   = parseFloat(t.total_received) || 0;
+    var totM   = parseFloat(t.total_remitted) || 0;
+    var totE   = parseFloat(t.total_expenses) || 0;
+    var totNet = parseFloat(t.net_on_hand)    || 0;
+    html += '<tr style="background:var(--laskie-amber-bg);font-weight:700;border-top:2px solid var(--laskie-divider)">';
     html += '<td colspan="2">TOTAL</td>';
     html += '<td class="text-end">' + fmt(totR) + '</td>';
     html += '<td class="text-end">' + fmt(totM) + '</td>';

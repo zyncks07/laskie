@@ -182,7 +182,13 @@ if ($action === 'all_users_balance') {
         );
     }
     unset($d);
-    jsonOk(['users' => $data]);
+    $totals = [
+        'total_received' => money_sum(array_column($data, 'total_received')),
+        'total_remitted' => money_sum(array_column($data, 'total_remitted')),
+        'total_expenses' => money_sum(array_column($data, 'total_expenses')),
+        'net_on_hand'    => money_sum(array_column($data, 'cash_on_hand')),
+    ];
+    jsonOk(['users' => $data, 'totals' => $totals]);
 }
 
 exit;

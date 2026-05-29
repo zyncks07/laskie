@@ -158,7 +158,7 @@ function typeBadge(string $type): string {
     return match($type) {
         'payment'    => '<span class="badge" style="background:var(--primary-light);color:var(--primary)">Payment</span>',
         'expense'    => '<span class="badge bg-danger">Expense</span>',
-        'remittance' => '<span class="badge" style="background:#e0f2fe;color:#0369a1">Remittance</span>',
+        'remittance' => '<span class="badge" style="background:var(--laskie-indigo-bg);color:var(--laskie-indigo)">Remittance</span>',
         'vault_return' => '<span class="badge badge-vault-return">Vault&rarr;User</span>',
         default      => '<span class="badge bg-secondary">' . htmlspecialchars($type) . '</span>',
     };
@@ -336,7 +336,7 @@ function statusBadge(string $type, string $status, ?string $deletedAt = null): s
                 style="margin-left:2px"><i class="fa-solid fa-rotate-right fa-xs" style="color:var(--success)"></i></button>
               <?php else: ?>
               <button class="btn-icon" title="Void Payment"
-                onclick="voidTx(<?= (int)$tx['id'] ?>, '<?= $refEsc ?>')"
+                data-id="<?=(int)$tx['id']?>" data-ref="<?=$refEsc?>" onclick="voidTx(+this.dataset.id,this.dataset.ref)"
                 style="margin-left:2px"><i class="fa-solid fa-ban fa-xs" style="color:var(--warning)"></i></button>
               <?php endif; ?>
             <?php endif; ?>

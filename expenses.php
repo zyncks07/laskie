@@ -169,7 +169,7 @@ include 'includes/header.php';
 
 <?php if(isAdmin()): ?>
 <!-- Bulk action bar (shown when expenses are selected) -->
-<div id="expBulkBar" class="d-none" style="position:fixed;bottom:24px;left:50%;transform:translateX(-50%);z-index:1050;background:#fff;border:1px solid var(--border);border-radius:8px;padding:10px 20px;box-shadow:0 4px 20px rgba(0,0,0,.18)">
+<div id="expBulkBar" class="d-none" style="position:fixed;bottom:24px;left:50%;transform:translateX(-50%);z-index:1050;background:#fff;border:1px solid var(--laskie-divider);border-radius:999px;padding:10px 22px;box-shadow:var(--laskie-shadow-hero)">
   <div class="d-flex align-items-center gap-3">
     <span class="fw-600" id="expBulkCount"></span>
     <button class="btn btn-danger btn-sm" onclick="bulkDeleteExpenses()"><i class="fa-solid fa-trash me-1"></i>Delete Selected</button>
@@ -300,8 +300,8 @@ include 'includes/header.php';
                 <td class="fw-600"><?=clean($c['name'])?></td>
                 <td style="font-size:12.5px;color:var(--text-muted)"><?=clean($c['description']??'&#8212;')?></td>
                 <td class="text-center">
-                  <button class="btn-icon" onclick="editCategory(<?=$c['id']?>,'<?=clean($c['name'])?>','<?=clean($c['description']??'')?>')"><i class="fa-solid fa-pen fa-xs"></i></button>
-                  <button class="btn-icon danger" onclick="deleteCategory(<?=$c['id']?>,'<?=clean($c['name'])?>')"><i class="fa-solid fa-trash fa-xs"></i></button>
+                  <button class="btn-icon" data-id="<?=$c['id']?>" data-name="<?=clean($c['name'])?>" data-desc="<?=clean($c['description']??'')?>" onclick="editCategory(+this.dataset.id,this.dataset.name,this.dataset.desc)"><i class="fa-solid fa-pen fa-xs"></i></button>
+                  <button class="btn-icon danger" data-id="<?=$c['id']?>" data-name="<?=clean($c['name'])?>" onclick="deleteCategory(+this.dataset.id,this.dataset.name)"><i class="fa-solid fa-trash fa-xs"></i></button>
                 </td>
               </tr>
               <?php endforeach; ?>
@@ -435,7 +435,7 @@ function loadExpenses() {
 
     if (exps.length > 0) {
       document.getElementById('expFoot').innerHTML =
-        '<tr style="background:#f9fafb;font-weight:700;border-top:2px solid var(--border)">' +
+        '<tr style="background:#faf7ef;font-weight:700;border-top:2px solid var(--laskie-divider)">' +
         '<td colspan="' + (IS_ADMIN ? 5 : 4) + '">TOTAL (' + exps.length + ' records)</td>' +
         '<td class="text-end" style="color:var(--danger)">' + fmt(res.total) + '</td>' +
         '<td colspan="4"></td></tr>';
