@@ -28,6 +28,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $notes     = nullOrStr($_POST['notes'] ?? '');
         if (!$fullName) jsonErr('Tenant full name is required.');
         if (!in_array($status, ['active','inactive','former'], true)) jsonErr('Invalid tenant status.');
+        if ($start && $end && strtotime($start) > strtotime($end)) jsonErr('Contract start date cannot be after contract end date.');
 
         if ($id) {
             // Capture before-state: old unit for occupancy resync + full field
@@ -121,17 +122,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
     if ($action === 'delete_doc') {
-        $docId = (int)$_POST['id'];
-        // Unlink the underlying upload too, otherwise every delete leaks a file
-        // into uploads/contracts/. Guard the prefix so a malformed file_path
-        // can't point at anything outside the uploads tree.
-        $row = $pdo->prepare("SELECT file_path FROM tenant_docs WHERE id=?");
-        $row->execute([$docId]);
+        $docId    = (int)($_POST['id']        ?? 0);
+        $tenantId = (int)($_POST['tenant_id'] ?? 0);
+        if (!$docId || !$tenantId) jsonErr('Invalid request.');
+        // Scope to tenant so an admin cannot delete another tenant's document
+        // by guessing a doc ID. Both conditions must match.
+        $row = $pdo->prepare("SELECT file_path FROM tenant_docs WHERE id=? AND tenant_id=?");
+        $row->execute([$docId, $tenantId]);
         $fp = $row->fetchColumn();
+        if ($fp === false) jsonErr('Document not found.');
         if ($fp && str_starts_with((string)$fp, '/uploads/')) {
             @unlink(__DIR__ . '/..' . $fp);
         }
-        $pdo->prepare("DELETE FROM tenant_docs WHERE id=?")->execute([$docId]);
+        $pdo->prepare("DELETE FROM tenant_docs WHERE id=? AND tenant_id=?")->execute([$docId, $tenantId]);
         logActivity($pdo,'DELETE_DOC','Tenants',"Deleted tenant doc #$docId");
         jsonOk(['msg'=>'Document removed.']);
     }
@@ -184,7 +187,7 @@ include '../includes/header.php';
         <td><span class="badge badge-<?= $t['status'] ?>"><?= ucfirst($t['status']) ?></span></td>
         <td class="text-center">
           <button class="btn-icon" title="Edit" onclick="editTenant(<?= $t['id'] ?>)"><i class="fa-solid fa-pen fa-xs"></i></button>
-          <button class="btn-icon" title="Documents" onclick="openDocs(<?= $t['id'] ?>, '<?= clean($t['full_name']) ?>')"><i class="fa-solid fa-folder-open fa-xs"></i></button>
+          <button class="btn-icon" title="Documents" data-id="<?= $t['id'] ?>" data-name="<?= clean($t['full_name']) ?>" onclick="openDocs(+this.dataset.id, this.dataset.name)"><i class="fa-solid fa-folder-open fa-xs"></i></button>
         </td>
       </tr>
       <?php endforeach; ?>
@@ -426,11 +429,12 @@ function uploadDoc() {
 }
 
 function deleteDoc(id) {
+  const tenantId = document.getElementById('docTenantId').value;
   confirmDelete('Remove this document?', ()=>{
-    apiPost('tenants.php', {action:'delete_doc', id}, (err,res) => {
+    apiPost('tenants.php', {action:'delete_doc', id, tenant_id: tenantId}, (err,res) => {
       if (!res.success) return showToast(res.error,'error');
       showToast(res.msg,'success');
-      loadDocs(document.getElementById('docTenantId').value);
+      loadDocs(tenantId);
     });
   });
 }

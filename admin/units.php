@@ -22,6 +22,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $dueDay   = max(1, min(28, (int)($_POST['due_day'] ?? 5)));
         $status   = $_POST['status'] ?? 'vacant';
         if (!$name) jsonErr('Unit name is required.');
+        if (!in_array($status, ['vacant', 'occupied'], true)) jsonErr('Invalid unit status.');
         if ($id) {
             $oldRow = $pdo->prepare("SELECT unit_name, monthly_rate, due_day, status FROM rental_units WHERE id=?");
             $oldRow->execute([$id]);
@@ -140,7 +141,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $id     = (int)($_POST['id'] ?? 0);
         $name   = trim($_POST['name'] ?? '');
         $desc   = nullOrStr($_POST['description'] ?? '');
-        $amount = (float)($_POST['default_amount'] ?? 0);
+        $amount = trim((string)($_POST['default_amount'] ?? '0'));
         $active = (int)($_POST['is_active'] ?? 1);
         if (!$name) jsonErr('Service name is required.');
         if ($id) {
@@ -342,9 +343,9 @@ include '../includes/header.php';
             <td><span class="badge badge-<?= $u['status'] ?>"><?= ucfirst($u['status']) ?></span></td>
             <td class="truncate" style="max-width:180px"><?= clean($u['description'] ?? '—') ?></td>
             <td class="text-center">
-              <button class="btn-icon" title="Rate History" onclick="openRateHistory(<?= $u['id'] ?>, '<?= clean($u['unit_name']) ?>', <?= (float)$u['monthly_rate'] ?>)"><i class="fa-solid fa-chart-line fa-xs"></i></button>
+              <button class="btn-icon" title="Rate History" data-id="<?= $u['id'] ?>" data-name="<?= clean($u['unit_name']) ?>" data-rate="<?= (float)$u['monthly_rate'] ?>" onclick="openRateHistory(+this.dataset.id, this.dataset.name, +this.dataset.rate)"><i class="fa-solid fa-chart-line fa-xs"></i></button>
               <button class="btn-icon" title="Edit" onclick="editUnit(<?= $u['id'] ?>)"><i class="fa-solid fa-pen fa-xs"></i></button>
-              <button class="btn-icon danger" title="Delete" onclick="deleteUnit(<?= $u['id'] ?>, '<?= clean($u['unit_name']) ?>')"><i class="fa-solid fa-trash fa-xs"></i></button>
+              <button class="btn-icon danger" title="Delete" data-id="<?= $u['id'] ?>" data-name="<?= clean($u['unit_name']) ?>" onclick="deleteUnit(+this.dataset.id, this.dataset.name)"><i class="fa-solid fa-trash fa-xs"></i></button>
             </td>
           </tr>
           <?php endforeach; ?>
@@ -371,7 +372,7 @@ include '../includes/header.php';
             <td><?= clean($t['description'] ?? '—') ?></td>
             <td class="text-center">
               <button class="btn-icon" title="Edit" onclick="editType(<?= $t['id'] ?>)"><i class="fa-solid fa-pen fa-xs"></i></button>
-              <button class="btn-icon danger" title="Delete" onclick="deleteType(<?= $t['id'] ?>, '<?= clean($t['name']) ?>')"><i class="fa-solid fa-trash fa-xs"></i></button>
+              <button class="btn-icon danger" title="Delete" data-id="<?= $t['id'] ?>" data-name="<?= clean($t['name']) ?>" onclick="deleteType(+this.dataset.id, this.dataset.name)"><i class="fa-solid fa-trash fa-xs"></i></button>
             </td>
           </tr>
           <?php endforeach; ?>
@@ -400,7 +401,7 @@ include '../includes/header.php';
             <td><span class="badge badge-<?= $s['is_active']?'active':'inactive' ?>"><?= $s['is_active']?'Yes':'No' ?></span></td>
             <td class="text-center">
               <button class="btn-icon" title="Edit" onclick="editService(<?= $s['id'] ?>)"><i class="fa-solid fa-pen fa-xs"></i></button>
-              <button class="btn-icon danger" title="Delete" onclick="deleteService(<?= $s['id'] ?>, '<?= clean($s['name']) ?>')"><i class="fa-solid fa-trash fa-xs"></i></button>
+              <button class="btn-icon danger" title="Delete" data-id="<?= $s['id'] ?>" data-name="<?= clean($s['name']) ?>" onclick="deleteService(+this.dataset.id, this.dataset.name)"><i class="fa-solid fa-trash fa-xs"></i></button>
             </td>
           </tr>
           <?php endforeach; ?>

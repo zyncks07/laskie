@@ -298,7 +298,7 @@ table.ledger tfoot td{padding:10px 8px;font-weight:700;border-top:2px solid var(
       <div>
         <div class="co-name"><?=clean($companyName)?></div>
         <div class="co-sub">
-          <?=clean($companyAddress)?><?=$companyPhone?' · '.$companyPhone:''?><?=$companyEmail?' · '.$companyEmail:''?>
+          <?=clean($companyAddress)?><?=$companyPhone?' · '.clean($companyPhone):''?><?=$companyEmail?' · '.clean($companyEmail):''?>
         </div>
       </div>
       <div class="soa-title-block">

@@ -15,7 +15,7 @@ $currSymbol  = getSetting($pdo, 'currency_symbol', '₱');
 $generatedAt = date('F j, Y \a\t g:i A');
 
 function fmt_money(float $n, string $sym): string {
-    return $sym . number_format($n, 2);
+    return htmlspecialchars($sym, ENT_QUOTES, 'UTF-8') . number_format($n, 2);
 }
 
 // Resolve the date window once (sargable — hits idx_pay_date / idx_exp_date / idx_cash_user_date)
