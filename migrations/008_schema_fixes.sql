@@ -8,7 +8,10 @@ ALTER TABLE payments
 
 -- 2. Add missing ON DELETE clause to refunds.refunded_by FK
 --    (all other user FKs use ON DELETE SET NULL)
+--    Column must be nullable for ON DELETE SET NULL; users are never hard-deleted
+--    in practice but consistency with the rest of the schema requires it.
 ALTER TABLE refunds
+    MODIFY COLUMN refunded_by INT DEFAULT NULL,
     DROP FOREIGN KEY IF EXISTS `refunds_ibfk_2`,
     ADD CONSTRAINT `fk_refunds_refunded_by`
         FOREIGN KEY (refunded_by) REFERENCES users(id) ON DELETE SET NULL;
@@ -25,10 +28,6 @@ ALTER TABLE dividend_returns
     ADD CONSTRAINT `fk_div_ret_recipient`
         FOREIGN KEY (recipient_id) REFERENCES dividend_recipients(id) ON DELETE CASCADE;
 
--- 5. Index on payments.received_by (used in WHERE in my_summary.php)
-ALTER TABLE payments
-    ADD INDEX IF NOT EXISTS idx_pay_received_by (received_by);
-
--- 6. Index on expenses.recorded_by (used in WHERE in my_summary.php)
-ALTER TABLE expenses
-    ADD INDEX IF NOT EXISTS idx_exp_recorded_by (recorded_by);
+-- 5 & 6. Indexes on payments.received_by and expenses.recorded_by
+-- Both columns already have indexes (named 'received_by' / 'recorded_by') from
+-- a prior migration, so no additional index is needed here.
