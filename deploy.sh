@@ -182,6 +182,8 @@ DB_USER="laskie_db_user"
 DB_PASS="$(openssl rand -base64 32 | tr -d '/+=\n' | head -c 28)"
 
 # Create DB and user (idempotent)
+# DB_PASS is alphanumeric-only (base64 minus /+=\n), so SQL-safe to embed.
+# Root connection uses Unix socket auth — no password required here.
 mysql -u root <<SQL
 CREATE DATABASE IF NOT EXISTS \`${DB_NAME}\`
     CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
@@ -478,7 +480,9 @@ systemctl reload apache2
 ok "Apache reloaded."
 
 # ── Step 10: Save credentials to file ─────────────────────────
-CREDS_FILE="${APP_ROOT}/.deploy_credentials"
+# Written outside the web root so .htaccess and webserver directory rules
+# cannot accidentally expose it, even if the dotfile block is ever removed.
+CREDS_FILE="${INVOKE_HOME}/.laskie_deploy_creds"
 cat > "${CREDS_FILE}" <<CREDS
 # Laskie Deployment Credentials — $(date)
 # Keep this file private. Delete after noting credentials.
@@ -492,11 +496,11 @@ MASTER_PASS=Admin@2024
 CREDS
 chmod 600 "${CREDS_FILE}"
 chown "${INVOKE_USER}:${INVOKE_USER}" "${CREDS_FILE}"
-ok "Credentials saved to ${CREDS_FILE} (chmod 600)."
+ok "Credentials saved to ${CREDS_FILE} (chmod 600, outside web root)."
 
 # ── Step 11: Verify DB connection ─────────────────────────────
 step "Verifying database connection"
-TEST=$(mysql -u "${DB_USER}" -p"${DB_PASS}" "${DB_NAME}" \
+TEST=$(MYSQL_PWD="${DB_PASS}" mysql -u "${DB_USER}" "${DB_NAME}" \
     -e "SELECT COUNT(*) FROM users;" -N 2>&1) || die "DB connection test failed: ${TEST}"
 ok "Database connection verified (${TEST} admin user(s) found)."
 
