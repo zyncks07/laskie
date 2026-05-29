@@ -110,18 +110,27 @@ if ($action === 'reject_request') {
     if (!$id) jsonErr('Request ID required.');
     if (mb_strlen($note) > 255) $note = mb_substr($note, 0, 255);
 
-    $rq = $pdo->prepare("SELECT * FROM vault_requests WHERE id=?");
-    $rq->execute([$id]);
-    $req = $rq->fetch();
-    if (!$req)                        jsonErr('Request not found.');
-    if ($req['status'] !== 'pending') jsonErr('This request is already ' . $req['status'] . '.');
+    // Lock + recheck inside a transaction, same as approve_request, so a
+    // concurrent approval can't leave a request rejected after its cash was issued.
+    $pdo->beginTransaction();
+    try {
+        $rq = $pdo->prepare("SELECT * FROM vault_requests WHERE id=? FOR UPDATE");
+        $rq->execute([$id]);
+        $req = $rq->fetch();
+        if (!$req)                        jsonErr('Request not found.');
+        if ($req['status'] !== 'pending') jsonErr('This request is already ' . $req['status'] . '.');
 
-    $pdo->prepare("UPDATE vault_requests SET status='rejected', reviewed_by=?, reviewed_at=NOW(), decision_note=? WHERE id=?")
-        ->execute([$myId, ($note !== '' ? $note : null), $id]);
-    notifyUser($pdo, (int)$req['requested_by'], 'request_rejected',
-        "Your vault request of " . money($req['amount']) . " was rejected." . ($note !== '' ? " Reason: " . $note : ''),
-        'cash.php', $id);
-    logActivity($pdo, 'REJECT_VAULT_REQUEST', 'VaultRequest', "Rejected request #{$id}" . ($note !== '' ? ": $note" : ''));
+        $pdo->prepare("UPDATE vault_requests SET status='rejected', reviewed_by=?, reviewed_at=NOW(), decision_note=? WHERE id=?")
+            ->execute([$myId, ($note !== '' ? $note : null), $id]);
+        notifyUser($pdo, (int)$req['requested_by'], 'request_rejected',
+            "Your vault request of " . money($req['amount']) . " was rejected." . ($note !== '' ? " Reason: " . $note : ''),
+            'cash.php', $id);
+        logActivity($pdo, 'REJECT_VAULT_REQUEST', 'VaultRequest', "Rejected request #{$id}" . ($note !== '' ? ": $note" : ''));
+        $pdo->commit();
+    } catch (Throwable $e) {
+        if ($pdo->inTransaction()) $pdo->rollBack();
+        throw $e;
+    }
     jsonOk(['msg' => 'Request rejected.']);
 }
 
@@ -129,15 +138,22 @@ if ($action === 'reject_request') {
 if ($action === 'cancel_request') {
     $id = (int)($_POST['id'] ?? 0);
     if (!$id) jsonErr('Request ID required.');
-    $rq = $pdo->prepare("SELECT * FROM vault_requests WHERE id=?");
-    $rq->execute([$id]);
-    $req = $rq->fetch();
-    if (!$req)                                          jsonErr('Request not found.');
-    if (!isAdmin() && (int)$req['requested_by'] !== $myId) jsonErr('You can only cancel your own requests.', 403);
-    if ($req['status'] !== 'pending')                   jsonErr('Only pending requests can be cancelled.');
+    $pdo->beginTransaction();
+    try {
+        $rq = $pdo->prepare("SELECT * FROM vault_requests WHERE id=? FOR UPDATE");
+        $rq->execute([$id]);
+        $req = $rq->fetch();
+        if (!$req)                                          jsonErr('Request not found.');
+        if (!isAdmin() && (int)$req['requested_by'] !== $myId) jsonErr('You can only cancel your own requests.', 403);
+        if ($req['status'] !== 'pending')                   jsonErr('Only pending requests can be cancelled.');
 
-    $pdo->prepare("UPDATE vault_requests SET status='cancelled' WHERE id=?")->execute([$id]);
-    logActivity($pdo, 'CANCEL_VAULT_REQUEST', 'VaultRequest', "Cancelled request #{$id}");
+        $pdo->prepare("UPDATE vault_requests SET status='cancelled' WHERE id=?")->execute([$id]);
+        logActivity($pdo, 'CANCEL_VAULT_REQUEST', 'VaultRequest', "Cancelled request #{$id}");
+        $pdo->commit();
+    } catch (Throwable $e) {
+        if ($pdo->inTransaction()) $pdo->rollBack();
+        throw $e;
+    }
     jsonOk(['msg' => 'Request cancelled.']);
 }
 

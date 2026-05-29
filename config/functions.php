@@ -279,6 +279,9 @@ function getUserCashOnHand(PDO $pdo, int $userId): string {
 // main flow. $link is an app-relative path the bell dropdown navigates to.
 function notifyUser(PDO $pdo, int $userId, string $type, string $message, ?string $link = null, ?int $vaultRequestId = null): void {
     try {
+        // Keep within notifications.message VARCHAR(500); otherwise the INSERT
+        // would error and (silently, below) drop the notification entirely.
+        if (mb_strlen($message) > 500) $message = mb_substr($message, 0, 500);
         $pdo->prepare("INSERT INTO notifications (user_id, type, message, link, vault_request_id) VALUES (?,?,?,?,?)")
             ->execute([$userId, $type, $message, $link, $vaultRequestId]);
     } catch (Exception $e) { /* silent — notifications are best-effort */ }

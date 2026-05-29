@@ -553,6 +553,11 @@ if ($action === 'process_refund') {
         $cashierName = $cu->fetchColumn();
         if (!$cashierName) jsonErr('Selected cashier must be an active user.');
 
+        // Serialize refunds drawing from the same cashier: lock their user row so
+        // two concurrent refunds (on different payments) can't both pass the gate
+        // below off the same balance snapshot and overdraw cash on hand.
+        $pdo->prepare("SELECT id FROM users WHERE id=? FOR UPDATE")->execute([$cashierId]);
+
         // Hard gate: you cannot hand back more cash than the cashier is holding.
         // If short, the cashier needs a vault "return to user" to top up first
         // (request flow lives in api/requests_api.php / admin/requests.php).
