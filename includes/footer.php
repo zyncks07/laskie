@@ -30,7 +30,7 @@ function showToast(msg, type = 'success') {
         return window.showToast(msg, type);
     }
     const icons  = { success: '✓', error: '✕', warning: '!' };
-    const colors = { success: '#16a34a', error: '#dc2626', warning: '#d97706' };
+    const colors = { success: '#1D9E75', error: '#D85A30', warning: '#EF9F27' };
     const t = document.createElement('div');
     t.className = 'laskie-toast';
     const iconEl = document.createElement('span');

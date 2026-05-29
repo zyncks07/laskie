@@ -1,0 +1,473 @@
+/* ═══════════════════════════════════════════════════════════
+   Laskie — Magix-style design tokens & base overrides
+   Loaded AFTER assets/css/app.css so these rules win the cascade.
+   Legacy semantic vars (--primary / --success / --danger / --warning)
+   are remapped here, not renamed, so every existing reference in the
+   codebase keeps working.
+   ═══════════════════════════════════════════════════════════ */
+
+:root {
+  /* ── Surface ───────────────────────────────────────────── */
+  --laskie-page-bg:   #FFFFFF;
+  --laskie-card-bg:   #FFFFFF;
+  --laskie-card-dark: #26215C;
+  --laskie-divider:   #f0ede5;
+
+  /* ── Ink ───────────────────────────────────────────────── */
+  --laskie-ink:        #1b1740;
+  --laskie-ink-mute:   #888780;
+  --laskie-ink-faint:  #b4b2a9;
+
+  /* ── Amber (primary) ───────────────────────────────────── */
+  --laskie-amber:       #EF9F27;
+  --laskie-amber-soft:  #FAC775;
+  --laskie-amber-bg:    #FAEEDA;
+  --laskie-amber-ink:   #633806;
+  --laskie-amber-hover: #D88914;
+
+  /* ── Teal (success / positive) ─────────────────────────── */
+  --laskie-teal:       #1D9E75;
+  --laskie-teal-soft:  #9FE1CB;
+  --laskie-teal-bg:    #E1F5EE;
+  --laskie-teal-ink:   #085041;
+
+  /* ── Coral (danger / overdue) ──────────────────────────── */
+  --laskie-coral:       #D85A30;
+  --laskie-coral-soft:  #F5C4B3;
+  --laskie-coral-bg:    #FAECE7;
+  --laskie-coral-ink:   #712B13;
+
+  /* ── Indigo (info / purple slot) ───────────────────────── */
+  --laskie-indigo:      #5754A8;
+  --laskie-indigo-bg:   #ECEBF7;
+  --laskie-indigo-ink:  #2B295F;
+
+  /* ── Geometry ──────────────────────────────────────────── */
+  --laskie-radius-card:  20px;
+  --laskie-radius-stat:  16px;
+  --laskie-radius-input: 12px;
+  --laskie-radius-pill:  999px;
+
+  /* ── Shadows ───────────────────────────────────────────── */
+  --laskie-shadow-card:       0 2px 14px rgba(60, 40, 20, 0.05);
+  --laskie-shadow-card-hover: 0 4px 20px rgba(60, 40, 20, 0.08);
+  --laskie-shadow-hero:       0 8px 30px rgba(38, 33, 92, 0.18);
+
+  /* ── Remap legacy semantic vars to the new palette ─────── */
+  /* Names kept; hex values swapped.                          */
+  --primary:        var(--laskie-amber);
+  --primary-hover:  var(--laskie-amber-hover);
+  --primary-light:  var(--laskie-amber-bg);
+  --primary-mid:    var(--laskie-amber-soft);
+  --accent:         var(--laskie-teal);
+
+  --success:        var(--laskie-teal);
+  --success-bg:     var(--laskie-teal-bg);
+  --danger:         var(--laskie-coral);
+  --danger-bg:      var(--laskie-coral-bg);
+  --warning:        var(--laskie-amber);          /* keep .text-warning legible on white */
+  --warning-bg:     var(--laskie-amber-bg);
+  --info:           var(--laskie-indigo);
+  --info-bg:        var(--laskie-indigo-bg);
+
+  --bg:             var(--laskie-page-bg);
+  --card-bg:        var(--laskie-card-bg);
+  --sidebar-bg:     var(--laskie-card-bg);
+  --topbar-bg:      var(--laskie-card-bg);
+  --text-primary:   var(--laskie-ink);
+  --text-secondary: #4f4a6a;
+  --text-muted:     var(--laskie-ink-mute);
+  --border:         var(--laskie-divider);
+  --border-light:   #f5f2eb;
+
+  --radius:         var(--laskie-radius-input);
+  --radius-lg:      var(--laskie-radius-card);
+  --shadow-sm:      var(--laskie-shadow-card);
+  --shadow:         var(--laskie-shadow-card-hover);
+}
+
+/* ── Body & global type ─────────────────────────────────── */
+body {
+  background: var(--laskie-page-bg);
+  font-family: 'DM Sans', system-ui, -apple-system, sans-serif;
+  color: var(--laskie-ink);
+}
+
+/* ── Bootstrap palette remap ────────────────────────────── */
+/* Many existing pages use Bootstrap utility classes like .bg-success,
+   .text-danger, .badge.bg-warning, .alert-info — those resolve via the
+   --bs-*-rgb variables. Remap them once here so every utility picks up
+   the new amber / teal / coral / indigo palette automatically. */
+:root,
+[data-bs-theme="light"] {
+  --bs-primary:         #EF9F27;
+  --bs-primary-rgb:     239, 159, 39;
+  --bs-success:         #1D9E75;
+  --bs-success-rgb:     29, 158, 117;
+  --bs-danger:          #D85A30;
+  --bs-danger-rgb:      216, 90, 48;
+  --bs-warning:         #EF9F27;
+  --bs-warning-rgb:     239, 159, 39;
+  --bs-info:            #5754A8;
+  --bs-info-rgb:        87, 84, 168;
+  --bs-secondary:       #888780;
+  --bs-secondary-rgb:   136, 135, 128;
+  --bs-light:           #faf7ef;
+  --bs-light-rgb:       250, 247, 239;
+  --bs-dark:            #26215C;
+  --bs-dark-rgb:        38, 33, 92;
+  --bs-body-color:      #1b1740;
+  --bs-body-bg:         #FFFFFF;
+  --bs-border-color:    #f0ede5;
+  /* Bootstrap 5.3 ties card bg to body bg by default — pin it back to white
+     so every `.card` shows up as a crisp white box on the warm page bg. */
+  --bs-card-bg:         #FFFFFF;
+}
+
+/* ── Cards ──────────────────────────────────────────────── */
+.card {
+  background: var(--laskie-card-bg);
+  border: 1px solid transparent;
+  border-radius: var(--laskie-radius-card);
+  box-shadow: var(--laskie-shadow-card);
+}
+.card-header {
+  background: transparent;
+  border-bottom: 1px solid var(--laskie-divider);
+  padding: 13px 18px;
+  border-radius: 0;
+}
+.card-body   { padding: 16px 18px; }
+.card-footer { background: transparent; border-top: 1px solid var(--laskie-divider); padding: 12px 18px; }
+
+/* Hero / dark navy card modifier — used for cash-hero etc. */
+.card.dark-card,
+.dark-card,
+.cash-hero {
+  background: var(--laskie-card-dark);
+  color: #fff;
+  border: none;
+  border-radius: var(--laskie-radius-card);
+  box-shadow: var(--laskie-shadow-hero);
+}
+.card.dark-card .card-header,
+.dark-card .card-header { border-bottom-color: rgba(255,255,255,.10); color: #fff; }
+.card.dark-card .card-header-title,
+.dark-card .card-header-title { color: #fff; }
+/* Override the amber-gradient .cash-hero from app.css */
+.cash-hero { background: var(--laskie-card-dark); padding: 22px 26px; }
+.cash-hero::after { background: rgba(239,159,39,.10); }
+
+/* ── Stat cards ─────────────────────────────────────────── */
+.stat-card {
+  background: var(--laskie-card-bg);
+  border: 1px solid transparent;
+  border-radius: var(--laskie-radius-stat);
+  box-shadow: var(--laskie-shadow-card);
+  padding: 16px 18px;
+}
+/* Flex children default to min-width:auto, which prevents the body from
+   shrinking below the width of its longest value (e.g. ₱550,120.00). That
+   pushed the value into the icon on narrow viewports. Letting it shrink
+   plus wrapping at any character is the universal fix. */
+.stat-card .stat-body  { min-width: 0; flex: 1 1 auto; }
+.stat-card .stat-value { overflow-wrap: anywhere; }
+
+.stat-icon {
+  width: 42px; height: 42px;
+  border-radius: 50%;
+  font-size: 17px;
+  flex-shrink: 0;
+}
+
+/* Mobile: tighten the row layout — smaller icon + gap, smaller value type.
+   !important on font-size beats inline `style="font-size:17px"` overrides
+   that several pages (my_summary.php, expenses.php) carry on each value. */
+@media (max-width: 575.98px) {
+  .stat-card             { padding: 12px 14px; gap: 10px; }
+  .stat-card .stat-icon  { width: 34px; height: 34px; font-size: 13.5px; }
+  .stat-card .stat-value { font-size: 15.5px !important; }
+  .stat-card .stat-label { font-size: 11px; margin-bottom: 2px; }
+  .stat-card .stat-sub   { font-size: 10px; }
+}
+.stat-icon.blue   { background: var(--laskie-indigo-bg); color: var(--laskie-indigo); }
+.stat-icon.green  { background: var(--laskie-teal-bg);   color: var(--laskie-teal-ink); }
+.stat-icon.red    { background: var(--laskie-coral-bg);  color: var(--laskie-coral-ink); }
+.stat-icon.amber  { background: var(--laskie-amber-bg);  color: var(--laskie-amber-ink); }
+.stat-icon.purple { background: var(--laskie-indigo-bg); color: var(--laskie-indigo); }
+.stat-icon.teal   { background: var(--laskie-teal-bg);   color: var(--laskie-teal-ink); }
+
+.stat-label { color: var(--laskie-ink-mute); font-weight: 500; }
+.stat-value { color: var(--laskie-ink);      font-weight: 700; }
+.stat-sub   { color: var(--laskie-ink-faint); }
+
+/* ── Status dots ────────────────────────────────────────── */
+.status-dot.green { background: var(--laskie-teal);  box-shadow: 0 0 0 3px rgba(29,158,117,.18); }
+.status-dot.red   { background: var(--laskie-coral); box-shadow: 0 0 0 3px rgba(216,90,48,.18); }
+.status-dot.amber { background: var(--laskie-amber); box-shadow: 0 0 0 3px rgba(239,159,39,.18); }
+.status-dot.gray  { background: var(--laskie-ink-faint); }
+
+/* ── Badges — pill-shaped pastel ────────────────────────── */
+.badge {
+  border-radius: var(--laskie-radius-pill);
+  padding: 4px 10px;
+  font-weight: 600;
+  font-size: 10.5px;
+  letter-spacing: 0;
+}
+.badge-admin        { background: var(--laskie-indigo-bg); color: var(--laskie-indigo); }
+.badge-accountant   { background: var(--laskie-teal-bg);   color: var(--laskie-teal-ink); }
+.badge-staff        { background: var(--laskie-amber-bg);  color: var(--laskie-amber-ink); }
+.badge-active       { background: var(--laskie-teal-bg);   color: var(--laskie-teal-ink); }
+.badge-inactive     { background: var(--laskie-coral-bg);  color: var(--laskie-coral-ink); }
+.badge-former       { background: #efece4;                 color: var(--laskie-ink-mute); }
+.badge-vacant       { background: #efece4;                 color: var(--laskie-ink-mute); }
+.badge-occupied     { background: var(--laskie-teal-bg);   color: var(--laskie-teal-ink); }
+.badge-rent         { background: var(--laskie-amber-bg);  color: var(--laskie-amber-ink); }
+.badge-service      { background: var(--laskie-indigo-bg); color: var(--laskie-indigo); }
+.badge-received     { background: var(--laskie-teal-bg);   color: var(--laskie-teal-ink); }
+.badge-remitted     { background: var(--laskie-amber-bg);  color: var(--laskie-amber-ink); }
+.badge-expense      { background: var(--laskie-coral-bg);  color: var(--laskie-coral-ink); }
+.badge-vault-return { background: var(--laskie-indigo-bg); color: var(--laskie-indigo); }
+
+/* ── Buttons — pill-shaped ──────────────────────────────── */
+.btn {
+  border-radius: var(--laskie-radius-pill);
+  font-weight: 500;
+}
+.btn-sm, .btn-xs { border-radius: var(--laskie-radius-pill); }
+
+.btn-primary {
+  background: var(--laskie-card-dark);
+  border-color: var(--laskie-card-dark);
+  color: #fff;
+}
+.btn-primary:hover,
+.btn-primary:focus {
+  background: #18143d;
+  border-color: #18143d;
+  color: #fff;
+  box-shadow: none;
+}
+.btn-outline-primary {
+  border-color: var(--laskie-card-dark);
+  color: var(--laskie-card-dark);
+  background: transparent;
+}
+.btn-outline-primary:hover,
+.btn-outline-primary:focus {
+  background: var(--laskie-card-dark);
+  border-color: var(--laskie-card-dark);
+  color: #fff;
+}
+.btn-outline-secondary {
+  border-color: var(--laskie-divider);
+  color: var(--laskie-ink);
+  background: #fff;
+}
+.btn-outline-secondary:hover,
+.btn-outline-secondary:focus {
+  background: var(--laskie-divider);
+  border-color: var(--laskie-divider);
+  color: var(--laskie-ink);
+}
+
+/* Small round icon-only buttons */
+.btn-icon {
+  border-radius: 50%;
+  border-color: var(--laskie-divider);
+  background: #fff;
+  color: var(--laskie-ink-mute);
+}
+.btn-icon:hover {
+  border-color: var(--laskie-amber);
+  color: var(--laskie-amber);
+  background: var(--laskie-amber-bg);
+}
+.btn-icon.danger:hover {
+  border-color: var(--laskie-coral);
+  color: var(--laskie-coral);
+  background: var(--laskie-coral-bg);
+}
+
+/* ── Forms ──────────────────────────────────────────────── */
+.form-control, .form-select {
+  border-color: var(--laskie-divider);
+  border-radius: var(--laskie-radius-input);
+  background: #fff;
+  color: var(--laskie-ink);
+}
+.form-control:focus, .form-select:focus {
+  border-color: var(--laskie-amber);
+  box-shadow: 0 0 0 3px rgba(239,159,39,.18);
+}
+.form-label { color: var(--laskie-ink); font-weight: 600; }
+.form-text  { color: var(--laskie-ink-mute); }
+
+/* ── Tables ─────────────────────────────────────────────── */
+.table thead th {
+  background: transparent;
+  color: var(--laskie-ink-mute);
+  border-bottom: 1px solid var(--laskie-divider);
+  letter-spacing: .04em;
+}
+.table tbody td       { border-bottom: 1px solid var(--laskie-divider); }
+.table tbody tr:hover td { background: #fbf9f4; }
+
+/* ── Page header & title ────────────────────────────────── */
+.page-header { margin-bottom: 16px; }
+.page-title  { color: var(--laskie-ink); font-weight: 700; }
+
+/* ── Modal ──────────────────────────────────────────────── */
+.modal-content { border-radius: var(--laskie-radius-card); border: 1px solid var(--laskie-divider); }
+.modal-header  { border-bottom: 1px solid var(--laskie-divider); }
+.modal-footer  { border-top: 1px solid var(--laskie-divider); }
+
+/* ═══════════════════════════════════════════════════════════
+   NAVIGATION SHELL — Magix-style sidebar + topbar
+   ═══════════════════════════════════════════════════════════ */
+
+/* Sidebar shell */
+#sidebar {
+  background: var(--laskie-card-bg);
+  border-right: 1px solid var(--laskie-divider);
+  padding: 6px 0 0;
+}
+#sidebar::-webkit-scrollbar-thumb { background: var(--laskie-divider); }
+
+/* Brand wordmark */
+.sidebar-brand {
+  padding: 16px 18px 18px;
+  border-bottom: 1px solid var(--laskie-divider);
+  gap: 11px;
+}
+.brand-icon {
+  width: 34px; height: 34px;
+  background: var(--laskie-card-dark);
+  border-radius: 10px;
+  color: #fff;
+  font-size: 15px;
+}
+.brand-text {
+  font-size: 14px;
+  font-weight: 800;
+  letter-spacing: .02em;
+  color: var(--laskie-ink);
+}
+.brand-sub {
+  font-size: 10px;
+  color: var(--laskie-ink-mute);
+  letter-spacing: .04em;
+}
+
+/* Section + label */
+.sidebar-section { padding: 14px 0 4px; }
+.sidebar-section-label {
+  font-size: 10px; font-weight: 700;
+  color: var(--laskie-ink-faint);
+  text-transform: uppercase;
+  letter-spacing: .12em;
+  padding: 0 22px 8px;
+}
+
+/* Nav items */
+.sidebar-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 8px 12px;
+  margin: 2px 10px;
+  border-radius: var(--laskie-radius-pill);
+  color: var(--laskie-ink);
+  font-size: 13px;
+  font-weight: 500;
+  text-decoration: none;
+  transition: background .14s, color .14s;
+}
+
+/* Convert each FontAwesome <i> into a small circular icon pill */
+.sidebar-nav-item i {
+  width: 30px; height: 30px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  flex-shrink: 0;
+  background: var(--laskie-indigo-bg);
+  color: var(--laskie-indigo);
+  transition: background .14s, color .14s;
+}
+
+/* Per-section icon tint */
+.sidebar-section[data-section="overview"]   .sidebar-nav-item i { background: var(--laskie-indigo-bg); color: var(--laskie-indigo); }
+.sidebar-section[data-section="payments"]   .sidebar-nav-item i { background: var(--laskie-amber-bg);  color: var(--laskie-amber-ink); }
+.sidebar-section[data-section="financials"] .sidebar-nav-item i { background: var(--laskie-teal-bg);   color: var(--laskie-teal-ink); }
+.sidebar-section[data-section="accounting"] .sidebar-nav-item i { background: var(--laskie-indigo-bg); color: var(--laskie-indigo); }
+.sidebar-section[data-section="admin"]      .sidebar-nav-item i { background: var(--laskie-coral-bg);  color: var(--laskie-coral-ink); }
+
+/* Sign Out (text-danger) always coral */
+.sidebar-nav-item.text-danger { color: var(--laskie-coral) !important; }
+.sidebar-nav-item.text-danger i {
+  background: var(--laskie-coral-bg);
+  color: var(--laskie-coral);
+}
+.sidebar-nav-item.text-danger:hover {
+  background: var(--laskie-coral-bg);
+}
+
+/* Hover state */
+.sidebar-nav-item:hover {
+  background: #f7f4ec;
+  color: var(--laskie-ink);
+}
+
+/* Active state — soft amber pill with solid dark icon circle */
+.sidebar-nav-item.active {
+  background: var(--laskie-amber-bg);
+  color: var(--laskie-ink);
+  font-weight: 700;
+}
+.sidebar-nav-item.active i {
+  background: var(--laskie-card-dark);
+  color: #fff;
+}
+
+/* Footer (user info) */
+.sidebar-footer {
+  border-top: 1px solid var(--laskie-divider);
+  padding: 12px 10px 14px;
+}
+.user-info { padding: 8px 12px; border-radius: var(--laskie-radius-pill); }
+.user-info:hover { background: #f7f4ec; }
+.user-avatar-sm {
+  background: var(--laskie-amber);
+  color: #fff;
+  font-weight: 700;
+}
+.user-name-sm { color: var(--laskie-ink); }
+.user-role-sm { color: var(--laskie-ink-mute); }
+
+/* ── Topbar ─────────────────────────────────────────────── */
+#topbar {
+  background: var(--laskie-page-bg);
+  border-bottom: none;
+  box-shadow: none;
+  padding: 0 24px;
+}
+.btn-toggle-sidebar {
+  color: var(--laskie-ink);
+  border-radius: 50%;
+  width: 36px; height: 36px;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.btn-toggle-sidebar:hover { background: rgba(255,255,255,.6); }
+.topbar-title {
+  color: var(--laskie-ink);
+  font-weight: 700;
+  font-size: 16px;
+}
+.user-avatar {
+  background: var(--laskie-amber);
+  color: #fff;
+}

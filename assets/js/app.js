@@ -11,7 +11,7 @@
 // names, exception messages) can't execute as HTML.
 window.showToast = function(msg, type = 'success') {
     const icons  = { success: '✓', error: '✕', warning: '⚠' };
-    const colors = { success: '#16a34a', error: '#dc2626', warning: '#d97706' };
+    const colors = { success: '#1D9E75', error: '#D85A30', warning: '#EF9F27' };
     document.querySelectorAll('.laskie-toast').forEach(t => t.remove());
 
     const t = document.createElement('div');
@@ -199,7 +199,7 @@ window.showLoading = function(msg = 'Processing...') {
         spin.setAttribute('role', 'status');
         const label = document.createElement('div');
         label.id = 'globalLoadingMsg';
-        label.style.cssText = 'margin-top:12px;font-size:13px;font-weight:600;color:#1a3a8f;';
+        label.style.cssText = 'margin-top:12px;font-size:13px;font-weight:600;color:#1b1740;';
         label.textContent = msg;
         wrap.appendChild(spin);
         wrap.appendChild(label);

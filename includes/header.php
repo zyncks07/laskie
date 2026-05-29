@@ -44,6 +44,7 @@ if (!isset($depth)) {
 <?= vendorCssTag($depth, 'dataTables.bootstrap5.min.css') ?>
 <?= vendorCssTag($depth, 'bootstrap.min.css') ?>
 <link rel="stylesheet" href="<?= $depth ?>assets/css/app.css">
+<link rel="stylesheet" href="<?= $depth ?>assets/css/laskie-tokens.css">
 </head>
 <body>
 
@@ -60,14 +61,14 @@ if (!isset($depth)) {
     </div>
   </a>
 
-  <div class="sidebar-section">
+  <div class="sidebar-section" data-section="overview">
     <div class="sidebar-section-label">Overview</div>
     <a href="<?= $depth ?>dashboard.php" class="sidebar-nav-item <?= ($currentPage==='dashboard')?'active':'' ?>">
       <i class="fa-solid fa-gauge-high"></i> Dashboard
     </a>
   </div>
 
-  <div class="sidebar-section">
+  <div class="sidebar-section" data-section="payments">
     <div class="sidebar-section-label">Payments</div>
     <a href="<?= $depth ?>payments/collection.php" class="sidebar-nav-item <?= ($currentPage==='collection')?'active':'' ?>">
       <i class="fa-solid fa-money-bill-wave"></i> Collection
@@ -77,7 +78,7 @@ if (!isset($depth)) {
     </a>
   </div>
 
-  <div class="sidebar-section">
+  <div class="sidebar-section" data-section="financials">
     <div class="sidebar-section-label">Financials</div>
     <a href="<?= $depth ?>expenses.php" class="sidebar-nav-item <?= ($currentPage==='expenses')?'active':'' ?>">
       <i class="fa-solid fa-receipt"></i> Expenses
@@ -97,7 +98,7 @@ if (!isset($depth)) {
   </div>
 
 <?php if (isAccountant() && !isAdmin()): ?>
-  <div class="sidebar-section">
+  <div class="sidebar-section" data-section="accounting">
     <div class="sidebar-section-label">Accounting</div>
     <a href="<?= $depth ?>admin/vault.php" class="sidebar-nav-item <?= ($currentPage==='vault')?'active':'' ?>">
       <i class="fa-solid fa-vault"></i> The Vault
@@ -106,7 +107,7 @@ if (!isset($depth)) {
 <?php endif; ?>
 
 <?php if (isAdmin()): ?>
-  <div class="sidebar-section">
+  <div class="sidebar-section" data-section="admin">
     <div class="sidebar-section-label">Administration</div>
     <a href="<?= $depth ?>admin/accounts.php" class="sidebar-nav-item <?= ($currentPage==='accounts')?'active':'' ?>">
       <i class="fa-solid fa-users-gear"></i> Accounts

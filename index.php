@@ -96,39 +96,95 @@ if ($err === 'session') $error = 'Your session has expired. Please log in again.
 <?= vendorCssTag('', 'fontawesome.min.css') ?>
 <?= vendorCssTag('', 'bootstrap.min.css') ?>
 <link rel="stylesheet" href="assets/css/app.css">
+<link rel="stylesheet" href="assets/css/laskie-tokens.css">
 <style>
   body { font-family: 'DM Sans', sans-serif; }
-  .login-bg-pattern {
-    position: fixed; inset: 0; pointer-events: none; overflow: hidden;
-    background: linear-gradient(135deg, #0f172a 0%, #1a3a8f 55%, #1e3a8a 100%);
+  .login-page {
+    background: var(--laskie-page-bg);
+    position: relative;
+    z-index: 1;
   }
-  .login-bg-pattern::before {
-    content: ''; position: absolute;
-    width: 600px; height: 600px; border-radius: 50%;
-    background: rgba(59,91,219,.25);
-    top: -200px; right: -200px;
+  .login-bg-pattern { display: none; }
+
+  .login-wrap { max-width: 380px; }
+  .login-card {
+    background: var(--laskie-card-bg);
+    border-radius: var(--laskie-radius-card);
+    padding: 36px 32px;
+    box-shadow: var(--laskie-shadow-card);
+    border: 1px solid var(--laskie-divider);
   }
-  .login-bg-pattern::after {
-    content: ''; position: absolute;
-    width: 400px; height: 400px; border-radius: 50%;
-    background: rgba(14,165,233,.12);
-    bottom: -100px; left: -100px;
+  .login-logo {
+    width: 56px; height: 56px;
+    background: var(--laskie-card-dark);
+    border-radius: 16px;
+    color: #fff; font-size: 22px;
+    display: flex; align-items: center; justify-content: center;
+    margin: 0 auto 18px;
+    box-shadow: var(--laskie-shadow-hero);
   }
-  .login-page { position: relative; z-index: 1; }
-  .input-group-text { border-color: #e5e7eb; background: #f9fafb; color: #9ca3af; }
-  .form-control { border-left: none; }
-  .form-control:focus { border-color: #1a3a8f; box-shadow: none; }
-  .form-control:focus + .input-group-text,
-  .input-group:focus-within .input-group-text {
-    border-color: #1a3a8f;
+  .login-title { font-size: 18px; font-weight: 800; color: var(--laskie-ink); text-align: center; line-height: 1.35; }
+  .login-sub   { font-size: 12.5px; color: var(--laskie-ink-mute); text-align: center; margin-top: 6px; margin-bottom: 26px; line-height: 1.4; }
+
+  /* Treat .input-group as a single soft rounded field */
+  .input-group {
+    border: 1px solid var(--laskie-divider);
+    border-radius: var(--laskie-radius-input);
+    overflow: hidden;
+    background: #fff;
+    transition: border-color .14s, box-shadow .14s;
   }
-  .system-info { text-align: center; margin-top: 20px; }
-  .system-info a { color: rgba(255,255,255,.5); font-size: 12px; text-decoration: none; }
-  .system-info a:hover { color: rgba(255,255,255,.8); }
+  .input-group:focus-within {
+    border-color: var(--laskie-amber);
+    box-shadow: 0 0 0 3px rgba(239,159,39,.18);
+  }
+  .input-group-text {
+    background: #fff;
+    border: none;
+    color: var(--laskie-ink-mute);
+  }
+  .input-group .form-control {
+    border: none;
+    background: transparent;
+    padding-left: 8px;
+  }
+  .input-group .form-control:focus {
+    border: none;
+    box-shadow: none;
+  }
+  #pwdToggle { cursor: pointer; background: #fff; }
+
+  .alert-danger {
+    background: var(--laskie-coral-bg);
+    color: var(--laskie-coral-ink);
+    border: none;
+    border-radius: var(--laskie-radius-input);
+  }
+
+  /* Dark navy pill submit (Magix "Create Invoice" style) */
+  .btn.btn-primary {
+    background: var(--laskie-card-dark);
+    border-color: var(--laskie-card-dark);
+    color: #fff;
+    border-radius: var(--laskie-radius-pill);
+    font-weight: 600;
+  }
+  .btn.btn-primary:hover {
+    background: #18143d;
+    border-color: #18143d;
+    color: #fff;
+  }
+
+  .system-info { text-align: center; margin-top: 22px; }
+  .system-info a {
+    color: var(--laskie-ink-mute);
+    font-size: 11.5px;
+    text-decoration: none;
+  }
+  .system-info a:hover { color: var(--laskie-ink); }
 </style>
 </head>
 <body>
-<div class="login-bg-pattern"></div>
 <div class="login-page d-flex align-items-center justify-content-center min-vh-100 p-3">
   <div class="login-wrap">
     <div class="login-card">

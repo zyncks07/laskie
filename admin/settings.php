@@ -375,7 +375,7 @@ function verifyMaster() {
   <!-- ── Danger Zone ────────────────────────────────────────── -->
   <div class="tab-pane fade" id="tabDanger">
     <div class="card border-danger">
-      <div class="card-header" style="background:#fef2f2;border-color:#fca5a5">
+      <div class="card-header" style="background:var(--laskie-coral-bg);border-color:var(--laskie-coral-soft)">
         <span class="card-header-title text-danger"><i class="fa-solid fa-triangle-exclamation me-2"></i>Danger Zone — Factory Reset</span>
       </div>
       <div class="card-body">
