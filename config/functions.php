@@ -246,6 +246,33 @@ function logChange(PDO $pdo, string $action, string $module, array $before, arra
     logActivity($pdo, $action, $module, $details);
 }
 
+// ─── Cash on Hand ────────────────────────────────────────────
+// Authoritative per-user cash-on-hand. Mirrors the inline formula used by
+// cash.php / api/cash_api.php / my_summary.php so every caller agrees:
+//   received + vault_return − remitted − expenses − refunded
+// Returns canonical "0.00" cents string (no float drift). Reuse this for any
+// "does this user have enough cash?" gate (e.g. refund cashier check).
+function getUserCashOnHand(PDO $pdo, int $userId): string {
+    $stmt = $pdo->prepare("
+        SELECT
+            COALESCE(SUM(CASE WHEN transaction_type='received'     THEN amount ELSE 0 END),0) AS received,
+            COALESCE(SUM(CASE WHEN transaction_type='vault_return' THEN amount ELSE 0 END),0) AS vault_return,
+            COALESCE(SUM(CASE WHEN transaction_type='remitted'     THEN amount ELSE 0 END),0) AS remitted,
+            COALESCE(SUM(CASE WHEN transaction_type='expense'      THEN amount ELSE 0 END),0) AS expenses,
+            COALESCE(SUM(CASE WHEN transaction_type='refunded'     THEN amount ELSE 0 END),0) AS refunded
+        FROM cash_transactions WHERE user_id=?
+    ");
+    $stmt->execute([$userId]);
+    $r = $stmt->fetch() ?: ['received'=>0,'vault_return'=>0,'remitted'=>0,'expenses'=>0,'refunded'=>0];
+    return money_sub(
+        money_sub(
+            money_sub(money_add($r['received'], $r['vault_return']), $r['remitted']),
+            $r['expenses']
+        ),
+        $r['refunded']
+    );
+}
+
 // ─── Invoice Number Generator ────────────────────────────────
 function generateInvoiceNo(PDO $pdo): string {
     $prefix = 'INV';

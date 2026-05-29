@@ -17,6 +17,8 @@ $units    = $pdo->query("
 $selUnit  = (int)($_GET['unit_id']   ?? ($units[0]['id'] ?? 0));
 $dateFrom = $_GET['date_from'] ?? date('Y-01-01');
 $dateTo   = $_GET['date_to']   ?? date('Y-m-d');
+// Active users for the refund "Returned by (cashier)" selector.
+$activeUsers = $pdo->query("SELECT id, full_name FROM users WHERE status='active' ORDER BY full_name")->fetchAll();
 
 // ── Fetch Unit Info ───────────────────────────────────────────
 $unitInfo = null;
@@ -174,6 +176,7 @@ if ($selUnit && $unitInfo) {
             'cashier'          => $p['cashier_name'] ?? '',
             'pay_type'         => $p['payment_type'],
             'id'               => $p['id'],
+            'received_by'      => $p['received_by'] ?? 0,
             'pay_status'       => $payStatusMap[$p['id']] ?? 'paid',
             'already_refunded' => $refundedMap[$p['id']] ?? '0.00',
         ];
@@ -490,7 +493,7 @@ include '../includes/header.php';
               $invEsc = htmlspecialchars($row['invoice_no'] ?? '', ENT_QUOTES);
             ?>
             <button class="btn-icon" title="Process Refund"
-              onclick="openRefundModal(<?=(int)$row['id']?>,'<?=$invEsc?>',<?=number_format((float)$row['credit'],2,'.','')?>,<?=$alrRef?>,<?=$maxRef?>)">
+              onclick="openRefundModal(<?=(int)$row['id']?>,'<?=$invEsc?>',<?=number_format((float)$row['credit'],2,'.','')?>,<?=$alrRef?>,<?=$maxRef?>,<?=(int)($row['received_by'] ?? 0)?>)">
               <i class="fa-solid fa-rotate-left fa-xs" style="color:var(--danger)"></i>
             </button>
           <?php elseif($isSvcChg && $isUnpaid): ?>
@@ -556,6 +559,15 @@ include '../includes/header.php';
           <div class="form-text" id="refMaxHint"></div>
         </div>
         <div class="mb-3">
+          <label class="form-label">Returned by (cashier) *</label>
+          <select class="form-select" id="refCashier">
+            <?php foreach ($activeUsers as $au): ?>
+              <option value="<?= (int)$au['id'] ?>"><?= clean($au['full_name']) ?></option>
+            <?php endforeach; ?>
+          </select>
+          <div class="form-text">Whose cash-on-hand funds this refund. Must have enough cash, or request a vault return first.</div>
+        </div>
+        <div class="mb-3">
           <label class="form-label">Reason *</label>
           <textarea class="form-control" id="refReason" rows="2" placeholder="e.g. Overpayment, duplicate payment, cancellation..."></textarea>
         </div>
@@ -595,9 +607,11 @@ $(document).ready(function(){
   }
 });
 
-function openRefundModal(paymentId, invoiceNo, amount, alreadyRefunded, maxRefund) {
+function openRefundModal(paymentId, invoiceNo, amount, alreadyRefunded, maxRefund, cashierId) {
   alreadyRefunded = alreadyRefunded || 0;
   document.getElementById('refPaymentId').value = paymentId;
+  var cashierSel = document.getElementById('refCashier');
+  if (cashierId && cashierSel.querySelector('option[value="' + cashierId + '"]')) cashierSel.value = cashierId;
   document.getElementById('refPaymentInfo').innerHTML =
     '<strong>' + esc(invoiceNo) + '</strong> &nbsp;·&nbsp; Original: <strong>₱' + fmt(amount) + '</strong>' +
     (alreadyRefunded > 0 ? ' &nbsp;·&nbsp; Already refunded: <strong>₱' + fmt(alreadyRefunded) + '</strong>' : '');
@@ -623,6 +637,7 @@ function processRefund() {
   var paymentId = document.getElementById('refPaymentId').value;
   var amount    = parseFloat(document.getElementById('refAmount').value);
   var reason    = document.getElementById('refReason').value.trim();
+  var cashier   = document.getElementById('refCashier').value;
   var msgEl     = document.getElementById('refMsg');
 
   if (!amount || amount <= 0) {
@@ -632,7 +647,7 @@ function processRefund() {
     msgEl.className = 'alert alert-danger mt-2'; msgEl.textContent = 'Reason is required.'; msgEl.style.display = ''; return;
   }
 
-  apiPost('api_payment.php', {action: 'process_refund', payment_id: paymentId, amount: amount, reason: reason}, function(err, res) {
+  apiPost('api_payment.php', {action: 'process_refund', payment_id: paymentId, amount: amount, reason: reason, cashier_id: cashier}, function(err, res) {
     if (err || !res || !res.success) {
       msgEl.className = 'alert alert-danger mt-2';
       msgEl.textContent = (res && res.error) ? res.error : (err || 'Failed.');

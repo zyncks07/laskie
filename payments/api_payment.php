@@ -538,6 +538,25 @@ if ($action === 'process_refund') {
         $maxRefund       = money_sub($pay['amount'], $alreadyRefunded);
         if (money_gt($refundAmount, $maxRefund)) jsonErr("Maximum refundable amount is " . money($maxRefund) . ".");
 
+        // Which cashier physically returns the cash? Admin picks (cashier_id);
+        // defaults to the original collector, then the acting admin if that
+        // user is gone. That user's cash_on_hand is what drops.
+        $cashierId = (int)($_POST['cashier_id'] ?? 0) ?: (int)($pay['received_by'] ?: $_SESSION['user']['id']);
+        $cu = $pdo->prepare("SELECT full_name FROM users WHERE id=? AND status='active'");
+        $cu->execute([$cashierId]);
+        $cashierName = $cu->fetchColumn();
+        if (!$cashierName) jsonErr('Selected cashier must be an active user.');
+
+        // Hard gate: you cannot hand back more cash than the cashier is holding.
+        // If short, the cashier needs a vault "return to user" to top up first
+        // (request flow lives in api/requests_api.php / admin/requests.php).
+        $available = getUserCashOnHand($pdo, $cashierId);
+        if (money_gt($refundAmount, $available)) {
+            jsonErr("$cashierName has only " . money($available) . " cash on hand — short by "
+                . money(money_sub($refundAmount, $available))
+                . ". Request a vault return to top up their cash before refunding.");
+        }
+
         $pdo->prepare("INSERT INTO refunds (payment_id, amount, reason, refunded_by) VALUES (?,?,?,?)")
             ->execute([$paymentId, $refundAmount, $reason, $_SESSION['user']['id']]);
 
@@ -546,17 +565,13 @@ if ($action === 'process_refund') {
         $newStatus = money_gte($totalRefundedAfter, $pay['amount']) ? 'refunded' : 'partially_refunded';
         $pdo->prepare("UPDATE payments SET status=? WHERE id=?")->execute([$newStatus, $paymentId]);
 
-        // Attribute the cash outflow to the ORIGINAL cashier who's holding the
-        // collected cash — they're the one physically returning it to the
-        // tenant, so it's their cash_on_hand that should drop. Falls back to
-        // the editing admin only if the original received_by is gone (FK
-        // would have SET NULL on user delete). refunds.refunded_by still
-        // captures who APPROVED the refund (the admin).
-        $cashUserId = !empty($pay['received_by']) ? (int)$pay['received_by'] : (int)$_SESSION['user']['id'];
+        // Attribute the cash outflow to the chosen cashier (validated + gated
+        // above) — they physically return the cash, so their cash_on_hand drops.
+        // refunds.refunded_by still captures who APPROVED the refund (the admin).
         $pdo->prepare("INSERT INTO cash_transactions (user_id,transaction_type,amount,reference_payment_id,notes,transaction_date) VALUES (?,?,?,?,?,?)")
-            ->execute([$cashUserId, 'refunded', $refundAmount, $paymentId, "Refund: {$pay['invoice_no']} — $reason", date('Y-m-d')]);
+            ->execute([$cashierId, 'refunded', $refundAmount, $paymentId, "Refund: {$pay['invoice_no']} — $reason", date('Y-m-d')]);
 
-        logActivity($pdo,'PROCESS_REFUND','Payments',"Refunded " . money($refundAmount) . " for payment #{$paymentId} ({$pay['invoice_no']}): $reason (cash debited from user #$cashUserId)");
+        logActivity($pdo,'PROCESS_REFUND','Payments',"Refunded " . money($refundAmount) . " for payment #{$paymentId} ({$pay['invoice_no']}): $reason (cash debited from {$cashierName} #{$cashierId})");
         $pdo->commit();
     } catch (Throwable $e) {
         if ($pdo->inTransaction()) $pdo->rollBack();

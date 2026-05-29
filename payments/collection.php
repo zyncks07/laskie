@@ -12,6 +12,9 @@ $units        = $pdo->query("SELECT ru.id, ru.unit_name, ru.monthly_rate, ru.due
                               LEFT JOIN tenants t ON t.unit_id = ru.id AND t.status = 'active'
                               ORDER BY ru.unit_name")->fetchAll();
 $serviceTypes = $pdo->query("SELECT id, name, default_amount FROM service_types WHERE is_active = 1 ORDER BY name")->fetchAll();
+// Active users for the refund "Returned by (cashier)" selector — the chosen
+// cashier's cash-on-hand funds the refund (see api_payment.php process_refund).
+$activeUsers  = $pdo->query("SELECT id, full_name FROM users WHERE status='active' ORDER BY full_name")->fetchAll();
 
 $curMonth = (int)date('n');
 $curYear  = (int)date('Y');
@@ -286,6 +289,15 @@ include '../includes/header.php';
           <label class="form-label">Refund Amount (₱) *</label>
           <input type="number" step="0.01" min="0.01" class="form-control" id="refAmount">
           <div class="form-text" id="refMaxHint"></div>
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Returned by (cashier) *</label>
+          <select class="form-select" id="refCashier">
+            <?php foreach ($activeUsers as $au): ?>
+              <option value="<?= (int)$au['id'] ?>"><?= clean($au['full_name']) ?></option>
+            <?php endforeach; ?>
+          </select>
+          <div class="form-text">Whose cash-on-hand funds this refund. Must have enough cash, or request a vault return first.</div>
         </div>
         <div class="mb-3">
           <label class="form-label">Reason *</label>
@@ -713,7 +725,7 @@ function viewUnitPayments(unitId, unitName, month, year) {
         // the JS literal — handlers read them via dataset, never via inline
         // interpolation that could break out of the attribute.
         var refBtn = (IS_ADMIN && !isVoided && p.status !== 'refunded')
-          ? '<button class="btn-icon" title="Process Refund" data-id="' + pid + '" data-inv="' + invEsc + '" data-amt="' + (parseFloat(p.amount)||0) + '" data-already="' + alreadyRefunded + '" onclick="openRefundModal(+this.dataset.id, this.dataset.inv, +this.dataset.amt, +this.dataset.already)">' +
+          ? '<button class="btn-icon" title="Process Refund" data-id="' + pid + '" data-inv="' + invEsc + '" data-amt="' + (parseFloat(p.amount)||0) + '" data-already="' + alreadyRefunded + '" data-cashier="' + (parseInt(p.received_by)||0) + '" onclick="openRefundModal(+this.dataset.id, this.dataset.inv, +this.dataset.amt, +this.dataset.already, +this.dataset.cashier)">' +
               '<i class="fa-solid fa-rotate-left fa-xs" style="color:var(--danger)"></i></button> '
           : '';
         var editBtn = (IS_ADMIN && !isVoided)
@@ -1005,10 +1017,13 @@ function deleteCharge(chargeId) {
   });
 }
 
-function openRefundModal(paymentId, invoiceNo, amount, alreadyRefunded) {
+function openRefundModal(paymentId, invoiceNo, amount, alreadyRefunded, cashierId) {
   alreadyRefunded = alreadyRefunded || 0;
   var maxRefund = amount - alreadyRefunded;
   document.getElementById('refPaymentId').value = paymentId;
+  // Default the cashier to the original collector when that user is still active.
+  var cashierSel = document.getElementById('refCashier');
+  if (cashierId && cashierSel.querySelector('option[value="' + cashierId + '"]')) cashierSel.value = cashierId;
   // invoice_no is server-generated (INV-YYYY-NNNNN) but defence-in-depth:
   // esc() any value we pull from a data-* attribute back into innerHTML.
   document.getElementById('refPaymentInfo').innerHTML =
@@ -1026,6 +1041,7 @@ function processRefund() {
   var paymentId = document.getElementById('refPaymentId').value;
   var amount    = parseFloat(document.getElementById('refAmount').value);
   var reason    = document.getElementById('refReason').value.trim();
+  var cashier   = document.getElementById('refCashier').value;
   var msgEl     = document.getElementById('refMsg');
 
   if (!amount || amount <= 0) {
@@ -1035,7 +1051,7 @@ function processRefund() {
     msgEl.className = 'alert alert-danger mt-2'; msgEl.textContent = 'Reason is required.'; msgEl.style.display = ''; return;
   }
 
-  apiPost('api_payment.php', {action: 'process_refund', payment_id: paymentId, amount: amount, reason: reason}, function(err, res) {
+  apiPost('api_payment.php', {action: 'process_refund', payment_id: paymentId, amount: amount, reason: reason, cashier_id: cashier}, function(err, res) {
     if (err || !res || !res.success) {
       msgEl.className = 'alert alert-danger mt-2';
       msgEl.textContent = (res && res.error) ? res.error : (err || 'Failed.');
