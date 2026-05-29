@@ -424,7 +424,15 @@ if ($action === 'get_unit_payments') {
     $cq->execute([$unitId, $month, $year]);
     $charges = $cq->fetchAll();
 
-    $totalPaid = money_sum(array_column($payments, 'amount'));
+    // Net of refunds: each payment counts for amount − its refunded_total, so a
+    // fully-refunded receipt contributes 0 to the period's Total Paid. Also expose
+    // per-row net_amount so the grid can show the effective figure.
+    $totalPaid = '0.00';
+    foreach ($payments as &$pRow) {
+        $pRow['net_amount'] = money_sub($pRow['amount'], $pRow['refunded_total']);
+        $totalPaid = money_add($totalPaid, $pRow['net_amount']);
+    }
+    unset($pRow);
     jsonOk(['payments' => $payments, 'unit' => $unitData, 'charges' => $charges, 'total_paid' => $totalPaid]);
 }
 
@@ -437,14 +445,15 @@ if ($action === 'monthly_summary') {
         SELECT
             ru.id, ru.unit_name, ru.monthly_rate, ru.status, ru.due_day,
             t.full_name as tenant_name, t.contract_start,
-            COALESCE(SUM(CASE WHEN p.payment_type='rent' THEN p.amount ELSE 0 END), 0)    as rent_paid,
-            COALESCE(SUM(CASE WHEN p.payment_type='service' THEN p.amount ELSE 0 END), 0) as service_paid,
-            COALESCE(SUM(p.amount), 0) as total_paid,
+            COALESCE(SUM(CASE WHEN p.payment_type='rent' THEN p.amount - COALESCE(r.refsum,0) ELSE 0 END), 0)    as rent_paid,
+            COALESCE(SUM(CASE WHEN p.payment_type='service' THEN p.amount - COALESCE(r.refsum,0) ELSE 0 END), 0) as service_paid,
+            COALESCE(SUM(p.amount - COALESCE(r.refsum,0)), 0) as total_paid,
             COALESCE((SELECT SUM(uc.amount) FROM unit_charges uc WHERE uc.unit_id=ru.id AND uc.period_month=? AND uc.period_year=? AND uc.payment_id IS NULL), 0) as outstanding_charges,
             (SELECT u2.full_name FROM payments p2 LEFT JOIN users u2 ON p2.received_by=u2.id WHERE p2.unit_id=ru.id AND p2.period_month=? AND p2.period_year=? AND p2.deleted_at IS NULL AND p2.status != 'voided' ORDER BY p2.created_at DESC LIMIT 1) as last_cashier
         FROM rental_units ru
         LEFT JOIN tenants t  ON t.unit_id=ru.id AND t.status='active'
         LEFT JOIN payments p ON p.unit_id=ru.id AND p.period_month=? AND p.period_year=? AND p.status != 'voided' AND p.deleted_at IS NULL
+        LEFT JOIN (SELECT payment_id, SUM(amount) AS refsum FROM refunds GROUP BY payment_id) r ON r.payment_id = p.id
         GROUP BY ru.id
         ORDER BY ru.unit_name
     ");

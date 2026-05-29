@@ -14,7 +14,13 @@ $units = $pdo->query("SELECT ru.*, ut.name as type_name FROM rental_units ru LEF
 
 // ─── Per-unit revenue & expenses (single query each, sargable ranges) ─────
 [$yrStart, $yrEnd] = yearRange($selectedYear);
-$revRows = $pdo->prepare("SELECT unit_id, COALESCE(SUM(amount),0) AS total FROM payments WHERE payment_date >= ? AND payment_date < ? AND deleted_at IS NULL AND status != 'voided' GROUP BY unit_id");
+// Net of refunds: each payment contributes amount − its refunded total, so a
+// fully-refunded payment adds 0 and a partial refund nets out. Voided/deleted
+// stay excluded (refunds can only attach to live, non-voided payments).
+$revRows = $pdo->prepare("SELECT p.unit_id, COALESCE(SUM(p.amount - COALESCE(r.refsum,0)),0) AS total
+    FROM payments p
+    LEFT JOIN (SELECT payment_id, SUM(amount) AS refsum FROM refunds GROUP BY payment_id) r ON r.payment_id = p.id
+    WHERE p.payment_date >= ? AND p.payment_date < ? AND p.deleted_at IS NULL AND p.status != 'voided' GROUP BY p.unit_id");
 $revRows->execute([$yrStart, $yrEnd]);
 $unitRevenue = array_column($revRows->fetchAll(), 'total', 'unit_id');
 
@@ -31,7 +37,10 @@ foreach ($units as $u) {
 // Kept as canonical "0.00" strings so 12-month accumulation in the tfoot
 // matches the year stat cards exactly (no sub-cent float drift).
 $monthlyRev = []; $monthlyExp = [];
-$revStmt = $pdo->prepare("SELECT COALESCE(SUM(amount),0) FROM payments WHERE payment_date >= ? AND payment_date < ? AND deleted_at IS NULL AND status != 'voided'");
+$revStmt = $pdo->prepare("SELECT COALESCE(SUM(p.amount - COALESCE(r.refsum,0)),0)
+    FROM payments p
+    LEFT JOIN (SELECT payment_id, SUM(amount) AS refsum FROM refunds GROUP BY payment_id) r ON r.payment_id = p.id
+    WHERE p.payment_date >= ? AND p.payment_date < ? AND p.deleted_at IS NULL AND p.status != 'voided'");
 $expStmt = $pdo->prepare("SELECT COALESCE(SUM(amount),0) FROM expenses WHERE expense_date >= ? AND expense_date < ? AND deleted_at IS NULL");
 for ($m = 1; $m <= 12; $m++) {
     [$mStart, $mEnd] = monthRange($m, $selectedYear);
@@ -68,7 +77,10 @@ $cmRev = '0.00';
 $cmExp = '0.00';
 if ($selectedYear === $curYear) {
     [$cmStart, $cmEnd] = monthRange($curMonth, $curYear);
-    $s = $pdo->prepare("SELECT COALESCE(SUM(amount),0) FROM payments WHERE payment_date >= ? AND payment_date < ? AND deleted_at IS NULL AND status != 'voided'");
+    $s = $pdo->prepare("SELECT COALESCE(SUM(p.amount - COALESCE(r.refsum,0)),0)
+        FROM payments p
+        LEFT JOIN (SELECT payment_id, SUM(amount) AS refsum FROM refunds GROUP BY payment_id) r ON r.payment_id = p.id
+        WHERE p.payment_date >= ? AND p.payment_date < ? AND p.deleted_at IS NULL AND p.status != 'voided'");
     $s->execute([$cmStart, $cmEnd]); $cmRev = (string)$s->fetchColumn();
     $s = $pdo->prepare("SELECT COALESCE(SUM(amount),0) FROM expenses WHERE expense_date >= ? AND expense_date < ? AND deleted_at IS NULL");
     $s->execute([$cmStart, $cmEnd]); $cmExp = (string)$s->fetchColumn();
@@ -118,12 +130,13 @@ if ($selectedYear === $curYear) {
         FROM rental_units ru
         LEFT JOIN tenants t ON t.unit_id = ru.id AND t.status = 'active'
         LEFT JOIN (
-            SELECT unit_id, SUM(amount) AS paid
-            FROM payments
-            WHERE payment_type = 'rent'
-              AND period_month = ? AND period_year = ?
-              AND deleted_at IS NULL AND status != 'voided'
-            GROUP BY unit_id
+            SELECT p.unit_id, SUM(p.amount - COALESCE(r.refsum,0)) AS paid
+            FROM payments p
+            LEFT JOIN (SELECT payment_id, SUM(amount) AS refsum FROM refunds GROUP BY payment_id) r ON r.payment_id = p.id
+            WHERE p.payment_type = 'rent'
+              AND p.period_month = ? AND p.period_year = ?
+              AND p.deleted_at IS NULL AND p.status != 'voided'
+            GROUP BY p.unit_id
         ) cm ON cm.unit_id = ru.id
         ORDER BY ru.unit_name
     ");
