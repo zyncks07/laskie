@@ -483,13 +483,14 @@ include '../includes/header.php';
           <?php endif; ?>
         </td>
         <td class="text-center no-print">
-          <?php if($row['type']==='payment' && ($row['pay_status']??'paid') !== 'refunded'): ?>
+          <?php if($row['type']==='payment' && ($row['pay_status']??'paid') !== 'refunded' && isAdmin()): ?>
             <?php
-              $alrRef = (float)($row['already_refunded'] ?? 0);
+              $alrRef = number_format((float)($row['already_refunded'] ?? 0), 2, '.', '');
+              $maxRef = money_sub((string)$row['credit'], $alrRef);
               $invEsc = htmlspecialchars($row['invoice_no'] ?? '', ENT_QUOTES);
             ?>
             <button class="btn-icon" title="Process Refund"
-              onclick="openRefundModal(<?=(int)$row['id']?>,'<?=$invEsc?>',<?=$row['credit']?>,<?=$alrRef?>)">
+              onclick="openRefundModal(<?=(int)$row['id']?>,'<?=$invEsc?>',<?=number_format((float)$row['credit'],2,'.','')?>,<?=$alrRef?>,<?=$maxRef?>)">
               <i class="fa-solid fa-rotate-left fa-xs" style="color:var(--danger)"></i>
             </button>
           <?php elseif($isSvcChg && $isUnpaid): ?>
@@ -594,15 +595,14 @@ $(document).ready(function(){
   }
 });
 
-function openRefundModal(paymentId, invoiceNo, amount, alreadyRefunded) {
+function openRefundModal(paymentId, invoiceNo, amount, alreadyRefunded, maxRefund) {
   alreadyRefunded = alreadyRefunded || 0;
-  var maxRefund = amount - alreadyRefunded;
   document.getElementById('refPaymentId').value = paymentId;
   document.getElementById('refPaymentInfo').innerHTML =
     '<strong>' + esc(invoiceNo) + '</strong> &nbsp;·&nbsp; Original: <strong>₱' + fmt(amount) + '</strong>' +
     (alreadyRefunded > 0 ? ' &nbsp;·&nbsp; Already refunded: <strong>₱' + fmt(alreadyRefunded) + '</strong>' : '');
-  document.getElementById('refAmount').value = maxRefund.toFixed(2);
-  document.getElementById('refAmount').max   = maxRefund.toFixed(2);
+  document.getElementById('refAmount').value = maxRefund;
+  document.getElementById('refAmount').max   = maxRefund;
   document.getElementById('refMaxHint').textContent = 'Max refundable: ₱' + fmt(maxRefund);
   document.getElementById('refReason').value = '';
   document.getElementById('refMsg').style.display = 'none';

@@ -73,7 +73,10 @@ $allUsers = $pdo->query("SELECT id, full_name, role FROM users ORDER BY full_nam
 $modules = $pdo->query("SELECT DISTINCT module FROM system_logs WHERE module IS NOT NULL ORDER BY module")->fetchAll(PDO::FETCH_COLUMN);
 
 // ── Available months/years ────────────────────────────────────
-$periods = $pdo->query("SELECT DISTINCT MONTH(created_at) as m, YEAR(created_at) as y FROM system_logs ORDER BY y DESC, m DESC")->fetchAll();
+// DATE_FORMAT + lexicographic ORDER BY avoids a MONTH()/YEAR() function barrier
+// on the date column so the index can be used for ordering.
+$rawPeriods = $pdo->query("SELECT DISTINCT DATE_FORMAT(created_at,'%Y-%m') AS ym FROM system_logs ORDER BY ym DESC")->fetchAll();
+$periods = array_map(fn($r) => ['m' => (int)substr($r['ym'], 5, 2), 'y' => (int)substr($r['ym'], 0, 4)], $rawPeriods);
 if (empty($periods)) $periods = [['m'=>date('n'),'y'=>date('Y')]];
 
 // ── Action color map ──────────────────────────────────────────
@@ -192,7 +195,7 @@ $deletes    = count(array_filter($logRows, fn($r)=>str_starts_with($r['action'],
   <span class="badge bg-success">Logins OK: <?=$loginOk?></span>
   <span class="badge bg-danger">Login Failed: <?=$loginFail?></span>
   <span class="badge bg-primary">Creates: <?=$creates?></span>
-  <span class="badge" style="background:#1d4ed8">Updates: <?=$updates?></span>
+  <span class="badge" style="background:var(--laskie-indigo);color:#fff">Updates: <?=$updates?></span>
   <span class="badge bg-warning text-dark">Deletes: <?=$deletes?></span>
 </div>
 
@@ -248,9 +251,9 @@ $deletes    = count(array_filter($logRows, fn($r)=>str_starts_with($r['action'],
           <div class="log-diff-table" style="display:none;margin-top:6px;overflow-x:auto;max-width:100%">
             <table style="font-size:11px;border-collapse:collapse;width:100%;min-width:320px">
               <thead><tr>
-                <th style="padding:3px 7px;background:#f3f4f6;border:1px solid var(--border)">Field</th>
-                <th style="padding:3px 7px;background:#fef2f2;border:1px solid var(--border);color:var(--danger)">Before</th>
-                <th style="padding:3px 7px;background:#f0fdf4;border:1px solid var(--border);color:var(--success)">After</th>
+                <th style="padding:3px 7px;background:#faf7ef;border:1px solid var(--border)">Field</th>
+                <th style="padding:3px 7px;background:var(--laskie-coral-bg);border:1px solid var(--border);color:var(--danger)">Before</th>
+                <th style="padding:3px 7px;background:var(--laskie-teal-bg);border:1px solid var(--border);color:var(--success)">After</th>
               </tr></thead>
               <tbody>
               <?php foreach ($changed as $k): ?>
@@ -353,7 +356,7 @@ function toggleDiff(btn) {
 }
 .dataTables_wrapper .dataTables_filter input:focus {
   border-color:var(--primary);
-  box-shadow:0 0 0 3px rgba(26,58,143,.1);
+  box-shadow:0 0 0 3px rgba(239,159,39,.18);
 }
 .dataTables_wrapper .dataTables_length select {
   border:1px solid var(--border);

@@ -65,9 +65,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if (!$recipientId) jsonErr('Please select a recipient.');
         if (!money_is_pos($amount)) jsonErr('Amount must be greater than zero.');
         if (!$date || !strtotime($date)) jsonErr('Valid date required.');
-        $rChk = $pdo->prepare("SELECT id FROM dividend_recipients WHERE id=?");
+        $rChk = $pdo->prepare("SELECT id FROM dividend_recipients WHERE id=? AND is_active=1");
         $rChk->execute([$recipientId]);
-        if (!$rChk->fetch()) jsonErr('Recipient not found.');
+        if (!$rChk->fetch()) jsonErr('Recipient not found or inactive.');
         $pdo->beginTransaction();
         try {
             $pdo->prepare("INSERT INTO dividend_distributions (recipient_id,amount,distribution_date,notes,created_by) VALUES (?,?,?,?,?)")
@@ -121,9 +121,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if (!$recipientId) jsonErr('Please select a recipient.');
         if (!money_is_pos($amount)) jsonErr('Amount must be greater than zero.');
         if (!$date || !strtotime($date)) jsonErr('Valid date required.');
-        $rChk = $pdo->prepare("SELECT id FROM dividend_recipients WHERE id=?");
+        $rChk = $pdo->prepare("SELECT id FROM dividend_recipients WHERE id=? AND is_active=1");
         $rChk->execute([$recipientId]);
-        if (!$rChk->fetch()) jsonErr('Recipient not found.');
+        if (!$rChk->fetch()) jsonErr('Recipient not found or inactive.');
         $pdo->beginTransaction();
         try {
             $pdo->prepare("INSERT INTO dividend_returns (recipient_id,amount,return_date,notes,created_by) VALUES (?,?,?,?,?)")
@@ -485,7 +485,7 @@ include '../includes/header.php';
 </div>
 
 <!-- Vault Balance Hero -->
-<div class="card mb-3" style="background:linear-gradient(135deg,#1a3a8f 0%,#3b5bdb 100%);border:none;border-radius:var(--radius-lg);">
+<div class="card mb-3 dark-card" style="border:none;">
   <div class="card-body py-4 text-center text-white">
     <div style="font-size:11px;letter-spacing:3px;text-transform:uppercase;opacity:.7;margin-bottom:6px;">Current Vault Balance</div>
     <div id="vaultBalanceDisplay" style="font-size:46px;font-weight:800;letter-spacing:-1px;line-height:1.1"><?= money($vaultBalance) ?></div>
@@ -1186,7 +1186,7 @@ const RET_DATA  = <?= json_encode($retMap,   JSON_UNESCAPED_UNICODE) ?>;
 const IS_ADMIN = <?= isAdmin() ? 'true' : 'false' ?>;
 
 // ── Chart ────────────────────────────────────────────────────
-const CHART_COLORS = ['#1a3a8f','#0ea5e9','#15803d','#d97706','#7c3aed','#dc2626','#0891b2','#be185d'];
+const CHART_COLORS = ['#EF9F27','#1D9E75','#D85A30','#5754A8','#FAC775','#9FE1CB','#F5C4B3','#26215C'];
 const chartByUser  = <?= $chartJson ?>;
 const months       = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
@@ -1219,7 +1219,7 @@ if (chartByUser.length > 0) {
         x: { stacked: true, grid: { display: false }, border: { display: false } },
         y: {
           stacked: true,
-          grid: { color: '#f3f4f6' },
+          grid: { color: '#f0ede5' },
           border: { display: false },
           ticks: { callback: v => '₱' + (v/1000>=1 ? (v/1000).toFixed(0)+'k' : v) }
         }
@@ -1260,7 +1260,7 @@ if (divChartData.length > 0) {
           x: { grid: { display: false }, border: { display: false } },
           y: {
             beginAtZero: true,
-            grid: { color: '#f3f4f6' },
+            grid: { color: '#f0ede5' },
             border: { display: false },
             ticks: { callback: v => '₱' + (v/1000>=1 ? (v/1000).toFixed(0)+'k' : v) }
           }
@@ -1293,24 +1293,24 @@ function loadLogs() {
       const isUserRet  = r.log_type === 'user_return';
       let badge, person, amtColor, actions;
       if (isRem) {
-        badge    = `<span class="badge" style="background:#dbeafe;color:#1a3a8f;font-weight:600">Remittance</span>`;
+        badge    = `<span class="badge" style="background:var(--laskie-amber-bg);color:var(--laskie-amber-ink);font-weight:600">Remittance</span>`;
         person   = esc(r.person_name||'—');
         amtColor = 'var(--primary)';
         actions  = `<button class="btn-icon danger" title="Delete" onclick="deleteRemittance(${r.id})"><i class="fa-solid fa-trash fa-xs"></i></button>`;
       } else if (isDist) {
-        badge    = `<span class="badge" style="background:#dcfce7;color:#15803d;font-weight:600">Dividend</span>`;
-        person   = `<span style="color:#15803d">→ ${esc(r.recipient_name||'—')}</span> <span class="text-muted" style="font-size:11px">via ${esc(r.person_name||'—')}</span>`;
+        badge    = `<span class="badge" style="background:var(--laskie-teal-bg);color:var(--laskie-teal-ink);font-weight:600">Dividend</span>`;
+        person   = `<span style="color:var(--laskie-teal)">→ ${esc(r.recipient_name||'—')}</span> <span class="text-muted" style="font-size:11px">via ${esc(r.person_name||'—')}</span>`;
         amtColor = 'var(--success)';
         actions  = `<button class="btn-icon" title="Edit" onclick="openEditDist(${r.id})"><i class="fa-solid fa-pen fa-xs"></i></button>`
                  + `<button class="btn-icon danger" title="Delete" onclick="deleteDistribution(${r.id})"><i class="fa-solid fa-trash fa-xs"></i></button>`;
       } else if (isRet) {
-        badge    = `<span class="badge" style="background:#fef9c3;color:#92400e;font-weight:600">Return</span>`;
-        person   = `<span style="color:#92400e">← ${esc(r.recipient_name||'—')}</span> <span class="text-muted" style="font-size:11px">via ${esc(r.person_name||'—')}</span>`;
-        amtColor = '#d97706';
+        badge    = `<span class="badge" style="background:var(--laskie-coral-bg);color:var(--laskie-coral-ink);font-weight:600">Return</span>`;
+        person   = `<span style="color:var(--laskie-coral)">← ${esc(r.recipient_name||'—')}</span> <span class="text-muted" style="font-size:11px">via ${esc(r.person_name||'—')}</span>`;
+        amtColor = 'var(--laskie-coral)';
         actions  = `<button class="btn-icon danger" title="Delete" onclick="deleteReturn(${r.id})"><i class="fa-solid fa-trash fa-xs"></i></button>`;
       } else {  // user_return
-        badge    = `<span class="badge" style="background:#e0f2fe;color:#0369a1;font-weight:600">Vault→User</span>`;
-        person   = `<span style="color:#0369a1">→ ${esc(r.recipient_name||'—')}</span>`;
+        badge    = `<span class="badge" style="background:var(--laskie-indigo-bg);color:var(--laskie-indigo);font-weight:600">Vault→User</span>`;
+        person   = `<span style="color:var(--laskie-indigo)">→ ${esc(r.recipient_name||'—')}</span>`;
         amtColor = 'var(--info)';
         // user_return Edit/Delete are admin-only — accountants see the row but
         // not the action buttons (backend would 403 them anyway).

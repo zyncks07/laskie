@@ -624,7 +624,7 @@ function viewUnitPayments(unitId, unitName, month, year) {
     var pays    = res.payments;
     var unit    = res.unit;
     var charges = res.charges || [];
-    var totPaid = 0;
+    var totPaid = res.total_paid || 0;
     var html = '';
 
     if (unit) {
@@ -695,7 +695,6 @@ function viewUnitPayments(unitId, unitName, month, year) {
 
       pays.forEach(function(p) {
         var isVoided = p.status === 'voided';
-        if (!isVoided) totPaid += parseFloat(p.amount) || 0;
         var typeLabel = p.payment_type === 'rent'
           ? '<span class="badge badge-rent">Rent</span>'
           : '<span class="badge badge-service">' + esc(p.service_name || 'Service') + '</span>';
@@ -713,7 +712,7 @@ function viewUnitPayments(unitId, unitName, month, year) {
         // data-* attributes carry user-controlled strings (invoice_no) out of
         // the JS literal — handlers read them via dataset, never via inline
         // interpolation that could break out of the attribute.
-        var refBtn = (!isVoided && p.status !== 'refunded')
+        var refBtn = (IS_ADMIN && !isVoided && p.status !== 'refunded')
           ? '<button class="btn-icon" title="Process Refund" data-id="' + pid + '" data-inv="' + invEsc + '" data-amt="' + (parseFloat(p.amount)||0) + '" data-already="' + alreadyRefunded + '" onclick="openRefundModal(+this.dataset.id, this.dataset.inv, +this.dataset.amt, +this.dataset.already)">' +
               '<i class="fa-solid fa-rotate-left fa-xs" style="color:var(--danger)"></i></button> '
           : '';

@@ -424,7 +424,8 @@ if ($action === 'get_unit_payments') {
     $cq->execute([$unitId, $month, $year]);
     $charges = $cq->fetchAll();
 
-    jsonOk(['payments' => $payments, 'unit' => $unitData, 'charges' => $charges]);
+    $totalPaid = money_sum(array_column($payments, 'amount'));
+    jsonOk(['payments' => $payments, 'unit' => $unitData, 'charges' => $charges, 'total_paid' => $totalPaid]);
 }
 
 // ── Monthly Summary for All Units ────────────────────────────

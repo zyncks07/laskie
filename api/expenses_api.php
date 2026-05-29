@@ -26,6 +26,10 @@ if ($action === 'save_expense') {
     if (!$description)  jsonErr('Description is required.');
     if (empty($_SESSION['user']['id'])) jsonErr('No logged-in user. Expenses must be recorded by a system user.');
 
+    // Guard the edit path before touching the filesystem — prevents staff users
+    // from uploading orphaned files when the subsequent DB write would be blocked.
+    if ($id) requireAdmin();
+
     // Handle file upload
     if (!empty($_FILES['receipt_file']['name'])) {
         $up = handleUpload('receipt_file', 'receipts');
@@ -34,7 +38,7 @@ if ($action === 'save_expense') {
     }
 
     if ($id) {
-        requireAdmin(); // Only admins may edit existing expenses
+        // requireAdmin() already called above; this block handles the edit path.
         // Fetch before state for audit trail
         $oldRow = $pdo->prepare("SELECT unit_id, category_id, amount, expense_date, description, notes FROM expenses WHERE id=? AND deleted_at IS NULL");
         $oldRow->execute([$id]);

@@ -14,10 +14,12 @@ $selMonth = (int)($_GET['month'] ?? $curMonth);
 $selYear  = (int)($_GET['year']  ?? $curYear);
 
 // ── Available periods ─────────────────────────────────────────
-$periods = $pdo->prepare("SELECT DISTINCT MONTH(transaction_date) m, YEAR(transaction_date) y FROM cash_transactions WHERE user_id=? ORDER BY y DESC, m DESC");
+// DATE_FORMAT + lexicographic ORDER BY lets the idx_cash_user_date index
+// cover the WHERE clause without a function barrier on the date column.
+$periods = $pdo->prepare("SELECT DISTINCT DATE_FORMAT(transaction_date,'%Y-%m') AS ym FROM cash_transactions WHERE user_id=? ORDER BY ym DESC");
 $periods->execute([$myId]);
 $periodRows = $periods->fetchAll();
-$years = array_unique(array_column($periodRows,'y'));
+$years = array_unique(array_map(fn($r) => (int)substr($r['ym'], 0, 4), $periodRows));
 if (!in_array($curYear,$years)) array_unshift($years,$curYear);
 rsort($years);
 
@@ -257,7 +259,7 @@ $cashSubLabel = 'End of ' . date('M Y', mktime(0, 0, 0, $selMonth, 1, $selYear))
       <?php endforeach; ?>
       </tbody>
       <tfoot>
-        <tr style="background:#f0fdf4;font-weight:700">
+        <tr style="background:#faf7ef;font-weight:700">
           <td colspan="5">Total Collected</td>
           <td class="text-end" style="color:var(--success)"><?= money(money_sum(array_column($myPayments,'amount'))) ?></td>
           <td></td>
@@ -297,7 +299,7 @@ $cashSubLabel = 'End of ' . date('M Y', mktime(0, 0, 0, $selMonth, 1, $selYear))
       <?php endforeach; ?>
       </tbody>
       <tfoot>
-        <tr style="background:#f0f8ff;font-weight:700">
+        <tr style="background:#faf7ef;font-weight:700">
           <td>Total Remitted</td>
           <td class="text-end" style="color:var(--info)"><?= money(money_sum(array_column($myRemits,'amount'))) ?></td>
           <td colspan="2"></td>
@@ -329,7 +331,7 @@ $cashSubLabel = 'End of ' . date('M Y', mktime(0, 0, 0, $selMonth, 1, $selYear))
           <?php endforeach; ?>
           </tbody>
           <tfoot>
-            <tr style="font-weight:700;background:#f9fafb">
+            <tr style="font-weight:700;background:#faf7ef">
               <td>Total</td>
               <td class="text-end" style="color:var(--danger)"><?= money((float)$tot['total_expenses']) ?></td>
               <td class="text-end"><?= count($myExpenses) ?></td>
