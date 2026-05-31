@@ -275,7 +275,7 @@ function verifyMaster() {
       </div>
 
       <div class="col-12">
-        <div class="card" style="border-color:var(--primary);border-width:2px">
+        <div class="card" style="border-color:var(--ink);border-width:2px">
           <div class="card-body">
             <h6 class="fw-700 mb-1"><i class="fa-solid fa-file-pdf me-2 text-danger"></i>Full Transaction Audit Report (PDF)</h6>
             <p class="text-muted mb-3" style="font-size:12.5px">
@@ -374,9 +374,9 @@ function verifyMaster() {
 
   <!-- ── Danger Zone ────────────────────────────────────────── -->
   <div class="tab-pane fade" id="tabDanger">
-    <div class="card border-danger">
-      <div class="card-header" style="background:var(--laskie-coral-bg);border-color:var(--laskie-coral-soft)">
-        <span class="card-header-title text-danger"><i class="fa-solid fa-triangle-exclamation me-2"></i>Danger Zone — Factory Reset</span>
+    <div class="card" style="border-color:var(--ink);border-width:2px">
+      <div class="card-header" style="background:var(--ink);color:var(--paper);border-radius:calc(var(--laskie-radius-card) - 2px) calc(var(--laskie-radius-card) - 2px) 0 0">
+        <span class="card-header-title"><i class="fa-solid fa-triangle-exclamation me-2"></i>Danger Zone — Factory Reset</span>
       </div>
       <div class="card-body">
         <div class="alert alert-danger mb-4">

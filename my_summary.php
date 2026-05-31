@@ -117,15 +117,15 @@ include 'includes/header.php';
 <div class="card mb-3">
   <div class="card-body py-3">
     <div class="d-flex align-items-center gap-3">
-      <div style="width:48px;height:48px;border-radius:50%;background:var(--primary);color:#fff;display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:700;flex-shrink:0">
+      <div class="user-avatar-sm d-flex align-items-center justify-content-center" style="width:48px;height:48px;border-radius:50%;font-size:18px;flex-shrink:0">
         <?= strtoupper(substr($me['full_name'],0,1)) ?>
       </div>
       <div>
         <div style="font-size:16px;font-weight:700"><?= clean($me['full_name']) ?></div>
-        <div style="font-size:12px;color:var(--text-muted)"><?= ucfirst($me['role']) ?> &nbsp;·&nbsp; <?= clean($me['username']) ?></div>
+        <div class="text-muted" style="font-size:12px"><?= ucfirst($me['role']) ?> &nbsp;·&nbsp; <?= clean($me['username']) ?></div>
       </div>
       <div class="ms-auto text-end">
-        <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.08em">Period</div>
+        <div class="section-label mb-1">Period</div>
         <div style="font-size:15px;font-weight:700"><?= date('F Y',mktime(0,0,0,$selMonth,1,$selYear)) ?></div>
       </div>
     </div>
@@ -197,7 +197,7 @@ $cashSubLabel = 'End of ' . date('M Y', mktime(0, 0, 0, $selMonth, 1, $selYear))
   <?php if (money_is_pos($tot['total_vault_returns'])): ?>
   <div class="col-6 col-md-2">
     <div class="stat-card">
-      <div class="stat-icon teal"><i class="fa-solid fa-hand-holding-dollar"></i></div>
+      <div class="stat-icon"><i class="fa-solid fa-hand-holding-dollar"></i></div>
       <div class="stat-body">
         <div class="stat-label">Vault Returns</div>
         <div class="stat-value" style="font-size:17px"><?= money((float)$tot['total_vault_returns']) ?></div>
@@ -209,7 +209,7 @@ $cashSubLabel = 'End of ' . date('M Y', mktime(0, 0, 0, $selMonth, 1, $selYear))
   <?php if (money_is_pos($tot['total_refunded'])): ?>
   <div class="col-6 col-md-2">
     <div class="stat-card">
-      <div class="stat-icon amber"><i class="fa-solid fa-rotate-left"></i></div>
+      <div class="stat-icon"><i class="fa-solid fa-rotate-left"></i></div>
       <div class="stat-body">
         <div class="stat-label">Refunded</div>
         <div class="stat-value" style="font-size:17px"><?= money((float)$tot['total_refunded']) ?></div>
@@ -223,7 +223,7 @@ $cashSubLabel = 'End of ' . date('M Y', mktime(0, 0, 0, $selMonth, 1, $selYear))
       <div class="stat-icon purple"><i class="fa-solid fa-wallet"></i></div>
       <div class="stat-body">
         <div class="stat-label">Cash on Hand</div>
-        <div class="stat-value" style="font-size:17px;color:<?= money_is_pos($myCash) || money_is_zero($myCash) ? 'var(--success)' : 'var(--danger)' ?>"><?= money($myCash) ?></div>
+        <div class="stat-value num" style="font-size:17px"><?= money($myCash) ?></div>
         <div class="stat-sub"><?= clean($cashSubLabel) ?></div>
       </div>
     </div>
@@ -234,7 +234,7 @@ $cashSubLabel = 'End of ' . date('M Y', mktime(0, 0, 0, $selMonth, 1, $selYear))
 <div class="card mb-3">
   <div class="card-header">
     <span class="card-header-title"><i class="fa-solid fa-money-bill-wave me-2"></i>Collections Recorded</span>
-    <span class="badge bg-success"><?= count($myPayments) ?></span>
+    <span class="badge bg-secondary"><?= count($myPayments) ?></span>
   </div>
   <?php if(empty($myPayments)): ?>
   <div class="card-body text-center text-muted py-4" style="font-size:13px">No collections recorded for this period.</div>
@@ -249,19 +249,19 @@ $cashSubLabel = 'End of ' . date('M Y', mktime(0, 0, 0, $selMonth, 1, $selYear))
       <?php foreach($myPayments as $p): ?>
       <tr>
         <td style="font-size:12.5px;white-space:nowrap"><?= clean($p['payment_date']) ?></td>
-        <td><a href="payments/invoice_print.php?id=<?=$p['id']?>" target="_blank" class="mono text-primary" style="font-size:11.5px"><?= clean($p['invoice_no']??'—') ?></a></td>
+        <td><a href="payments/invoice_print.php?id=<?=$p['id']?>" target="_blank" class="mono" style="font-size:11.5px"><?= clean($p['invoice_no']??'—') ?></a></td>
         <td style="font-size:12.5px"><?= clean($p['unit_name']??'—') ?></td>
         <td style="font-size:12.5px"><?= clean($p['tenant_name']??'—') ?></td>
         <td><?= $p['payment_type']==='rent'?'<span class="badge badge-rent">Rent</span>':'<span class="badge badge-service">'.clean($p['service_name']??'Service').'</span>' ?></td>
-        <td class="text-end fw-600" style="color:var(--success)" data-order="<?= (float)$p['amount'] ?>"><?= money((float)$p['amount']) ?></td>
+        <td class="text-end fw-600 num" data-order="<?= (float)$p['amount'] ?>"><?= money((float)$p['amount']) ?></td>
         <td class="cell-trunc-lg" style="font-size:12px;color:var(--text-muted)"><?= clean($p['notes']??'—') ?></td>
       </tr>
       <?php endforeach; ?>
       </tbody>
       <tfoot>
-        <tr style="background:#faf7ef;font-weight:700">
+        <tr style="background:var(--gray-50);font-weight:700;border-top:2px solid var(--gray-200)">
           <td colspan="5">Total Collected</td>
-          <td class="text-end" style="color:var(--success)"><?= money(money_sum(array_column($myPayments,'amount'))) ?></td>
+          <td class="text-end num"><?= money(money_sum(array_column($myPayments,'amount'))) ?></td>
           <td></td>
         </tr>
       </tfoot>
@@ -274,7 +274,7 @@ $cashSubLabel = 'End of ' . date('M Y', mktime(0, 0, 0, $selMonth, 1, $selYear))
 <div class="card mb-3">
   <div class="card-header">
     <span class="card-header-title"><i class="fa-solid fa-paper-plane me-2"></i>Remittances</span>
-    <span class="badge bg-primary"><?= count($myRemits) ?></span>
+    <span class="badge bg-secondary"><?= count($myRemits) ?></span>
   </div>
   <?php if(empty($myRemits)): ?>
   <div class="card-body text-center text-muted py-4" style="font-size:13px">No remittances recorded for this period.</div>
@@ -286,7 +286,7 @@ $cashSubLabel = 'End of ' . date('M Y', mktime(0, 0, 0, $selMonth, 1, $selYear))
       <?php foreach($myRemits as $r): ?>
       <tr>
         <td style="font-size:12.5px"><?= clean($r['transaction_date']) ?></td>
-        <td class="text-end fw-600" style="color:var(--info)" data-order="<?= (float)$r['amount'] ?>"><?= money((float)$r['amount']) ?></td>
+        <td class="text-end fw-600 num" data-order="<?= (float)$r['amount'] ?>"><?= money((float)$r['amount']) ?></td>
         <td class="cell-trunc-lg" style="font-size:12px;color:var(--text-muted)"><?= clean($r['notes']??'—') ?></td>
         <td class="text-center">
           <?php if($r['doc_path']): ?>
@@ -299,9 +299,9 @@ $cashSubLabel = 'End of ' . date('M Y', mktime(0, 0, 0, $selMonth, 1, $selYear))
       <?php endforeach; ?>
       </tbody>
       <tfoot>
-        <tr style="background:#faf7ef;font-weight:700">
+        <tr style="background:var(--gray-50);font-weight:700;border-top:2px solid var(--gray-200)">
           <td>Total Remitted</td>
-          <td class="text-end" style="color:var(--info)"><?= money(money_sum(array_column($myRemits,'amount'))) ?></td>
+          <td class="text-end num"><?= money(money_sum(array_column($myRemits,'amount'))) ?></td>
           <td colspan="2"></td>
         </tr>
       </tfoot>
@@ -324,16 +324,16 @@ $cashSubLabel = 'End of ' . date('M Y', mktime(0, 0, 0, $selMonth, 1, $selYear))
           <tbody>
           <?php foreach($expBreakdown as $eb): ?>
           <tr>
-            <td><span class="badge" style="background:var(--primary-light);color:var(--primary)"><?= clean($eb['category']??'Uncategorized') ?></span></td>
-            <td class="text-end fw-600" style="color:var(--danger)"><?= money((float)$eb['total']) ?></td>
+            <td><span class="muted-pill"><?= clean($eb['category']??'Uncategorized') ?></span></td>
+            <td class="text-end fw-600 num"><?= money((float)$eb['total']) ?></td>
             <td class="text-end text-muted"><?= $eb['count'] ?></td>
           </tr>
           <?php endforeach; ?>
           </tbody>
           <tfoot>
-            <tr style="font-weight:700;background:#faf7ef">
+            <tr style="font-weight:700;background:var(--gray-50);border-top:2px solid var(--gray-200)">
               <td>Total</td>
-              <td class="text-end" style="color:var(--danger)"><?= money((float)$tot['total_expenses']) ?></td>
+              <td class="text-end num"><?= money((float)$tot['total_expenses']) ?></td>
               <td class="text-end"><?= count($myExpenses) ?></td>
             </tr>
           </tfoot>
@@ -359,7 +359,7 @@ $cashSubLabel = 'End of ' . date('M Y', mktime(0, 0, 0, $selMonth, 1, $selYear))
               <?php if($e['notes']): ?><br><small class="text-muted cell-trunc"><?= clean(substr($e['notes'],0,60)) ?></small><?php endif; ?>
             </td>
             <td><?= clean($e['unit_name']??'General') ?></td>
-            <td class="text-end fw-600" style="color:var(--danger)"><?= money((float)$e['amount']) ?></td>
+            <td class="text-end fw-600 num"><?= money((float)$e['amount']) ?></td>
           </tr>
           <?php endforeach; ?>
           </tbody>

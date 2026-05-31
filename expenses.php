@@ -111,7 +111,7 @@ include 'includes/header.php';
   </div>
   <div class="col-6 col-md-3">
     <div class="stat-card">
-      <div class="stat-icon amber"><i class="fa-solid fa-tags"></i></div>
+      <div class="stat-icon"><i class="fa-solid fa-tags"></i></div>
       <div class="stat-body">
         <div class="stat-label">Top Category</div>
         <div class="stat-value" style="font-size:14px;line-height:1.2" id="statTopCat">&#8212;</div>
@@ -131,7 +131,7 @@ include 'includes/header.php';
   </div>
   <div class="col-6 col-md-3">
     <div class="stat-card">
-      <div class="stat-icon teal"><i class="fa-solid fa-user-tie"></i></div>
+      <div class="stat-icon"><i class="fa-solid fa-user-tie"></i></div>
       <div class="stat-body">
         <div class="stat-label">Top Recorder</div>
         <div class="stat-value" style="font-size:14px;line-height:1.2" id="statTopRecorder">&#8212;</div>
@@ -169,7 +169,7 @@ include 'includes/header.php';
 
 <?php if(isAdmin()): ?>
 <!-- Bulk action bar (shown when expenses are selected) -->
-<div id="expBulkBar" class="d-none" style="position:fixed;bottom:24px;left:50%;transform:translateX(-50%);z-index:1050;background:#fff;border:1px solid var(--laskie-divider);border-radius:999px;padding:10px 22px;box-shadow:var(--laskie-shadow-hero)">
+<div id="expBulkBar" class="d-none" style="position:fixed;bottom:24px;left:50%;transform:translateX(-50%);z-index:1050;background:var(--paper);border:1px solid var(--gray-200);border-radius:999px;padding:10px 22px;box-shadow:var(--laskie-shadow-hero)">
   <div class="d-flex align-items-center gap-3">
     <span class="fw-600" id="expBulkCount"></span>
     <button class="btn btn-danger btn-sm" onclick="bulkDeleteExpenses()"><i class="fa-solid fa-trash me-1"></i>Delete Selected</button>
@@ -394,7 +394,7 @@ function loadExpenses() {
       }
 
       var catBadge = ex.category_name
-        ? '<span class="badge" style="background:var(--primary-light);color:var(--primary);font-size:11px">' + esc(ex.category_name) + '</span>'
+        ? '<span class="muted-pill" style="font-size:10.5px">' + esc(ex.category_name) + '</span>'
         : '<span class="text-muted" style="font-size:11.5px">&#8212;</span>';
       var unitLabel = ex.unit_name
         ? '<span style="font-size:12.5px">' + esc(ex.unit_name) + '</span>'
@@ -409,7 +409,7 @@ function loadExpenses() {
       html += '<td class="fw-600 cell-trunc-lg" style="font-size:12.5px">' + esc(ex.description) + '</td>';
       html += '<td>' + catBadge + '</td>';
       html += '<td>' + unitLabel + '</td>';
-      html += '<td class="text-end fw-600" style="color:var(--danger)">' + fmt(ex.amount) + '</td>';
+      html += '<td class="text-end fw-600 num">' + fmt(ex.amount) + '</td>';
       html += '<td style="font-size:12px;color:var(--text-muted)">' + (ex.recorder_name ? esc(ex.recorder_name) : '&#8212;') + '</td>';
       html += '<td>' + notesHtml + '</td>';
       html += '<td class="text-center">' + receipt + '</td>';
@@ -435,9 +435,9 @@ function loadExpenses() {
 
     if (exps.length > 0) {
       document.getElementById('expFoot').innerHTML =
-        '<tr style="background:#faf7ef;font-weight:700;border-top:2px solid var(--laskie-divider)">' +
+        '<tr style="background:var(--gray-50);font-weight:700;border-top:2px solid var(--gray-200)">' +
         '<td colspan="' + (IS_ADMIN ? 5 : 4) + '">TOTAL (' + exps.length + ' records)</td>' +
-        '<td class="text-end" style="color:var(--danger)">' + fmt(res.total) + '</td>' +
+        '<td class="text-end num fw-600">' + fmt(res.total) + '</td>' +
         '<td colspan="4"></td></tr>';
     }
   });

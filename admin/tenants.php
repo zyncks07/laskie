@@ -394,13 +394,13 @@ function loadDocs(tenantId) {
       let link = '—';
       if (d.file_path) {
         const fp = _docSafeUrl(d.file_path);
-        if (fp) link = '<a href="' + fp + '" target="_blank" rel="noopener noreferrer" class="text-primary"><i class="fa-solid fa-file me-1"></i>View</a>';
+        if (fp) link = '<a href="' + fp + '" target="_blank" rel="noopener noreferrer"><i class="fa-solid fa-file me-1"></i>View</a>';
       } else if (d.external_url) {
         const eu = _docSafeUrl(d.external_url);
-        if (eu) link = '<a href="' + eu + '" target="_blank" rel="noopener noreferrer" class="text-primary"><i class="fa-solid fa-link me-1"></i>Open URL</a>';
+        if (eu) link = '<a href="' + eu + '" target="_blank" rel="noopener noreferrer"><i class="fa-solid fa-link me-1"></i>Open URL</a>';
       }
       const created = d.created_at ? _docEsc(String(d.created_at).split(' ')[0]) : '—';
-      html += '<tr><td>' + _docEsc(d.doc_name) + '</td><td><span class="badge bg-secondary">' + (d.doc_type ? _docEsc(d.doc_type) : '&#8212;') + '</span></td><td>' + link + '</td><td>' + (d.uploader ? _docEsc(d.uploader) : '&#8212;') + '</td><td style="font-size:11px">' + created + '</td>' +
+      html += '<tr><td>' + _docEsc(d.doc_name) + '</td><td><span class="muted-pill">' + (d.doc_type ? _docEsc(d.doc_type) : '&#8212;') + '</span></td><td>' + link + '</td><td>' + (d.uploader ? _docEsc(d.uploader) : '&#8212;') + '</td><td style="font-size:11px">' + created + '</td>' +
         '<td><button class="btn-icon danger" data-id="' + parseInt(d.id) + '" onclick="deleteDoc(+this.dataset.id)"><i class="fa-solid fa-trash fa-xs"></i></button></td></tr>';
     });
     html += '</tbody></table></div>';

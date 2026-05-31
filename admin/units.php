@@ -338,7 +338,7 @@ include '../includes/header.php';
             <td class="fw-600"><?= clean($u['unit_name']) ?></td>
             <td><?= clean($u['type_name'] ?? '—') ?></td>
             <td><?= $u['floor_area'] ? clean($u['floor_area']) : '—' ?></td>
-            <td class="text-end"><?= money((float)$u['monthly_rate']) ?></td>
+            <td class="text-end num"><?= money((float)$u['monthly_rate']) ?></td>
             <td class="text-center"><?= $u['due_day'] ?><sup><?= in_array($u['due_day'],[1,21,31])?'st':(in_array($u['due_day'],[2,22])?'nd':(in_array($u['due_day'],[3,23])?'rd':'th')) ?></sup></td>
             <td><span class="badge badge-<?= $u['status'] ?>"><?= ucfirst($u['status']) ?></span></td>
             <td class="truncate" style="max-width:180px"><?= clean($u['description'] ?? '—') ?></td>
@@ -385,7 +385,7 @@ include '../includes/header.php';
   <!-- ── TAB: Service Types ───────────────────────────────── -->
   <div class="tab-pane fade" id="tab-services">
     <div class="page-header mb-2">
-      <div style="font-size:13px;color:var(--text-muted)">Define all payment types beyond standard rent (arrears, deposits, fees, etc.)</div>
+      <div class="text-muted" style="font-size:13px">Define all payment types beyond standard rent (arrears, deposits, fees, etc.)</div>
       <button class="btn btn-primary btn-sm" onclick="openServiceModal()"><i class="fa-solid fa-plus me-1"></i>Add Service Type</button>
     </div>
     <div class="card">
@@ -547,7 +547,7 @@ include '../includes/header.php';
         </div>
         <hr>
         <!-- Add new rate change -->
-        <div class="fw-600 mb-3"><i class="fa-solid fa-plus-circle me-1 text-primary"></i>Record New Rate Change</div>
+        <div class="fw-600 mb-3"><i class="fa-solid fa-plus-circle me-1"></i>Record New Rate Change</div>
         <div class="row g-3">
           <div class="col-md-4">
             <label class="form-label">New Monthly Rate (₱) *</label>
@@ -768,7 +768,7 @@ function loadRateHistory(unitId) {
     tbody.innerHTML = res.history.map((h,i) => `
       <tr>
         <td class="fw-600">${_rhEsc(h.effective_date)}</td>
-        <td class="text-end fw-600 text-success">₱${parseFloat(h.monthly_rate).toLocaleString('en',{minimumFractionDigits:2})}</td>
+        <td class="text-end fw-600 num">₱${parseFloat(h.monthly_rate).toLocaleString('en',{minimumFractionDigits:2})}</td>
         <td class="text-muted" style="font-size:12px">${h.notes ? _rhEsc(h.notes) : '—'}</td>
         <td style="font-size:12px">${h.created_by_name ? _rhEsc(h.created_by_name) : '—'}</td>
         <td class="text-center">

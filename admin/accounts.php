@@ -231,8 +231,8 @@ include '../includes/header.php';
         <input type="hidden" id="userId">
 
         <!-- Avatar section — only meaningful when editing an existing user. -->
-        <div id="avatarSection" class="d-flex align-items-center gap-3 mb-3 p-3" style="background:#faf7ef;border-radius:var(--radius);display:none">
-          <div id="adminAvatarPreview" style="width:72px;height:72px;border-radius:50%;background:var(--primary-light);color:var(--primary);display:flex;align-items:center;justify-content:center;font-size:24px;font-weight:700;overflow:hidden;flex-shrink:0">—</div>
+        <div id="avatarSection" class="d-flex align-items-center gap-3 mb-3 p-3" style="background:var(--gray-50);border-radius:var(--radius);display:none">
+          <div id="adminAvatarPreview" style="width:72px;height:72px;border-radius:50%;background:var(--gray-100);color:var(--ink);display:flex;align-items:center;justify-content:center;font-size:24px;font-weight:700;overflow:hidden;flex-shrink:0">—</div>
           <div style="flex:1">
             <div class="fw-600 mb-1" style="font-size:13px">Profile Picture</div>
             <div class="text-muted mb-2" style="font-size:11.5px">JPEG only &middot; max 3 MB</div>
@@ -368,7 +368,7 @@ function editUser(id) {
 function setAvatarMsg(text, isErr) {
   const m = document.getElementById('adminAvatarMsg');
   m.style.display = '';
-  m.style.color = isErr ? 'var(--danger)' : 'var(--success)';
+  m.className = isErr ? 'alert alert-danger mt-2' : 'alert alert-success mt-2';
   m.textContent = text;
 }
 

@@ -60,19 +60,19 @@ include 'includes/header.php';
     <div class="col-md-8">
       <div class="row g-2">
         <div class="col-4">
-          <div class="cash-stat-inner" style="background:rgba(255,255,255,.12);border-radius:8px;padding:12px;text-align:center">
+          <div class="cash-stat-inner" style="background:rgba(127,127,127,.15);border-radius:8px;padding:12px;text-align:center">
             <div style="font-size:10px;text-transform:uppercase;letter-spacing:.08em;opacity:.75;margin-bottom:4px">Total Received</div>
             <div class="cash-stat-val" style="font-size:18px;font-weight:700"><?=money((float)$myBalance['total_received'])?></div>
           </div>
         </div>
         <div class="col-4">
-          <div class="cash-stat-inner" style="background:rgba(255,255,255,.12);border-radius:8px;padding:12px;text-align:center">
+          <div class="cash-stat-inner" style="background:rgba(127,127,127,.15);border-radius:8px;padding:12px;text-align:center">
             <div style="font-size:10px;text-transform:uppercase;letter-spacing:.08em;opacity:.75;margin-bottom:4px">Total Remitted</div>
             <div class="cash-stat-val" style="font-size:18px;font-weight:700"><?=money((float)$myBalance['total_remitted'])?></div>
           </div>
         </div>
         <div class="col-4">
-          <div class="cash-stat-inner" style="background:rgba(255,255,255,.12);border-radius:8px;padding:12px;text-align:center">
+          <div class="cash-stat-inner" style="background:rgba(127,127,127,.15);border-radius:8px;padding:12px;text-align:center">
             <div style="font-size:10px;text-transform:uppercase;letter-spacing:.08em;opacity:.75;margin-bottom:4px">Total Expenses</div>
             <div class="cash-stat-val" style="font-size:18px;font-weight:700"><?=money((float)$myBalance['total_expenses'])?></div>
           </div>
@@ -168,16 +168,16 @@ include 'includes/header.php';
   </div>
 
   <!-- Period summary strip -->
-  <div class="d-flex gap-3 flex-wrap px-3 py-2 border-bottom" style="background:#faf7ef;font-size:12.5px">
+  <div class="d-flex gap-3 flex-wrap px-3 py-2 border-bottom" style="background:var(--gray-50);font-size:12.5px">
     <span>Received: <strong id="pRec">&#8212;</strong></span>
-    <span style="color:var(--text-muted)">|</span>
+    <span class="text-muted">|</span>
     <span>Remitted: <strong id="pRem">&#8212;</strong></span>
-    <span style="color:var(--text-muted)">|</span>
+    <span class="text-muted">|</span>
     <span>Expenses: <strong id="pExp">&#8212;</strong></span>
-    <span style="color:var(--text-muted)">|</span>
-    <span>Vault&rarr;You: <strong id="pVret" style="color:var(--info)">&#8212;</strong></span>
-    <span style="color:var(--text-muted)">|</span>
-    <span>Net Cash on Hand: <strong id="pNet" style="color:var(--primary)">&#8212;</strong></span>
+    <span class="text-muted">|</span>
+    <span>Vault&rarr;You: <strong id="pVret">&#8212;</strong></span>
+    <span class="text-muted">|</span>
+    <span>Net Cash on Hand: <strong id="pNet">&#8212;</strong></span>
   </div>
 
   <div class="table-responsive">
@@ -358,7 +358,6 @@ function loadAllBalances() {
       var m = parseFloat(u.total_remitted) || 0;
       var e = parseFloat(u.total_expenses) || 0;
       var c = parseFloat(u.cash_on_hand)   || 0;
-      var cashColor = c > 0 ? 'var(--warning)' : (c < 0 ? 'var(--danger)' : 'var(--success)');
       var roleBadge = '<span class="badge badge-' + esc(u.role) + '">' + esc(u.role.charAt(0).toUpperCase() + u.role.slice(1)) + '</span>';
       html += '<tr>';
       html += '<td class="fw-600">' + esc(u.full_name) + '</td>';
@@ -366,7 +365,7 @@ function loadAllBalances() {
       html += '<td class="text-end">' + fmt(r) + '</td>';
       html += '<td class="text-end">' + fmt(m) + '</td>';
       html += '<td class="text-end">' + fmt(e) + '</td>';
-      html += '<td class="text-end fw-600" style="color:' + cashColor + ';font-size:13.5px">' + fmt(c) + '</td>';
+      html += '<td class="text-end fw-600 num">' + fmt(c) + '</td>';
       html += '<td class="text-center"><button class="btn-icon" title="View" onclick="filterByUser(' + parseInt(u.id) + ')"><i class="fa-solid fa-eye fa-xs"></i></button></td>';
       html += '</tr>';
     }
@@ -375,12 +374,12 @@ function loadAllBalances() {
     var totM   = parseFloat(t.total_remitted) || 0;
     var totE   = parseFloat(t.total_expenses) || 0;
     var totNet = parseFloat(t.net_on_hand)    || 0;
-    html += '<tr style="background:var(--laskie-amber-bg);font-weight:700;border-top:2px solid var(--laskie-divider)">';
+    html += '<tr style="background:var(--gray-50);font-weight:700;border-top:2px solid var(--gray-200)">';
     html += '<td colspan="2">TOTAL</td>';
     html += '<td class="text-end">' + fmt(totR) + '</td>';
     html += '<td class="text-end">' + fmt(totM) + '</td>';
     html += '<td class="text-end">' + fmt(totE) + '</td>';
-    html += '<td class="text-end" style="color:' + (totNet > 0 ? 'var(--warning)' : 'var(--success)') + '">' + fmt(totNet) + '</td>';
+    html += '<td class="text-end fw-600 num">' + fmt(totNet) + '</td>';
     html += '<td></td></tr>';
     document.getElementById('allBalBody').innerHTML = html || '<tr><td colspan="7" class="text-center text-muted py-3">No active users.</td></tr>';
   });
@@ -416,20 +415,18 @@ function loadTransactions() {
 
     var netEl = document.getElementById('pNet');
     netEl.textContent = fmt(res.cash_on_hand);
-    netEl.style.color = res.cash_on_hand > 0 ? 'var(--warning)' : (res.cash_on_hand < 0 ? 'var(--danger)' : 'var(--success)');
 
     var typeBadge = {received:'badge-received', remitted:'badge-remitted', expense:'badge-expense', vault_return:'badge-vault-return'};
     var typeIcon  = {received:'fa-arrow-down',  remitted:'fa-arrow-up',    expense:'fa-minus-circle', vault_return:'fa-hand-holding-dollar'};
     var typeLabel = {received:'Collection',      remitted:'Remitted',       expense:'Expense',         vault_return:'Vault→You'};
-    var amtColor  = {received:'var(--success)',  remitted:'var(--info)',    expense:'var(--danger)',   vault_return:'var(--info)'};
 
     var html = '';
     for (var i = 0; i < res.transactions.length; i++) {
       var t = res.transactions[i];
       var tt = t.transaction_type;
       var refHtml = '&#8212;';
-      if (t.linked_invoice) refHtml = '<span class="mono" style="font-size:11.5px;color:var(--primary)">' + esc(t.linked_invoice) + '</span>';
-      else if (t.linked_expense) refHtml = '<span style="font-size:11.5px;color:var(--text-muted)">' + esc(t.linked_expense) + '</span>';
+      if (t.linked_invoice) refHtml = '<span class="mono" style="font-size:11.5px">' + esc(t.linked_invoice) + '</span>';
+      else if (t.linked_expense) refHtml = '<span class="text-muted" style="font-size:11.5px">' + esc(t.linked_expense) + '</span>';
 
       var proofHtml = '<span class="text-muted">&#8212;</span>';
       if (t.doc_path) {
@@ -454,7 +451,7 @@ function loadTransactions() {
       html += '<td><span class="badge ' + (typeBadge[tt] || 'badge-staff') + '"><i class="fa-solid ' + (typeIcon[tt] || 'fa-circle') + ' me-1 fa-xs"></i>' + (typeLabel[tt] || tt) + '</span></td>';
       html += '<td style="font-size:12.5px">' + (t.user_name ? esc(t.user_name) : '&#8212;') + '</td>';
       html += '<td>' + refHtml + '</td>';
-      html += '<td class="text-end fw-600" style="color:' + (amtColor[tt] || '#000') + '">' + fmt(t.amount) + '</td>';
+      html += '<td class="text-end fw-600 num">' + fmt(t.amount) + '</td>';
       html += '<td style="font-size:12px;color:var(--text-muted);max-width:180px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + (t.notes ? esc(t.notes) : '&#8212;') + '</td>';
       html += '<td class="text-center">' + proofHtml + '</td>';
       html += '<td class="text-center">' + editBtn + delBtn + '</td>';

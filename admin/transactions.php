@@ -156,23 +156,23 @@ include '../includes/header.php';
 // ── Helpers for badge rendering ───────────────────────────────
 function typeBadge(string $type): string {
     return match($type) {
-        'payment'    => '<span class="badge" style="background:var(--primary-light);color:var(--primary)">Payment</span>',
-        'expense'    => '<span class="badge bg-danger">Expense</span>',
-        'remittance' => '<span class="badge" style="background:var(--laskie-indigo-bg);color:var(--laskie-indigo)">Remittance</span>',
-        'vault_return' => '<span class="badge badge-vault-return">Vault&rarr;User</span>',
-        default      => '<span class="badge bg-secondary">' . htmlspecialchars($type) . '</span>',
+        'payment'    => '<span class="ok-pill">Payment</span>',
+        'expense'    => '<span class="attn-pill">Expense</span>',
+        'remittance' => '<span class="muted-pill">Remittance</span>',
+        'vault_return' => '<span class="ok-pill">Vault&rarr;User</span>',
+        default      => '<span class="muted-pill">' . htmlspecialchars($type) . '</span>',
     };
 }
 
 function statusBadge(string $type, string $status, ?string $deletedAt = null): string {
-    if ($deletedAt) return '<span class="badge bg-danger" style="font-size:10px">Deleted</span>';
-    if ($type !== 'payment') return '<span class="badge bg-success" style="font-size:10px">Active</span>';
+    if ($deletedAt) return '<span class="attn-pill" style="font-size:10px">Deleted</span>';
+    if ($type !== 'payment') return '<span class="ok-pill" style="font-size:10px">Active</span>';
     return match($status) {
-        'paid'               => '<span class="badge bg-success" style="font-size:10px">Paid</span>',
-        'voided'             => '<span class="badge bg-secondary" style="font-size:10px">Voided</span>',
-        'refunded'           => '<span class="badge bg-danger" style="font-size:10px">Refunded</span>',
-        'partially_refunded' => '<span class="badge bg-warning text-dark" style="font-size:10px">Partial Refund</span>',
-        default              => '<span class="badge bg-secondary" style="font-size:10px">' . htmlspecialchars($status) . '</span>',
+        'paid'               => '<span class="ok-pill" style="font-size:10px">Paid</span>',
+        'voided'             => '<span class="muted-pill" style="font-size:10px">Voided</span>',
+        'refunded'           => '<span class="muted-pill" style="font-size:10px">Refunded</span>',
+        'partially_refunded' => '<span class="muted-pill" style="font-size:10px">Partial Refund</span>',
+        default              => '<span class="muted-pill" style="font-size:10px">' . htmlspecialchars($status) . '</span>',
     };
 }
 ?>
@@ -254,12 +254,12 @@ function statusBadge(string $type, string $status, ?string $deletedAt = null): s
 <!-- Summary Strip -->
 <div class="d-flex gap-2 mb-3 flex-wrap">
   <div class="card py-2 px-3" style="min-width:120px">
-    <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px">Records</div>
+    <div class="section-label mb-1">Records</div>
     <div class="fw-700" style="font-size:18px"><?= count($transactions) ?></div>
   </div>
   <div class="card py-2 px-3" style="min-width:150px">
-    <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px">Total Amount</div>
-    <div class="fw-700" style="font-size:18px;color:var(--primary)"><?= money($grandTotal) ?></div>
+    <div class="section-label mb-1">Total Amount</div>
+    <div class="fw-700 num" style="font-size:18px"><?= money($grandTotal) ?></div>
   </div>
 </div>
 
@@ -282,13 +282,8 @@ function statusBadge(string $type, string $status, ?string $deletedAt = null): s
       <?php
         $isDeleted  = !empty($tx['deleted_at']);
         $isVoided   = $tx['tx_type'] === 'payment' && $tx['status'] === 'voided' && !$isDeleted;
-        $rowStyle   = ($isVoided || $isDeleted) ? ' style="opacity:0.55"' : '';
-        $amtColor   = match($tx['tx_type']) {
-            'expense'      => 'var(--danger)',
-            'remittance'   => 'var(--info)',
-            'vault_return' => 'var(--info)',
-            default        => 'var(--success)',
-        };
+        $rowClass   = ($isVoided || $isDeleted) ? ' class="row-voided"' : '';
+        $amtClass   = $tx['tx_type'] === 'expense' ? 'delta-neg' : '';
         $refEsc     = clean($tx['reference'] ?? '');
 
         // Navigate link to source page
@@ -300,7 +295,7 @@ function statusBadge(string $type, string $status, ?string $deletedAt = null): s
             default        => '#',
         };
       ?>
-      <tr<?= $rowStyle ?> data-type="<?= $tx['tx_type'] ?>">
+      <tr<?= $rowClass ?> data-type="<?= $tx['tx_type'] ?>">
         <td style="white-space:nowrap;font-size:12.5px"><?= clean($tx['tx_date']) ?></td>
         <td><?= typeBadge($tx['tx_type']) ?></td>
         <td class="cell-trunc-lg">
@@ -309,11 +304,11 @@ function statusBadge(string $type, string $status, ?string $deletedAt = null): s
           <div class="cell-trunc" style="font-size:11px;color:var(--text-muted)"><?= clean($tx['tx_notes']) ?></div>
           <?php endif; ?>
           <?php if ($isDeleted): ?>
-          <div style="font-size:11px;color:var(--danger)"><i class="fa-solid fa-trash fa-xs me-1"></i>Deleted <?= date('M j, Y', strtotime($tx['deleted_at'])) ?></div>
+          <div style="font-size:11px" class="text-muted"><i class="fa-solid fa-trash fa-xs me-1"></i>Deleted <?= date('M j, Y', strtotime($tx['deleted_at'])) ?></div>
           <?php endif; ?>
         </td>
         <td style="font-size:12.5px"><?= clean($tx['unit_name'] ?? '—') ?></td>
-        <td class="text-end fw-600" style="color:<?= $amtColor ?>"><?= money((float)$tx['amount']) ?></td>
+        <td class="text-end fw-600 num <?= $amtClass ?>"><?= money((float)$tx['amount']) ?></td>
         <td style="font-size:12px;color:var(--text-muted)"><?= clean($tx['recorded_by'] ?? '—') ?></td>
         <td><?= statusBadge($tx['tx_type'], $tx['status'], $tx['deleted_at'] ?? null) ?></td>
         <td class="text-center">
@@ -321,7 +316,7 @@ function statusBadge(string $type, string $status, ?string $deletedAt = null): s
             <!-- Trash mode: Restore + Purge -->
             <button class="btn-icon" title="Restore"
               onclick="restoreDeleted('<?= $tx['tx_type'] ?>', <?= (int)$tx['id'] ?>)"
-              style="margin-left:2px"><i class="fa-solid fa-rotate-right fa-xs" style="color:var(--success)"></i></button>
+              style="margin-left:2px"><i class="fa-solid fa-rotate-right fa-xs"></i></button>
             <button class="btn-icon danger" title="Delete Permanently"
               onclick="purgeTx('<?= $tx['tx_type'] ?>', <?= (int)$tx['id'] ?>)"
               style="margin-left:2px"><i class="fa-solid fa-fire fa-xs"></i></button>
@@ -333,11 +328,11 @@ function statusBadge(string $type, string $status, ?string $deletedAt = null): s
               <?php if ($isVoided): ?>
               <button class="btn-icon" title="Restore Voided Payment"
                 onclick="restoreTx(<?= (int)$tx['id'] ?>)"
-                style="margin-left:2px"><i class="fa-solid fa-rotate-right fa-xs" style="color:var(--success)"></i></button>
+                style="margin-left:2px"><i class="fa-solid fa-rotate-right fa-xs"></i></button>
               <?php else: ?>
               <button class="btn-icon" title="Void Payment"
                 data-id="<?=(int)$tx['id']?>" data-ref="<?=$refEsc?>" onclick="voidTx(+this.dataset.id,this.dataset.ref)"
-                style="margin-left:2px"><i class="fa-solid fa-ban fa-xs" style="color:var(--warning)"></i></button>
+                style="margin-left:2px"><i class="fa-solid fa-ban fa-xs"></i></button>
               <?php endif; ?>
             <?php endif; ?>
             <button class="btn-icon danger" title="Delete (move to trash)"

@@ -110,7 +110,7 @@ if ($err === 'session') $error = 'Your session has expired. Please log in again.
 <style>
   body { font-family: 'DM Sans', sans-serif; }
   .login-page {
-    background: var(--laskie-page-bg);
+    background: var(--page-bg);
     position: relative;
     z-index: 1;
   }
@@ -118,40 +118,40 @@ if ($err === 'session') $error = 'Your session has expired. Please log in again.
 
   .login-wrap { max-width: 380px; }
   .login-card {
-    background: var(--laskie-card-bg);
+    background: var(--paper);
     border-radius: var(--laskie-radius-card);
     padding: 36px 32px;
     box-shadow: var(--laskie-shadow-card);
-    border: 1px solid var(--laskie-divider);
+    border: 1px solid var(--gray-200);
   }
   .login-logo {
     width: 56px; height: 56px;
-    background: var(--laskie-card-dark);
+    background: var(--ink);
     border-radius: 16px;
-    color: #fff; font-size: 22px;
+    color: var(--paper); font-size: 22px;
     display: flex; align-items: center; justify-content: center;
     margin: 0 auto 18px;
     box-shadow: var(--laskie-shadow-hero);
   }
-  .login-title { font-size: 18px; font-weight: 800; color: var(--laskie-ink); text-align: center; line-height: 1.35; }
-  .login-sub   { font-size: 12.5px; color: var(--laskie-ink-mute); text-align: center; margin-top: 6px; margin-bottom: 26px; line-height: 1.4; }
+  .login-title { font-size: 18px; font-weight: 800; color: var(--ink); text-align: center; line-height: 1.35; }
+  .login-sub   { font-size: 12.5px; color: var(--gray-500); text-align: center; margin-top: 6px; margin-bottom: 26px; line-height: 1.4; }
 
   /* Treat .input-group as a single soft rounded field */
   .input-group {
-    border: 1px solid var(--laskie-divider);
+    border: 1px solid var(--gray-200);
     border-radius: var(--laskie-radius-input);
     overflow: hidden;
-    background: #fff;
+    background: var(--paper);
     transition: border-color .14s, box-shadow .14s;
   }
   .input-group:focus-within {
-    border-color: var(--laskie-amber);
-    box-shadow: 0 0 0 3px rgba(239,159,39,.18);
+    border-color: var(--ink);
+    box-shadow: var(--focus-ring);
   }
   .input-group-text {
-    background: #fff;
+    background: var(--paper);
     border: none;
-    color: var(--laskie-ink-mute);
+    color: var(--gray-500);
   }
   .input-group .form-control {
     border: none;
@@ -162,36 +162,36 @@ if ($err === 'session') $error = 'Your session has expired. Please log in again.
     border: none;
     box-shadow: none;
   }
-  #pwdToggle { cursor: pointer; background: #fff; }
+  #pwdToggle { cursor: pointer; background: var(--paper); }
 
   .alert-danger {
-    background: var(--laskie-coral-bg);
-    color: var(--laskie-coral-ink);
-    border: none;
+    background: var(--gray-100);
+    color: var(--ink);
+    border: 1px solid var(--gray-300);
     border-radius: var(--laskie-radius-input);
   }
 
-  /* Dark navy pill submit (Magix "Create Invoice" style) */
+  /* Solid-ink pill submit */
   .btn.btn-primary {
-    background: var(--laskie-card-dark);
-    border-color: var(--laskie-card-dark);
-    color: #fff;
+    background: var(--ink);
+    border-color: var(--ink);
+    color: var(--paper);
     border-radius: var(--laskie-radius-pill);
     font-weight: 600;
   }
   .btn.btn-primary:hover {
-    background: #18143d;
-    border-color: #18143d;
-    color: #fff;
+    background: #000;
+    border-color: #000;
+    color: var(--paper);
   }
 
   .system-info { text-align: center; margin-top: 22px; }
   .system-info a {
-    color: var(--laskie-ink-mute);
+    color: var(--gray-500);
     font-size: 11.5px;
     text-decoration: none;
   }
-  .system-info a:hover { color: var(--laskie-ink); }
+  .system-info a:hover { color: var(--ink); }
 </style>
 </head>
 <body>

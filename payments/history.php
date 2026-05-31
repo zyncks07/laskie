@@ -358,10 +358,10 @@ include '../includes/header.php';
   <?php if (money_is_pos($totalRefunded)): ?>
   <div class="col-6 col-md-3">
     <div class="stat-card">
-      <div class="stat-icon red"><i class="fa-solid fa-rotate-left"></i></div>
+      <div class="stat-icon"><i class="fa-solid fa-rotate-left"></i></div>
       <div class="stat-body">
         <div class="stat-label">Total Refunded</div>
-        <div class="stat-value" style="font-size:17px;color:var(--danger)"><?=money($totalRefunded)?></div>
+        <div class="stat-value num" style="font-size:17px"><?=money($totalRefunded)?></div>
         <div class="stat-sub"><?=count($refundRows)?> refund<?=count($refundRows)!=1?'s':''?></div>
       </div>
     </div>
@@ -369,13 +369,12 @@ include '../includes/header.php';
   <?php endif; ?>
   <div class="col-6 col-md-3">
     <div class="stat-card">
-      <div class="stat-icon <?=money_is_pos($finalBal)?'red':(money_lt($finalBal,'0.00')?'purple':'green')?>">
-        <i class="fa-solid fa-scale-balanced"></i>
-      </div>
+      <div class="stat-icon"><i class="fa-solid fa-scale-balanced"></i></div>
       <div class="stat-body">
         <div class="stat-label">Outstanding Balance</div>
-        <div class="stat-value" style="font-size:17px;color:<?=money_is_pos($finalBal)?'var(--danger)':(money_lt($finalBal,'0.00')?'var(--info)':'var(--success)')?>">
-          <?=money(money_abs($finalBal))?>
+        <div class="stat-value num" style="font-size:17px">
+          <?php if(money_is_pos($finalBal)): ?><span class="delta-neg"><?=money(money_abs($finalBal))?></span>
+          <?php else: ?><?=money(money_abs($finalBal))?><?php endif; ?>
         </div>
         <div class="stat-sub"><?=money_is_pos($finalBal)?'Due':(money_lt($finalBal,'0.00')?'Overpaid (CR)':'Fully settled')?></div>
       </div>
@@ -384,7 +383,7 @@ include '../includes/header.php';
   <?php if (!money_is_pos($totalRefunded)): ?>
   <div class="col-6 col-md-3">
     <div class="stat-card">
-      <div class="stat-icon amber"><i class="fa-solid fa-calendar"></i></div>
+      <div class="stat-icon"><i class="fa-solid fa-calendar"></i></div>
       <div class="stat-body">
         <div class="stat-label">Period</div>
         <div class="stat-value" style="font-size:14px"><?=date('M Y',strtotime($dateFrom))?></div>
@@ -434,26 +433,26 @@ include '../includes/header.php';
           <?php if($row['type']==='charge'): ?>
             <i class="fa-solid fa-file-invoice fa-xs me-1 text-muted"></i><?=clean($row['description'])?>
           <?php elseif($isSvcChg): ?>
-            <i class="fa-solid fa-receipt fa-xs me-1" style="color:<?=$isUnpaid?'var(--warning)':'var(--text-muted)'?>"></i>
-            <span style="color:<?=$isUnpaid?'var(--warning)':'inherit'?>"><?=clean($row['description'])?></span>
+            <i class="fa-solid fa-receipt fa-xs me-1 text-muted"></i>
             <?php if($isUnpaid): ?>
-            &nbsp;<span class="badge bg-warning text-dark" style="font-size:10px">Outstanding</span>
+            <strong><?=clean($row['description'])?></strong>
+            &nbsp;<span class="attn-pill" style="font-size:10px">Outstanding</span>
             <?php endif; ?>
           <?php elseif($isRefund): ?>
-            <i class="fa-solid fa-rotate-left fa-xs me-1" style="color:var(--danger)"></i>
-            <span style="color:var(--danger)"><?=clean($row['description'])?></span>
+            <i class="fa-solid fa-rotate-left fa-xs me-1 text-muted"></i>
+            <span class="row-voided"><?=clean($row['description'])?></span>
           <?php else: ?>
-            <i class="fa-solid fa-circle-check fa-xs me-1" style="color:var(--success)"></i>
-            <span style="color:var(--success)"><?=clean($row['description'])?></span>
+            <i class="fa-solid fa-circle-check fa-xs me-1 text-muted"></i>
+            <?=clean($row['description'])?>
             <?php if(!empty($row['pay_type'])): ?>
             &nbsp;<span class="badge badge-<?=$row['pay_type']?>"><?=$row['pay_type']==='rent'?'Rent':'Service'?></span>
             <?php endif; ?>
             <?php
               $ps = $row['pay_status'] ?? 'paid';
               if ($ps === 'refunded'):
-            ?>&nbsp;<span class="badge bg-danger" style="font-size:10px">Refunded</span>
+            ?>&nbsp;<span class="muted-pill" style="font-size:10px">Refunded</span>
             <?php elseif($ps === 'partially_refunded'): ?>
-            &nbsp;<span class="badge bg-warning text-dark" style="font-size:10px">Partial Refund</span>
+            &nbsp;<span class="muted-pill" style="font-size:10px">Partial Refund</span>
             <?php endif; ?>
           <?php endif; ?>
         </td>
@@ -466,23 +465,23 @@ include '../includes/header.php';
           <?php else: ?><span class="text-muted">—</span><?php endif; ?>
         </td>
         <td style="font-size:12px;color:var(--text-muted)"><?=clean($row['cashier']??'—')?></td>
-        <td class="text-end">
+        <td class="text-end num">
           <?php if(money_is_pos($row['debit'])): ?>
-            <span style="color:var(--danger);font-weight:500"><?=money($row['debit'])?></span>
+            <strong><?=money($row['debit'])?></strong>
           <?php else: ?><span class="text-muted">—</span><?php endif; ?>
         </td>
-        <td class="text-end">
+        <td class="text-end num">
           <?php if(money_is_pos($row['credit'])): ?>
-            <span style="color:var(--success);font-weight:600"><?=money($row['credit'])?></span>
+            <?=money($row['credit'])?>
           <?php else: ?><span class="text-muted">—</span><?php endif; ?>
         </td>
-        <td class="text-end fw-600">
+        <td class="text-end fw-600 num">
           <?php if(money_is_pos($row['balance'])): ?>
-            <span style="color:var(--danger)"><?=money($row['balance'])?></span>
+            <span class="delta-neg"><?=money($row['balance'])?></span>
           <?php elseif(money_lt($row['balance'],'0.00')): ?>
-            <span style="color:var(--info)">(<?=money(money_abs($row['balance']))?>) CR</span>
+            <span class="text-muted">(<?=money(money_abs($row['balance']))?>) CR</span>
           <?php else: ?>
-            <span style="color:var(--success)">—</span>
+            <span class="text-muted">—</span>
           <?php endif; ?>
         </td>
         <td class="text-center no-print">
@@ -507,12 +506,12 @@ include '../includes/header.php';
       <?php endforeach; ?>
       </tbody>
       <tfoot>
-        <tr style="background:#f0f4ff;font-weight:700;border-top:2px solid var(--border)">
+        <tr style="background:var(--gray-50);font-weight:700;border-top:2px solid var(--gray-200)">
           <td colspan="4" style="font-size:13px">TOTALS</td>
-          <td class="text-end" style="color:var(--danger)"><?=money($totalDebit)?></td>
-          <td class="text-end" style="color:var(--success)"><?=money($totalCredit)?></td>
-          <td class="text-end" style="color:<?=money_is_pos($finalBal)?'var(--danger)':(money_lt($finalBal,'0.00')?'var(--info)':'var(--success)')?>">
-            <?php if(money_is_pos($finalBal)): ?><?=money($finalBal)?> <small>DR</small>
+          <td class="text-end num fw-600"><?=money($totalDebit)?></td>
+          <td class="text-end num fw-600"><?=money($totalCredit)?></td>
+          <td class="text-end num fw-600">
+            <?php if(money_is_pos($finalBal)): ?><span class="delta-neg"><?=money($finalBal)?></span> <small>DR</small>
             <?php elseif(money_lt($finalBal,'0.00')): ?>(<?=money(money_abs($finalBal))?>) <small>CR</small>
             <?php else: ?>BALANCED<?php endif; ?>
           </td>
@@ -661,12 +660,12 @@ function processRefund() {
 }
 </script>
 <style>
-  .tr-payment td { background: rgba(21,128,61,.04); }
-  .tr-payment:hover td { background: rgba(21,128,61,.09) !important; }
-  .tr-refund td { background: rgba(220,38,38,.04); }
-  .tr-refund:hover td { background: rgba(220,38,38,.09) !important; }
-  .tr-svc-charge td { background: rgba(217,119,6,.04); }
-  .tr-svc-charge:hover td { background: rgba(217,119,6,.09) !important; }
+  .tr-payment td { background: var(--gray-50); }
+  .tr-payment:hover td { background: var(--gray-100) !important; }
+  .tr-refund td { background: var(--gray-50); }
+  .tr-refund:hover td { background: var(--gray-100) !important; }
+  .tr-svc-charge td { background: var(--gray-50); }
+  .tr-svc-charge:hover td { background: var(--gray-100) !important; }
   @media print {
     .card-footer, form, .page-header .btn, .no-print { display:none !important; }
   }
