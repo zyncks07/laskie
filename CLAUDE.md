@@ -203,12 +203,13 @@ Helpers Claude should reuse rather than re-implement:
 - **Radius:** 8 px (`--radius`) for inputs/buttons, 12 px (`--radius-lg`) for cards
 - **Shadow:** very subtle — `var(--shadow-sm)` is the default; cards never use Bootstrap default shadow
 
-### ⚠️ Redesign token layer — `assets/css/laskie-tokens.css` (in progress on `ui/magix-redesign`)
-A second `:root` token layer for the **"Magix" visual refresh** lives in `laskie-tokens.css`, which `header.php` (and `index.php`) load **after** `app.css` so its tokens win where used. It is a *parallel* palette, not a replacement — `app.css` tokens (navy `--primary`, etc.) still drive every page that hasn't been migrated.
+### Redesign token layer — `assets/css/laskie-tokens.css` ✅ COMPLETE
+The **monochrome "Magix" redesign** is fully rolled out as of June 2026. `laskie-tokens.css` is loaded by `header.php` and `index.php` **after** `app.css` and drives the entire UI — all ~20 pages are migrated.
 
-- **Namespace:** all redesign tokens are prefixed `--laskie-*` (warm amber/teal/coral/indigo palette + `--laskie-card-bg`/`--laskie-card-dark`, `--laskie-ink*` text scale, `--laskie-radius-*`, `--laskie-shadow-*`).
-- **Adoption so far:** `dashboard.php` (full "dark-card" treatment + restyled Chart.js), `index.php` (login), and small token swaps in `footer.php`, `app.js`, `admin/settings.php` Danger Zone. **Everything else still uses the original `app.css` look.**
-- **Rule for the next agent:** when touching a redesign-migrated page use `--laskie-*` tokens; on un-migrated pages keep using the `app.css` tokens. Never hard-code a hex — if a needed shade is missing, add it to whichever `:root` layer that page consumes. Every `--laskie-*` reference must be defined in `laskie-tokens.css` (an undefined `var()` silently breaks the rule).
+- **Palette:** black/white/refined-grayscale. `--ink` (`#0a0a0a`) ↔ `--paper` (`#ffffff`) with a 9-stop gray ramp. Dark mode via `[data-theme="dark"]` on `<html>` (FOUC guard in `<head>`, toggle in topbar + login page).
+- **Namespace:** `--laskie-*` for radius/shadow/card tokens; `--ink`, `--paper`, `--gray-*` for color. The old warm `--laskie-amber/teal/coral/indigo` names are kept as gray aliases so no markup breaks — do **not** add new refs to those names.
+- **Rule for all agents:** always use `--laskie-*` / `--ink` / `--paper` / `--gray-*` tokens. Never hard-code a hex. Never reference the old warm palette names for new work. Every token used must be defined in `laskie-tokens.css` (an undefined `var()` silently falls back to nothing).
+- **Dark mode:** `[data-theme="dark"]` block in `laskie-tokens.css` flips the gray ramp. Bootstrap utility variables (`--bs-secondary-color`, `--bs-secondary-rgb`, `--bs-pagination-*`, `--bs-tertiary-bg`, `--bs-secondary-bg`) are overridden in that block so Bootstrap components (`.text-muted`, pagination, file inputs, modals) adapt automatically.
 
 ### Component library (already in `app.css`)
 - `.card`, `.card-header`, `.card-body`, `.card-footer`
@@ -366,10 +367,15 @@ Most of the items above were addressed in dedicated bug-fix commits. If you're i
 **Bug-hunt session 5 (June 2026, branch `ui/magix-redesign`):**
 - `f16e7e9` — 3 fixes from vault-request feature re-audit: (1) vault request amount upper-bound added (`money_gt` cap at ₱9,999,999.99 — "1e10" previously overflowed `DECIMAL(12,2)` with no JSON error); (2) GET-based CSRF on `mark_all_read` closed (POST method guard — impact was cosmetic-only: badge clearing); (3) `unit_charges.created_by` NULL on restore when original cashier deleted — both restore paths now use the already-computed `$cashUserId` fallback (mirrors the cash_transactions fix from `6742e1c`). Unit 59/59 green. 16 false positives ruled out — see memory `bug-audit-coverage`.
 
+**Monochrome redesign — full migration + visual polish (June 2026, branch `ui/magix-redesign`):**
+- `224ac2d` / `e992a1a` — all ~20 pages migrated to monochrome (O1–O5, S1–S10, H1–H7 tiers complete).
+- `050ed7e` — dark mode visual bug fixes: stat card hero text (`color:var(--paper)`), sidebar spacing compressed, `--gray-400/500` contrast bumped in dark mode, `--bs-secondary-color` overridden so `.text-muted` adapts, badge dark-mode overrides, dashboard stacked charts (vault-style), table `tfoot`/hover dark fixes, file input `::file-selector-button`, pagination blue→mono, modal padding/focus-ring, login dark mode toggle (`z-index` fixed).
+- `79bee18` — mobile fixes: chart height doubled to 440px across all pages (`app.css` + `dashboard.php` + vault `chart-wrap`), vault charts switched to `maintainAspectRatio:false`, notification panel `position:fixed` on mobile to prevent left-edge overflow.
+
 ### Current state (branch `ui/magix-redesign`, June 2026)
 - **Audit:** all PHP entry points + helpers read line-by-line across 6 sessions; session 5 (2026-06-01) re-audited the vault-request feature (commits `4c49561` → `f79811b`) and found 3 low/medium bugs (all fixed, see above). **No known open code bugs.** See memory `bug-audit-coverage` + `deferred-bug-findings`; don't re-flag `save_charge` (open to all roles, §13).
 - **DB schema:** live DB is current through **migration 009** (`vault_requests` + `notifications`; migration 008's `refunded_by` nullability is in place). Fresh installs get the same via `install.sql`.
-- **Magix redesign:** partially rolled out — `dashboard.php` + `index.php` (login) migrated to `--laskie-*` tokens; other pages still use the original `app.css` look (see §7). Cosmetic; ongoing.
+- **Monochrome redesign: ✅ COMPLETE** — all pages migrated; dark mode fully functional; mobile layout polished. See §7 for token rules.
 - **Git:** branch is **pushed** to `origin/ui/magix-redesign`; **no PR opened** (working directly on the branch per §10; the working tree *is* the live deploy). `master` is behind.
 
 ---
