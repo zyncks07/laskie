@@ -52,7 +52,7 @@ if ($isDeleted) {
 // Restrict casual access to invalid receipts to admin only; staff/accountant
 // must not be able to print a void/deleted/refunded invoice.
 if ($bannerKind === 'danger' && !isAdmin()) {
-    die('<p style="font-family:sans-serif;padding:2rem;color:#b91c1c;">This payment is no longer valid and the receipt cannot be displayed.</p>');
+    die('<p style="font-family:sans-serif;padding:2rem;color:#0a0a0a;">This payment is no longer valid and the receipt cannot be displayed.</p>');
 }
 
 // Company settings
@@ -78,14 +78,14 @@ logActivity($pdo, 'PRINT_INVOICE', 'Payments', "Printed invoice {$pay['invoice_n
 <link href="../assets/vendor/google-fonts.css" rel="stylesheet">
 <style>
   :root {
-    --primary: #1a3a8f;
-    --primary-light: #e8eef8;
-    --text: #111827;
-    --muted: #6b7280;
-    --border: #e5e7eb;
-    --bg: #f3f4f8;
-    --success: #15803d;
-    --success-bg: #dcfce7;
+    --primary: #0a0a0a;
+    --primary-light: #f4f4f4;
+    --text: #0a0a0a;
+    --muted: #737373;
+    --border: #e4e4e4;
+    --bg: #fafafa;
+    --success: #0a0a0a;
+    --success-bg: #f4f4f4;
   }
   * { box-sizing: border-box; margin: 0; }
   body {
@@ -101,14 +101,14 @@ logActivity($pdo, 'PRINT_INVOICE', 'Payments', "Printed invoice {$pay['invoice_n
     display: flex; gap: 10px; justify-content: flex-end;
   }
   .btn { padding: 7px 16px; border-radius: 7px; font-size: 13px; font-weight: 600; cursor: pointer; border: 1px solid; font-family: inherit; }
-  .btn-primary   { background: var(--primary); color: #fff; border-color: var(--primary); }
-  .btn-secondary { background: #fff; color: var(--text); border-color: var(--border); }
+  .btn-primary   { background: var(--primary); color: #ffffff; border-color: var(--primary); }
+  .btn-secondary { background: #ffffff; color: var(--text); border-color: var(--border); }
   .btn-secondary:hover { background: var(--bg); }
 
   /* ── Invoice ───────────────────────────────────────────── */
   .invoice {
     max-width: 620px; margin: 0 auto;
-    background: #fff;
+    background: #ffffff;
     border-radius: 12px;
     border: 1px solid var(--border);
     overflow: hidden;
@@ -118,7 +118,7 @@ logActivity($pdo, 'PRINT_INVOICE', 'Payments', "Printed invoice {$pay['invoice_n
   /* Header band */
   .inv-header {
     background: var(--primary);
-    color: #fff;
+    color: #ffffff;
     padding: 28px 32px;
     display: flex;
     justify-content: space-between;
@@ -140,12 +140,12 @@ logActivity($pdo, 'PRINT_INVOICE', 'Payments', "Printed invoice {$pay['invoice_n
   .inv-status-row.kind-success { background: var(--success-bg); }
   .inv-status-row.kind-success .inv-status-dot  { background: var(--success); }
   .inv-status-row.kind-success .inv-status-text { color: var(--success); }
-  .inv-status-row.kind-warning { background: #fef3c7; }
-  .inv-status-row.kind-warning .inv-status-dot  { background: #b45309; }
-  .inv-status-row.kind-warning .inv-status-text { color: #92400e; }
-  .inv-status-row.kind-danger  { background: #fee2e2; }
-  .inv-status-row.kind-danger  .inv-status-dot  { background: #b91c1c; }
-  .inv-status-row.kind-danger  .inv-status-text { color: #b91c1c; }
+  .inv-status-row.kind-warning { background: #e4e4e4; }
+  .inv-status-row.kind-warning .inv-status-dot  { background: #737373; }
+  .inv-status-row.kind-warning .inv-status-text { color: #3f3f3f; }
+  .inv-status-row.kind-danger  { background: #e4e4e4; }
+  .inv-status-row.kind-danger  .inv-status-dot  { background: #0a0a0a; }
+  .inv-status-row.kind-danger  .inv-status-text { color: #0a0a0a; }
   .inv-status-dot { width: 10px; height: 10px; border-radius: 50%; }
   .inv-status-text { font-size: 12.5px; font-weight: 700; }
   /* Big translucent watermark for non-valid receipts so a printed copy can't be mistaken. */
@@ -172,7 +172,7 @@ logActivity($pdo, 'PRINT_INVOICE', 'Payments', "Printed invoice {$pay['invoice_n
   /* Line items */
   .inv-table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
   .inv-table thead th {
-    background: #f9fafb;
+    background: #fafafa;
     padding: 9px 12px;
     font-size: 10.5px; font-weight: 700;
     text-transform: uppercase; letter-spacing: .06em;
@@ -181,7 +181,7 @@ logActivity($pdo, 'PRINT_INVOICE', 'Payments', "Printed invoice {$pay['invoice_n
     text-align: left;
   }
   .inv-table thead th:last-child { text-align: right; }
-  .inv-table tbody td { padding: 12px; border-bottom: 1px solid #f3f4f6; font-size: 13px; vertical-align: top; }
+  .inv-table tbody td { padding: 12px; border-bottom: 1px solid #e4e4e4; font-size: 13px; vertical-align: top; }
   .inv-table tbody td:last-child { text-align: right; font-weight: 600; }
   .inv-table tfoot td { padding: 10px 12px; }
 
@@ -189,7 +189,7 @@ logActivity($pdo, 'PRINT_INVOICE', 'Payments', "Printed invoice {$pay['invoice_n
   .inv-total-wrap { display: flex; justify-content: flex-end; margin-bottom: 24px; }
   .inv-total-box {
     background: var(--primary);
-    color: #fff;
+    color: #ffffff;
     border-radius: 10px;
     padding: 16px 24px;
     text-align: right;
@@ -199,14 +199,14 @@ logActivity($pdo, 'PRINT_INVOICE', 'Payments', "Printed invoice {$pay['invoice_n
   .inv-total-amount { font-size: 28px; font-weight: 800; letter-spacing: -.5px; font-family: 'DM Mono', monospace; }
 
   /* Details row */
-  .inv-details { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; background: #f9fafb; border-radius: 8px; padding: 16px; margin-bottom: 24px; }
+  .inv-details { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; background: #fafafa; border-radius: 8px; padding: 16px; margin-bottom: 24px; }
   .inv-detail-label { font-size: 10.5px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: .06em; margin-bottom: 3px; }
   .inv-detail-value { font-size: 13px; font-weight: 600; color: var(--text); }
 
   /* Notes */
-  .inv-notes { background: #fffbeb; border: 1px solid #fde68a; border-radius: 8px; padding: 12px 16px; margin-bottom: 20px; }
-  .inv-notes-label { font-size: 10.5px; font-weight: 700; text-transform: uppercase; color: #b45309; margin-bottom: 4px; }
-  .inv-notes-text  { font-size: 12.5px; color: #78350f; }
+  .inv-notes { background: #f4f4f4; border: 1px solid #e4e4e4; border-radius: 8px; padding: 12px 16px; margin-bottom: 20px; }
+  .inv-notes-label { font-size: 10.5px; font-weight: 700; text-transform: uppercase; color: #3f3f3f; margin-bottom: 4px; }
+  .inv-notes-text  { font-size: 12.5px; color: #555555; }
 
   /* Cashier */
   .inv-cashier {
@@ -220,7 +220,7 @@ logActivity($pdo, 'PRINT_INVOICE', 'Payments', "Printed invoice {$pay['invoice_n
 
   /* Footer */
   .inv-footer {
-    background: #f9fafb; border-top: 1px solid var(--border);
+    background: #fafafa; border-top: 1px solid var(--border);
     padding: 14px 32px;
     text-align: center;
     font-size: 11px; color: var(--muted);
@@ -322,13 +322,13 @@ logActivity($pdo, 'PRINT_INVOICE', 'Payments', "Printed invoice {$pay['invoice_n
           <td>1</td>
           <td>
             <strong><?= clean($description) ?></strong>
-            <?php if($pay['notes']): ?><br><small style="color:#6b7280"><?= clean($pay['notes']) ?></small><?php endif; ?>
+            <?php if($pay['notes']): ?><br><small style="color:var(--muted)"><?= clean($pay['notes']) ?></small><?php endif; ?>
           </td>
           <td>
             <?php if($pay['payment_type']==='rent'): ?>
-            <span style="font-size:11px;background:#dbeafe;color:#1e40af;padding:2px 8px;border-radius:4px;font-weight:600;">RENT</span>
+            <span style="font-size:11px;background:#e4e4e4;color:#3f3f3f;padding:2px 8px;border-radius:4px;font-weight:600;">RENT</span>
             <?php else: ?>
-            <span style="font-size:11px;background:#fef3c7;color:#92400e;padding:2px 8px;border-radius:4px;font-weight:600;">SERVICE</span>
+            <span style="font-size:11px;background:#e4e4e4;color:#3f3f3f;padding:2px 8px;border-radius:4px;font-weight:600;">SERVICE</span>
             <?php endif; ?>
           </td>
           <td><?= money((float)$pay['amount']) ?></td>

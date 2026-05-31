@@ -192,9 +192,27 @@ if ($err === 'session') $error = 'Your session has expired. Please log in again.
     text-decoration: none;
   }
   .system-info a:hover { color: var(--ink); }
+
+  .login-theme-btn {
+    position: fixed; top: 14px; right: 16px;
+    width: 36px; height: 36px; border-radius: 50%;
+    border: 1px solid var(--gray-300);
+    background: var(--paper); color: var(--gray-600);
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    transition: background .14s, color .14s, border-color .14s;
+    font-size: 13px; line-height: 1;
+  }
+  .login-theme-btn:hover { background: var(--gray-100); color: var(--ink); border-color: var(--gray-400); }
 </style>
 </head>
 <body>
+<button class="login-theme-btn" id="loginThemeToggle"
+        onclick="toggleLoginTheme()"
+        aria-label="Toggle dark mode">
+  <i id="loginThemeIcon" class="fa-solid fa-moon"></i>
+</button>
+
 <div class="login-page d-flex align-items-center justify-content-center min-vh-100 p-3">
   <div class="login-wrap">
     <div class="login-card">
@@ -256,6 +274,19 @@ function togglePwd() {
     i.className = 'fa-solid fa-eye fa-sm';
   }
 }
+
+function toggleLoginTheme() {
+  const next = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+  document.documentElement.setAttribute('data-theme', next);
+  try { localStorage.setItem('laskie-theme', next); } catch (_) {}
+  document.getElementById('loginThemeIcon').className = 'fa-solid ' + (next === 'dark' ? 'fa-sun' : 'fa-moon');
+}
+
+// Sync icon to whatever theme the FOUC guard already applied
+(function() {
+  const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+  document.getElementById('loginThemeIcon').className = 'fa-solid ' + (isDark ? 'fa-sun' : 'fa-moon');
+})();
 </script>
 </body>
 </html>

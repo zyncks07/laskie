@@ -176,10 +176,10 @@ include 'includes/header.php';
     border-left: 1px solid rgba(128,128,128,.32);
 }
 .db-hero-cell:first-child { border-left: none; }
-.db-hero .stat-label { font-size: 11px; font-weight: 500; opacity: .62; margin-bottom: 8px; letter-spacing: .02em; }
-.db-hero .stat-value { font-size: 22px; font-weight: 700; line-height: 1.15; overflow-wrap: anywhere; }
+.db-hero .stat-label { font-size: 11px; font-weight: 500; color: var(--paper); opacity: .62; margin-bottom: 8px; letter-spacing: .02em; }
+.db-hero .stat-value { font-size: 22px; font-weight: 700; color: var(--paper); line-height: 1.15; overflow-wrap: anywhere; }
 .db-hero .stat-value .caret { font-size: .72em; vertical-align: 1px; margin-right: 3px; opacity: .85; }
-.db-hero .stat-sub   { font-size: 10.5px; opacity: .45; margin-top: 6px; }
+.db-hero .stat-sub   { font-size: 10.5px; color: var(--paper); opacity: .45; margin-top: 6px; }
 @media (max-width: 575.98px) {
   .db-hero-cell { flex: 1 1 50%; min-width: 0; padding: 14px 16px; }
   .db-hero-cell:nth-child(odd) { border-left: none; }
@@ -194,6 +194,10 @@ include 'includes/header.php';
 .db-tbl tfoot tr       { background: var(--gray-50) !important; font-weight: 700; }
 .db-tbl tfoot td       { border-top: 1px solid var(--gray-200); }
 .db-row-now            { background: var(--gray-100) !important; }
+/* Dark mode: gray-50 (#0f0f0f) is darker than card surface (#161616) — invert to gray-200 */
+[data-theme="dark"] .db-tbl tfoot tr { background: var(--gray-200) !important; }
+[data-theme="dark"] .db-tbl tfoot td { border-top-color: var(--gray-300); }
+[data-theme="dark"] .db-row-now      { background: var(--gray-200) !important; }
 /* Unit-status: give the status cell room so amount + "Late fee" can stack
    without overflowing (§3.5) */
 #unitStatusTable td:last-child { min-width: 124px; }
@@ -573,14 +577,14 @@ function _monoTooltip(T, extra) {
   return Object.assign({
     backgroundColor: T.paper, titleColor: T.tick, bodyColor: T.ink,
     borderColor: T.grid, borderWidth: 1,
-    titleFont: { size: 10, family: 'DM Sans', weight: '500' },
+    titleFont: { size: 10, family: 'DM Sans' },
     bodyFont:  { size: 12, family: 'DM Sans', weight: '700' },
     padding: { x: 12, y: 8 }, cornerRadius: 8, caretSize: 6, caretPadding: 8,
-    displayColors: false
+    displayColors: true
   }, extra || {});
 }
 function _monoLegend(T) {
-  return { font: { size: 11, family: 'DM Sans' }, color: T.tick, boxWidth: 8, boxHeight: 8, padding: 10, usePointStyle: true, pointStyleWidth: 10 };
+  return { font: { size: 11, family: 'DM Sans' }, color: T.tick, padding: 16, usePointStyle: true, pointStyle: 'rect' };
 }
 function _monoScales(T, tickColor, tickWeight) {
   return {
@@ -638,35 +642,41 @@ function _renderUnitChart(data) {
   }
   if (ucTitle) ucTitle.textContent = data.title || '';
 
+  // Net income per unit = revenue − expenses (top, black); expenses = grey base
+  var netData = (data.revenue || []).map(function(r, i) { return r - (data.expenses[i] || 0); });
+
   _unitChartInst = new Chart(ctx, {
     type: 'bar',
     data: {
       labels: data.labels,
       datasets: [
-        // Revenue = the headline figure → solid ink; Expenses recede in gray.
-        { label: 'Revenue',  data: data.revenue,  backgroundColor: T.ink,        borderRadius: 6, borderSkipped: false, borderWidth: 0, barPercentage: 0.7, categoryPercentage: 0.7 },
-        { label: 'Expenses', data: data.expenses, backgroundColor: T.series[1],  borderRadius: 6, borderSkipped: false, borderWidth: 0, barPercentage: 0.7, categoryPercentage: 0.7 }
+        { label: 'Expenses',   data: data.expenses, backgroundColor: T.series[1], borderColor: T.paper, borderWidth: 1, borderRadius: 3, stack: 'unit' },
+        { label: 'Net Income', data: netData,        backgroundColor: T.ink,       borderColor: T.paper, borderWidth: 1, borderRadius: 3, stack: 'unit' }
       ]
     },
     options: {
       responsive: true, maintainAspectRatio: false,
       animation: { duration: 420, easing: 'easeOutQuart' },
-      layout: { padding: { top: 24 } },
+      layout: { padding: { top: 8 } },
       plugins: {
         legend: { position: 'top', align: 'start', labels: _monoLegend(T) },
         tooltip: _monoTooltip(T, {
           mode: 'index', intersect: false,
           callbacks: {
-            label: function(c) { return c.dataset.label + ': ' + _phpFmt(c.parsed.y); },
+            label: function(c) { return ' ' + c.dataset.label + ': ' + _phpFmt(c.parsed.y); },
             afterBody: function(items) {
-              if (items.length < 2) return [];
-              var n = (items[0].parsed.y || 0) - (items[1].parsed.y || 0);
-              return ['Net: ' + (n < 0 ? '-' : '') + _phpFmt(Math.abs(n))];
+              var rev = items.reduce(function(s, c) { return s + (c.parsed.y || 0); }, 0);
+              return [' Revenue: ' + _phpFmt(rev)];
             }
           }
         })
       },
-      scales: _monoScales(T)
+      scales: {
+        x: { stacked: true, grid: { display: false }, border: { display: false },
+             ticks: { color: T.tick, font: { size: 11, family: 'DM Sans' }, padding: 6 } },
+        y: { stacked: true, beginAtZero: true, grid: { color: T.grid }, border: { display: false },
+             ticks: { callback: _phpFmt, color: T.tick, font: { size: 10, family: 'DM Sans' } } }
+      }
     }
   });
 }
@@ -710,33 +720,39 @@ function buildMonthlyChart() {
   if (_monthlyChartInst) { _monthlyChartInst.destroy(); _monthlyChartInst = null; }
   var T = window.chartTheme();
   var d = CHART_DATA;
-  // bars recede in gray; the current month pops in solid ink (§3.4 emphasis)
-  function _barColor(ctx) { return ctx.dataIndex === MONTHLY_HIGHLIGHT_IDX ? T.ink : T.series[3]; }
-  function _tickColor(ctx) { return ctx.index === MONTHLY_HIGHLIGHT_IDX ? T.ink : T.tick; }
-  function _tickWeight(ctx) { return ctx.index === MONTHLY_HIGHLIGHT_IDX ? '700' : '500'; }
+  // Expenses (grey base) + Net Income (black top) stacked = Revenue height
+  var monthExp = d.monthRev.map(function(r, i) { return r - d.monthNet[i]; });
   _monthlyChartInst = new Chart(el, {
     type: 'bar',
     data: {
       labels: d.monthLabels,
       datasets: [
-        { type: 'bar',  label: 'Revenue', data: d.monthRev,
-          backgroundColor: _barColor,
-          borderRadius: 6, borderSkipped: false, borderWidth: 0,
-          barPercentage: 0.55, categoryPercentage: 0.7, yAxisID: 'y' },
-        { type: 'line', label: 'Net Income', data: d.monthNet,
-          borderColor: T.ink, backgroundColor: 'transparent',
-          borderWidth: 2, pointRadius: 2.5, pointBackgroundColor: T.ink, pointBorderWidth: 0,
-          pointStyle: 'circle', tension: .25, fill: false, yAxisID: 'y' }
+        { label: 'Expenses',   data: monthExp,    backgroundColor: T.series[1], borderColor: T.paper, borderWidth: 1, borderRadius: 3, stack: 'monthly' },
+        { label: 'Net Income', data: d.monthNet,  backgroundColor: T.ink,       borderColor: T.paper, borderWidth: 1, borderRadius: 3, stack: 'monthly' }
       ]
     },
     options: {
       responsive: true, maintainAspectRatio: false,
-      layout: { padding: { top: 30 } },
+      layout: { padding: { top: 8 } },
       plugins: {
         legend: { position: 'top', align: 'start', labels: _monoLegend(T) },
-        tooltip: _monoTooltip(T, { callbacks: { label: function(c) { return c.dataset.label + ': ' + _phpFmt(c.parsed.y); } } })
+        tooltip: _monoTooltip(T, {
+          mode: 'index', intersect: false,
+          callbacks: {
+            label: function(c) { return ' ' + c.dataset.label + ': ' + _phpFmt(c.parsed.y); },
+            afterBody: function(items) {
+              var rev = items.reduce(function(s, c) { return s + (c.parsed.y || 0); }, 0);
+              return [' Revenue: ' + _phpFmt(rev)];
+            }
+          }
+        })
       },
-      scales: _monoScales(T, _tickColor, _tickWeight)
+      scales: {
+        x: { stacked: true, grid: { display: false }, border: { display: false },
+             ticks: { color: T.tick, font: { size: 11, family: 'DM Sans' }, padding: 6 } },
+        y: { stacked: true, beginAtZero: true, grid: { color: T.grid }, border: { display: false },
+             ticks: { callback: _phpFmt, color: T.tick, font: { size: 10, family: 'DM Sans' } } }
+      }
     }
   });
 }

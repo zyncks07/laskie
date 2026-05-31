@@ -195,7 +195,7 @@ $deletes    = count(array_filter($logRows, fn($r)=>str_starts_with($r['action'],
   <span class="badge bg-success">Logins OK: <?=$loginOk?></span>
   <span class="badge bg-danger">Login Failed: <?=$loginFail?></span>
   <span class="badge bg-primary">Creates: <?=$creates?></span>
-  <span class="badge" style="background:var(--laskie-indigo);color:#fff">Updates: <?=$updates?></span>
+  <span class="badge bg-primary">Updates: <?=$updates?></span>
   <span class="badge bg-warning text-dark">Deletes: <?=$deletes?></span>
 </div>
 
@@ -251,16 +251,16 @@ $deletes    = count(array_filter($logRows, fn($r)=>str_starts_with($r['action'],
           <div class="log-diff-table" style="display:none;margin-top:6px;overflow-x:auto;max-width:100%">
             <table style="font-size:11px;border-collapse:collapse;width:100%;min-width:320px">
               <thead><tr>
-                <th style="padding:3px 7px;background:#faf7ef;border:1px solid var(--border)">Field</th>
-                <th style="padding:3px 7px;background:var(--laskie-coral-bg);border:1px solid var(--border);color:var(--danger)">Before</th>
-                <th style="padding:3px 7px;background:var(--laskie-teal-bg);border:1px solid var(--border);color:var(--success)">After</th>
+                <th style="padding:3px 7px;background:var(--gray-50);border:1px solid var(--border)">Field</th>
+                <th style="padding:3px 7px;background:var(--gray-100);border:1px solid var(--border);color:var(--gray-600)">Before</th>
+                <th style="padding:3px 7px;background:var(--gray-100);border:1px solid var(--border);color:var(--gray-600)">After</th>
               </tr></thead>
               <tbody>
               <?php foreach ($changed as $k): ?>
               <tr>
                 <td style="padding:3px 7px;border:1px solid var(--border);font-weight:600;white-space:nowrap"><?= clean($k) ?></td>
-                <td style="padding:3px 7px;border:1px solid var(--border);color:var(--danger)"><?= clean((string)($before[$k] ?? '—')) ?></td>
-                <td style="padding:3px 7px;border:1px solid var(--border);color:var(--success)"><?= clean((string)($after[$k]  ?? '—')) ?></td>
+                <td style="padding:3px 7px;border:1px solid var(--border);color:var(--gray-700)"><?= clean((string)($before[$k] ?? '—')) ?></td>
+                <td style="padding:3px 7px;border:1px solid var(--border);color:var(--gray-700)"><?= clean((string)($after[$k]  ?? '—')) ?></td>
               </tr>
               <?php endforeach; ?>
               </tbody>
@@ -356,7 +356,7 @@ function toggleDiff(btn) {
 }
 .dataTables_wrapper .dataTables_filter input:focus {
   border-color:var(--primary);
-  box-shadow:0 0 0 3px rgba(239,159,39,.18);
+  box-shadow:var(--focus-ring);
 }
 .dataTables_wrapper .dataTables_length select {
   border:1px solid var(--border);

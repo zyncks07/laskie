@@ -116,8 +116,8 @@
   --gray-100: #1e1e1e;
   --gray-200: #2b2b2b;
   --gray-300: #3f3f3f;
-  --gray-400: #6b6b6b;
-  --gray-500: #8a8a8a;
+  --gray-400: #939393;
+  --gray-500: #a8a8a8;
   --gray-600: #b0b0b0;
   --gray-700: #c4c4c4;
   --gray-800: #d8d8d8;
@@ -127,6 +127,12 @@
   --laskie-shadow-card:       0 1px 2px rgba(0,0,0,.5);
   --laskie-shadow-card-hover: 0 2px 8px rgba(0,0,0,.6);
   --laskie-shadow-hero:       0 2px 10px rgba(0,0,0,.6);
+  /* Bootstrap utility classes (.text-muted, .form-text, .text-secondary)
+     use --bs-secondary-color / --bs-secondary-rgb with !important.
+     Override them here so they track our readable dark-mode gray. */
+  --bs-secondary-color:     #a8a8a8;
+  --bs-secondary-rgb:       168, 168, 168;
+  --bs-tertiary-color:      #939393;
 }
 
 /* ── Body & global type ─────────────────────────────────── */
@@ -333,6 +339,49 @@ body {
   background: transparent; border: 1px solid var(--gray-300); color: var(--gray-700);
 }
 
+/* ── Badge dark-mode overrides ──────────────────────────── */
+/* Neutral: lift surface off dark background */
+[data-theme="dark"] .badge-former,
+[data-theme="dark"] .badge-vacant {
+  background: var(--gray-200); color: var(--gray-500);
+}
+/* Outline: border #3f3f3f (1.7:1) → #a8a8a8 (7.6:1) */
+[data-theme="dark"] .badge-admin, [data-theme="dark"] .badge-accountant, [data-theme="dark"] .badge-staff,
+[data-theme="dark"] .badge-active, [data-theme="dark"] .badge-occupied,
+[data-theme="dark"] .badge-rent, [data-theme="dark"] .badge-service,
+[data-theme="dark"] .badge-received, [data-theme="dark"] .badge-remitted,
+[data-theme="dark"] .badge-vault-return {
+  border-color: var(--gray-500);
+}
+/* Pill + ip-badge: lift gray-100 surfaces */
+[data-theme="dark"] .muted-pill,
+[data-theme="dark"] .ip-badge {
+  background: var(--gray-200);
+}
+
+/* ── Pagination (Bootstrap + DataTables) ────────────────── */
+/* Bootstrap's .pagination defines its own local vars with hardcoded
+   blue (#0d6efd) active state — these override them to the mono palette. */
+.pagination {
+  --bs-pagination-color:                var(--gray-700);
+  --bs-pagination-bg:                   var(--paper);
+  --bs-pagination-border-color:         var(--gray-300);
+  --bs-pagination-hover-color:          var(--ink);
+  --bs-pagination-hover-bg:             var(--gray-100);
+  --bs-pagination-hover-border-color:   var(--gray-400);
+  --bs-pagination-focus-color:          var(--ink);
+  --bs-pagination-focus-bg:             var(--gray-100);
+  --bs-pagination-focus-box-shadow:     var(--focus-ring);
+  --bs-pagination-active-color:         var(--paper);
+  --bs-pagination-active-bg:            var(--ink);
+  --bs-pagination-active-border-color:  var(--ink);
+  --bs-pagination-disabled-color:       var(--gray-400);
+  --bs-pagination-disabled-bg:          var(--paper);
+  --bs-pagination-disabled-border-color:var(--gray-200);
+  --bs-pagination-border-radius:        var(--laskie-radius-input);
+  --bs-pagination-font-size:            0.8125rem;
+}
+
 /* ── Buttons ────────────────────────────────────────────── */
 .btn {
   border-radius: var(--laskie-radius-pill);
@@ -419,6 +468,19 @@ body {
   background: var(--paper);
   color: var(--ink);
 }
+/* File input button — Bootstrap uses --bs-tertiary-bg which is white-ish by
+   default and never flips under our [data-theme="dark"] (only [data-bs-theme="dark"]).
+   Override both pseudo-element spellings for cross-browser coverage. */
+.form-control[type="file"]::file-selector-button,
+.form-control[type="file"]::-webkit-file-upload-button {
+  background: var(--gray-100);
+  color: var(--ink);
+  border-color: var(--gray-300);
+}
+.form-control[type="file"]:hover::file-selector-button,
+.form-control[type="file"]:hover::-webkit-file-upload-button {
+  background: var(--gray-200);
+}
 .form-label { color: var(--gray-700); font-weight: 600; }
 .form-text  { color: var(--gray-500); }
 .form-check-input:checked { background-color: var(--ink); border-color: var(--ink); }
@@ -436,6 +498,7 @@ body {
 }
 .table tbody td       { border-bottom: 1px solid var(--gray-200); color: var(--ink); }
 .table tbody tr:hover td { background: var(--gray-100); }
+[data-theme="dark"] .table tbody tr:hover td { background: var(--gray-200); }
 .table-striped > tbody > tr:nth-of-type(odd) > * { background: var(--gray-50); color: var(--ink); }
 .table-card { border: 1px solid var(--gray-200); border-radius: var(--laskie-radius-card); }
 /* Compact density variant for the big grids (collection/transactions/logs/vault) */
@@ -465,11 +528,33 @@ body {
 }
 
 /* ── Modal ──────────────────────────────────────────────── */
-.modal-content { border-radius: var(--laskie-radius-card); border: 1px solid var(--gray-200); background: var(--paper); color: var(--ink); }
-.modal-header  { border-bottom: 1px solid var(--gray-200); }
-.modal-footer  { border-top: 1px solid var(--gray-200); }
-.modal-title   { color: var(--ink); }
-.btn-close { filter: none; }
+.modal-content {
+  border-radius: var(--laskie-radius-card);
+  border: 1px solid var(--gray-200);
+  background: var(--paper);
+  color: var(--ink);
+  box-shadow: var(--laskie-shadow-hero);
+}
+.modal-header {
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--gray-200);
+  background: var(--gray-50);
+}
+.modal-body   { padding: 18px; }
+.modal-footer {
+  padding: 12px 18px;
+  border-top: 1px solid var(--gray-200);
+  background: var(--gray-50);
+}
+.modal-title  { color: var(--ink); font-weight: 700; font-size: 14px; }
+
+/* Close button: fix blue focus ring; invert SVG in dark mode */
+.btn-close {
+  --bs-btn-close-focus-shadow: var(--focus-ring);
+  --bs-btn-close-opacity: 0.55;
+  --bs-btn-close-hover-opacity: 1;
+  filter: none;
+}
 [data-theme="dark"] .btn-close { filter: invert(1) grayscale(1) brightness(1.6); }
 
 /* ── Alerts → mono ──────────────────────────────────────── */
@@ -502,7 +587,7 @@ hr, .section-divider { border-color: var(--gray-200); }
 #sidebar::-webkit-scrollbar-thumb { background: var(--gray-300); }
 
 .sidebar-brand {
-  padding: 16px 18px 18px;
+  padding: 12px 18px 14px;
   border-bottom: 1px solid var(--gray-200);
   gap: 11px;
 }
@@ -516,18 +601,18 @@ hr, .section-divider { border-color: var(--gray-200); }
 .brand-text { font-size: 14px; font-weight: 800; letter-spacing: .02em; color: var(--ink); }
 .brand-sub  { font-size: 10px; color: var(--gray-500); letter-spacing: .04em; }
 
-.sidebar-section { padding: 14px 0 4px; }
+.sidebar-section { padding: 10px 0 2px; }
 .sidebar-section-label {
   font-size: 10px; font-weight: 700;
   color: var(--gray-400);
   text-transform: uppercase; letter-spacing: .12em;
-  padding: 0 22px 8px;
+  padding: 0 22px 5px;
 }
 
 .sidebar-nav-item {
-  display: flex; align-items: center; gap: 11px;
-  padding: 8px 12px;
-  margin: 2px 10px;
+  display: flex; align-items: center; gap: 10px;
+  padding: 6px 12px;
+  margin: 1px 10px;
   border-radius: var(--laskie-radius-input);
   color: var(--gray-700);
   font-size: 13px; font-weight: 500;
@@ -536,10 +621,10 @@ hr, .section-divider { border-color: var(--gray-200); }
 }
 /* Uniform circular icon chip — no colored tints */
 .sidebar-nav-item i {
-  width: 30px; height: 30px;
+  width: 26px; height: 26px;
   border-radius: 50%;
   display: inline-flex; align-items: center; justify-content: center;
-  font-size: 12px; flex-shrink: 0;
+  font-size: 11px; flex-shrink: 0;
   background: var(--gray-100);
   color: var(--gray-700);
   transition: background .14s, color .14s;
@@ -564,7 +649,7 @@ hr, .section-divider { border-color: var(--gray-200); }
 }
 .sidebar-nav-item.active i { background: var(--ink); color: var(--paper); }
 
-.sidebar-footer { border-top: 1px solid var(--gray-200); padding: 12px 10px 14px; }
+.sidebar-footer { border-top: 1px solid var(--gray-200); padding: 10px 10px 12px; }
 .user-info { padding: 8px 12px; border-radius: var(--laskie-radius-input); }
 .user-info:hover { background: var(--gray-100); }
 .user-avatar-sm { background: var(--ink); color: var(--paper); font-weight: 700; }

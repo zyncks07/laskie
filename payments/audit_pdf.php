@@ -4,7 +4,7 @@ require_once '../config/db.php';
 require_once '../config/functions.php';
 requireAdmin();
 if (empty($_SESSION['settings_unlocked'])) {
-    die('<p style="font-family:sans-serif;padding:2rem;color:#dc2626">Settings must be unlocked to access the audit report. <a href="../admin/settings.php">Go to Settings</a></p>');
+    die('<p style="font-family:sans-serif;padding:2rem;color:#0a0a0a">Settings must be unlocked to access the audit report. <a href="../admin/settings.php">Go to Settings</a></p>');
 }
 
 $year  = (int)($_GET['year']  ?? date('Y'));
@@ -102,28 +102,28 @@ $periodLabel = $month > 0
 <link href="../assets/vendor/google-fonts.css" rel="stylesheet">
 <style>
 :root {
-  --primary: #1a3a8f;
-  --danger:  #b91c1c;
-  --success: #15803d;
-  --border:  #d1d5db;
-  --bg:      #f8fafc;
-  --muted:   #6b7280;
+  --primary: #0a0a0a;
+  --danger:  #0a0a0a;
+  --success: #0a0a0a;
+  --border:  #e4e4e4;
+  --bg:      #fafafa;
+  --muted:   #737373;
 }
 * { box-sizing: border-box; margin: 0; padding: 0; }
-body { font-family: 'DM Sans', sans-serif; font-size: 11px; color: #111; background: #fff; }
+body { font-family: 'DM Sans', sans-serif; font-size: 11px; color: #0a0a0a; background: #ffffff; }
 
 /* Print toolbar (hidden when printing) */
 .toolbar {
   position: fixed; top: 0; left: 0; right: 0; z-index: 999;
-  background: var(--primary); color: #fff; padding: 10px 20px;
+  background: var(--primary); color: #ffffff; padding: 10px 20px;
   display: flex; align-items: center; gap: 12px; font-size: 13px;
 }
 .toolbar h2 { font-size: 15px; font-weight: 700; flex: 1; }
 .btn-print {
-  background: #fff; color: var(--primary); border: none; padding: 6px 16px;
+  background: #ffffff; color: var(--primary); border: none; padding: 6px 16px;
   border-radius: 4px; font-weight: 700; cursor: pointer; font-size: 13px;
 }
-.btn-print:hover { background: #e8eef8; }
+.btn-print:hover { background: #f4f4f4; }
 
 /* Page body */
 .report { padding: 80px 32px 40px; max-width: 1100px; margin: 0 auto; }
@@ -132,7 +132,7 @@ body { font-family: 'DM Sans', sans-serif; font-size: 11px; color: #111; backgro
 .report-header .sub { font-size: 12px; color: var(--muted); margin-top: 4px; }
 .report-meta { display: flex; gap: 32px; margin-top: 8px; font-size: 12px; }
 .report-meta span { color: var(--muted); }
-.report-meta strong { color: #111; }
+.report-meta strong { color: #0a0a0a; }
 
 /* Summary cards */
 .summary-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 24px; }
@@ -148,35 +148,35 @@ body { font-family: 'DM Sans', sans-serif; font-size: 11px; color: #111; backgro
 .section { margin-bottom: 28px; }
 .section-title {
   font-size: 13px; font-weight: 700; color: var(--primary);
-  background: #eef2ff; padding: 7px 12px; border-left: 4px solid var(--primary);
+  background: #f4f4f4; padding: 7px 12px; border-left: 4px solid var(--primary);
   margin-bottom: 0; display: flex; justify-content: space-between; align-items: center;
 }
 .section-title .section-total { font-size: 13px; font-weight: 700; }
 
 /* Tables */
 table { width: 100%; border-collapse: collapse; font-size: 11px; }
-thead tr { background: #f1f5f9; }
-th { padding: 6px 8px; text-align: left; font-weight: 600; border-bottom: 2px solid var(--border); color: #374151; white-space: nowrap; }
+thead tr { background: #fafafa; }
+th { padding: 6px 8px; text-align: left; font-weight: 600; border-bottom: 2px solid var(--border); color: #555555; white-space: nowrap; }
 th.r, td.r { text-align: right; }
-td { padding: 5px 8px; border-bottom: 1px solid #f0f0f0; vertical-align: top; }
-tr:hover { background: #fafafa; }
-tfoot td { background: #f8fafc; font-weight: 700; border-top: 2px solid var(--border); }
+td { padding: 5px 8px; border-bottom: 1px solid #e4e4e4; vertical-align: top; }
+tr:hover { background: #f4f4f4; }
+tfoot td { background: #fafafa; font-weight: 700; border-top: 2px solid var(--border); }
 .badge { display: inline-block; padding: 1px 7px; border-radius: 9px; font-size: 10px; font-weight: 600; }
-.badge-rent    { background: #dbeafe; color: #1e40af; }
-.badge-service { background: #fef3c7; color: #92400e; }
-.badge-recv    { background: #d1fae5; color: #065f46; }
-.badge-remit   { background: #fee2e2; color: #991b1b; }
-.badge-exp     { background: #fce7f3; color: #9d174d; }
-.badge-voided  { background: #fee2e2; color: #991b1b; }
-.badge-deleted { background: #f1f5f9; color: #475569; }
-tr.row-excluded td { color: #94a3b8; text-decoration: line-through; }
+.badge-rent    { background: #e4e4e4; color: #3f3f3f; }
+.badge-service { background: #e4e4e4; color: #3f3f3f; }
+.badge-recv    { background: #e4e4e4; color: #3f3f3f; }
+.badge-remit   { background: #e4e4e4; color: #3f3f3f; }
+.badge-exp     { background: #e4e4e4; color: #3f3f3f; }
+.badge-voided  { background: #e4e4e4; color: #3f3f3f; }
+.badge-deleted { background: #f4f4f4; color: #737373; }
+tr.row-excluded td { color: #9b9b9b; text-decoration: line-through; }
 tr.row-excluded td .badge { text-decoration: none; }
-.excluded-note { padding: 6px 12px; font-size: 10.5px; color: var(--muted); background: #fafafa; border-left: 3px solid #e2e8f0; margin-top: 4px; }
+.excluded-note { padding: 6px 12px; font-size: 10.5px; color: var(--muted); background: #f4f4f4; border-left: 3px solid #e4e4e4; margin-top: 4px; }
 .mono { font-family: 'DM Mono', monospace; font-size: 10px; }
 .text-muted { color: var(--muted); }
 
 /* Category sub-header */
-.cat-row td { background: #f9fafb; font-weight: 600; color: var(--primary); font-size: 11px; padding: 5px 8px; border-top: 1px solid var(--border); }
+.cat-row td { background: #fafafa; font-weight: 600; color: var(--primary); font-size: 11px; padding: 5px 8px; border-top: 1px solid var(--border); }
 
 /* Page break hints */
 .section { page-break-inside: avoid; }
@@ -234,7 +234,7 @@ tr.row-excluded td .badge { text-decoration: none; }
     </div>
   </div>
   <?php if (money_is_pos($voidedExcluded) || money_is_pos($deletedExpExcluded)): ?>
-  <div style="background:#fef9c3;border:1px solid #facc15;border-radius:6px;padding:8px 12px;margin-bottom:18px;font-size:11px;color:#713f12">
+  <div style="background:#f4f4f4;border:1px solid #e4e4e4;border-radius:6px;padding:8px 12px;margin-bottom:18px;font-size:11px;color:#555555">
     <strong>Note:</strong> Totals exclude
     <?php if (money_is_pos($voidedExcluded)): ?>
       <?= count($voidedOrDeletedPayments) ?> voided/deleted payment(s) totalling <strong><?= fmt_money((float)$voidedExcluded, $currSymbol) ?></strong>
@@ -478,9 +478,9 @@ tr.row-excluded td .badge { text-decoration: none; }
       <tbody>
         <tr><td>Rental Payments</td><td class="r"><?= fmt_money((float)$totalRentPaid, $currSymbol) ?></td></tr>
         <tr><td>Service Payments</td><td class="r"><?= fmt_money((float)$totalServicePaid, $currSymbol) ?></td></tr>
-        <tr style="background:#eef2ff"><td><strong>Total Revenue</strong></td><td class="r"><strong><?= fmt_money((float)$totalRevenue, $currSymbol) ?></strong></td></tr>
+        <tr style="background:#f4f4f4"><td><strong>Total Revenue</strong></td><td class="r"><strong><?= fmt_money((float)$totalRevenue, $currSymbol) ?></strong></td></tr>
         <tr><td>Total Expenses</td><td class="r" style="color:var(--danger)"><?= fmt_money((float)$totalExpenses, $currSymbol) ?></td></tr>
-        <tr style="background:<?= money_gte($netIncome, '0.00') ? '#f0fdf4' : '#fef2f2' ?>">
+        <tr style="background:#f4f4f4">
           <td><strong>Net Income</strong></td>
           <td class="r" style="color:<?= money_gte($netIncome, '0.00') ? 'var(--success)' : 'var(--danger)' ?>">
             <strong><?= fmt_money((float)$netIncome, $currSymbol) ?></strong>

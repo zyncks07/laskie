@@ -27,11 +27,11 @@ try {
 }
 
 $typeLabel = ['refund_fund' => 'Refund', 'expense_fund' => 'Expense', 'other' => 'Other'];
-$statusCss = [
-    'pending'   => 'background:var(--laskie-amber-bg,#fef3c7);color:var(--laskie-amber-ink,#92400e)',
-    'approved'  => 'background:var(--laskie-teal-bg,#d1fae5);color:var(--laskie-teal-ink,#065f46)',
-    'rejected'  => 'background:var(--laskie-coral-bg,#fee2e2);color:var(--laskie-coral-ink,#991b1b)',
-    'cancelled' => 'background:#e5e7eb;color:#6b7280',
+$statusPill = [
+    'pending'   => 'attn-pill',
+    'approved'  => 'ok-pill',
+    'rejected'  => 'muted-pill',
+    'cancelled' => 'muted-pill',
 ];
 
 logActivity($pdo, 'VIEW_REQUESTS', 'VaultRequest', 'Viewed cash requests');
@@ -65,9 +65,9 @@ include '../includes/header.php';
             <td data-order="<?= clean($r['created_at']) ?>"><?= fmtDate($r['created_at']) ?></td>
             <td><?= clean($r['requester_name'] ?? '—') ?></td>
             <td><?= clean($typeLabel[$r['request_type']] ?? ucfirst($r['request_type'])) ?></td>
-            <td class="text-end" data-order="<?= (float)$r['amount'] ?>"><?= money($r['amount']) ?></td>
+            <td class="text-end num" data-order="<?= (float)$r['amount'] ?>"><?= money($r['amount']) ?></td>
             <td><span class="cell-trunc-lg"><?= clean($r['purpose']) ?><?= $r['ref_invoice'] ? ' · ' . clean($r['ref_invoice']) : '' ?></span></td>
-            <td><span class="badge" style="<?= $statusCss[$r['status']] ?? '' ?>;font-size:10px"><?= ucfirst(clean($r['status'])) ?></span>
+            <td><span class="<?= $statusPill[$r['status']] ?? 'muted-pill' ?>"><?= ucfirst(clean($r['status'])) ?></span>
                 <?php if ($r['status'] === 'rejected' && $r['decision_note']): ?><div class="text-muted" style="font-size:10.5px"><?= clean($r['decision_note']) ?></div><?php endif; ?></td>
             <td class="text-muted" style="font-size:12px"><?= clean($r['reviewer_name'] ?? '—') ?></td>
             <td class="no-print text-center">
