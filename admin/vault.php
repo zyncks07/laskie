@@ -8,6 +8,7 @@ requireRole(['admin', 'accountant']);
 
 $pageTitle = 'The Vault';
 $depth = '../';
+$needsChartJs = true;   // load Chart.js (footer is gated on this) for the vault charts
 
 // ── POST handlers ─────────────────────────────────────────────
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -475,21 +476,21 @@ include '../includes/header.php';
   <h1 class="page-title"><i class="fa-solid fa-vault me-2 text-primary-custom"></i>The Vault</h1>
   <div class="d-flex gap-2 flex-wrap">
     <button class="btn btn-primary btn-sm" onclick="openRemittanceModal()"><i class="fa-solid fa-arrow-down-to-line me-1"></i>Record Remittance</button>
-    <button class="btn btn-success btn-sm" onclick="openDistributionModal()"><i class="fa-solid fa-money-bill-transfer me-1"></i>Distribute Dividend</button>
-    <button class="btn btn-warning btn-sm" onclick="openReturnModal()"><i class="fa-solid fa-rotate-left me-1"></i>Return to Vault</button>
+    <button class="btn btn-primary btn-sm" onclick="openDistributionModal()"><i class="fa-solid fa-money-bill-transfer me-1"></i>Distribute Dividend</button>
+    <button class="btn btn-primary btn-sm" onclick="openReturnModal()"><i class="fa-solid fa-rotate-left me-1"></i>Return to Vault</button>
     <?php if (isAdmin()): ?>
-    <button class="btn btn-info btn-sm" onclick="openUserReturnModal()"><i class="fa-solid fa-hand-holding-dollar me-1"></i>Return to User</button>
+    <button class="btn btn-primary btn-sm" onclick="openUserReturnModal()"><i class="fa-solid fa-hand-holding-dollar me-1"></i>Return to User</button>
     <?php endif; ?>
     <button class="btn btn-outline-secondary btn-sm" onclick="openRecipientsModal()"><i class="fa-solid fa-users me-1"></i>Recipients</button>
   </div>
 </div>
 
-<!-- Vault Balance Hero -->
-<div class="card mb-3 dark-card" style="border:none;">
-  <div class="card-body py-4 text-center text-white">
-    <div style="font-size:11px;letter-spacing:3px;text-transform:uppercase;opacity:.7;margin-bottom:6px;">Current Vault Balance</div>
-    <div id="vaultBalanceDisplay" style="font-size:46px;font-weight:800;letter-spacing:-1px;line-height:1.1"><?= money($vaultBalance) ?></div>
-    <div style="opacity:.55;font-size:12px;margin-top:6px;"><?= date('F j, Y') ?></div>
+<!-- Vault Balance Hero (inverted panel — flips to a light panel in dark mode) -->
+<div class="card mb-3 dark-card">
+  <div class="card-body py-4 text-center">
+    <div style="font-size:11px;letter-spacing:3px;text-transform:uppercase;opacity:.62;margin-bottom:6px;">Current Vault Balance</div>
+    <div id="vaultBalanceDisplay" class="num" style="font-size:46px;font-weight:800;letter-spacing:-1px;line-height:1.1"><?= money($vaultBalance) ?></div>
+    <div style="opacity:.5;font-size:12px;margin-top:6px;"><?= date('F j, Y') ?></div>
   </div>
 </div>
 
@@ -538,7 +539,7 @@ include '../includes/header.php';
   <div class="card-body">
     <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
       <h6 class="mb-0 fw-600"><i class="fa-solid fa-money-bill-transfer me-2" style="color:var(--success)"></i>Distribution Records</h6>
-      <button class="btn btn-sm btn-success" onclick="openDistributionModal()"><i class="fa-solid fa-plus me-1"></i>Add Distribution</button>
+      <button class="btn btn-sm btn-primary" onclick="openDistributionModal()"><i class="fa-solid fa-plus me-1"></i>Add Distribution</button>
     </div>
     <?php if (empty($distributions)): ?>
     <div class="text-center text-muted py-4"><i class="fa-solid fa-inbox fa-2x mb-2 d-block" style="opacity:.2"></i>No distributions recorded yet.</div>
@@ -584,7 +585,7 @@ include '../includes/header.php';
   <div class="card-body">
     <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
       <h6 class="mb-0 fw-600"><i class="fa-solid fa-rotate-left me-2" style="color:var(--warning)"></i>Return Records</h6>
-      <button class="btn btn-sm btn-warning" onclick="openReturnModal()"><i class="fa-solid fa-plus me-1"></i>Add Return</button>
+      <button class="btn btn-sm btn-primary" onclick="openReturnModal()"><i class="fa-solid fa-plus me-1"></i>Add Return</button>
     </div>
     <?php if (empty($returnRecords)): ?>
     <div class="text-center text-muted py-3" style="font-size:13px">No returns recorded yet.</div>
@@ -632,10 +633,10 @@ include '../includes/header.php';
   <div class="card-body">
     <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
       <div>
-        <h6 class="mb-0 fw-600"><i class="fa-solid fa-hand-holding-dollar me-2" style="color:var(--info)"></i>Returns to Users <span class="badge bg-info" style="font-size:10px;font-weight:600">admin only</span></h6>
+        <h6 class="mb-0 fw-600"><i class="fa-solid fa-hand-holding-dollar me-2" style="color:var(--info)"></i>Returns to Users <span class="muted-pill" style="font-size:10px">admin only</span></h6>
         <div class="text-muted" style="font-size:11.5px;margin-top:2px">Cash issued back from the vault to a user — corrects excess remittances or funds a planned expense.</div>
       </div>
-      <button class="btn btn-sm btn-info text-white" onclick="openUserReturnModal()"><i class="fa-solid fa-plus me-1"></i>Issue Cash to User</button>
+      <button class="btn btn-sm btn-primary" onclick="openUserReturnModal()"><i class="fa-solid fa-plus me-1"></i>Issue Cash to User</button>
     </div>
     <?php if (empty($userReturns)): ?>
     <div class="text-center text-muted py-3" style="font-size:13px">No vault returns to users yet.</div>
@@ -752,7 +753,7 @@ include '../includes/header.php';
             <td>
               <?= clean($r['name']) ?>
               <?php if (!$r['is_active']): ?>
-              <span class="badge bg-secondary ms-1" style="font-size:10px">Inactive</span>
+              <span class="attn-pill ms-1" style="font-size:10px">Inactive</span>
               <?php endif; ?>
               <?php if ($r['notes']): ?><div class="text-muted" style="font-size:11px"><?= clean($r['notes']) ?></div><?php endif; ?>
             </td>
@@ -889,7 +890,7 @@ include '../includes/header.php';
       <div class="modal-footer">
         <button class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
         <?php if (!empty($activeRecipients)): ?>
-        <button class="btn btn-success" onclick="saveDistribution()"><i class="fa-solid fa-check me-1"></i>Record Distribution</button>
+        <button class="btn btn-primary" onclick="saveDistribution()"><i class="fa-solid fa-check me-1"></i>Record Distribution</button>
         <?php endif; ?>
       </div>
     </div>
@@ -936,7 +937,7 @@ include '../includes/header.php';
       </div>
       <div class="modal-footer">
         <button class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-        <button class="btn btn-info text-white" id="userReturnSaveBtn" onclick="saveUserReturn()"><i class="fa-solid fa-check me-1"></i>Issue Cash</button>
+        <button class="btn btn-primary" id="userReturnSaveBtn" onclick="saveUserReturn()"><i class="fa-solid fa-check me-1"></i>Issue Cash</button>
       </div>
     </div>
   </div>
@@ -1000,7 +1001,7 @@ include '../includes/header.php';
                   <?php if ($r['is_active']): ?>
                   <span class="badge" style="background:var(--success-bg);color:var(--success)">Active</span>
                   <?php else: ?>
-                  <span class="badge bg-secondary">Inactive</span>
+                  <span class="attn-pill">Inactive</span>
                   <?php endif; ?>
                 </td>
                 <td class="text-center" style="white-space:nowrap">
@@ -1109,7 +1110,7 @@ include '../includes/header.php';
       <div class="modal-footer">
         <button class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
         <?php if (!empty($activeRecipients)): ?>
-        <button class="btn btn-warning" onclick="saveReturn()"><i class="fa-solid fa-check me-1"></i>Record Return</button>
+        <button class="btn btn-primary" onclick="saveReturn()"><i class="fa-solid fa-check me-1"></i>Record Return</button>
         <?php endif; ?>
       </div>
     </div>
@@ -1151,7 +1152,7 @@ include '../includes/header.php';
       </div>
       <div class="modal-footer">
         <button class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-        <button class="btn btn-warning" onclick="saveEditReturn()"><i class="fa-solid fa-check me-1"></i>Save Changes</button>
+        <button class="btn btn-primary" onclick="saveEditReturn()"><i class="fa-solid fa-check me-1"></i>Save Changes</button>
       </div>
     </div>
   </div>
@@ -1185,90 +1186,89 @@ const RET_DATA  = <?= json_encode($retMap,   JSON_UNESCAPED_UNICODE) ?>;
 // Backend still enforces every admin-only action via isAdmin() checks.
 const IS_ADMIN = <?= isAdmin() ? 'true' : 'false' ?>;
 
-// ── Chart ────────────────────────────────────────────────────
-const CHART_COLORS = ['#EF9F27','#1D9E75','#D85A30','#5754A8','#FAC775','#9FE1CB','#F5C4B3','#26215C'];
+// ── Charts (monochrome, theme-aware) ─────────────────────────
 const chartByUser  = <?= $chartJson ?>;
 const months       = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-
-if (chartByUser.length > 0) {
-  const ctx = document.getElementById('remittanceChart').getContext('2d');
-  new Chart(ctx, {
-    type: 'bar',
-    data: {
-      labels: months,
-      datasets: chartByUser.map((u, i) => ({
-        label: u.name,
-        data: u.data,
-        backgroundColor: CHART_COLORS[i % CHART_COLORS.length],
-        borderRadius: 4,
-        stack: 'vault'
-      }))
-    },
-    options: {
-      responsive: true,
-      maintainAspectRatio: true,
-      plugins: {
-        legend: { position: 'top', labels: { usePointStyle: true, pointStyle: 'rect', padding: 16 } },
-        tooltip: {
-          callbacks: {
-            label: c => ` ${c.dataset.label}: ₱${parseFloat(c.raw||0).toLocaleString('en-PH',{minimumFractionDigits:2})}`
-          }
-        }
-      },
-      scales: {
-        x: { stacked: true, grid: { display: false }, border: { display: false } },
-        y: {
-          stacked: true,
-          grid: { color: '#f0ede5' },
-          border: { display: false },
-          ticks: { callback: v => '₱' + (v/1000>=1 ? (v/1000).toFixed(0)+'k' : v) }
-        }
-      }
-    }
-  });
-}
-
-// ── Dividend chart ───────────────────────────────────────────
 <?php $divChartJson = json_encode($divChart, JSON_UNESCAPED_UNICODE); ?>
 const divChartData = <?= $divChartJson ?>;
-if (divChartData.length > 0) {
-  const ctx2 = document.getElementById('divChart');
-  if (ctx2) {
-    new Chart(ctx2.getContext('2d'), {
+
+var _remitChartInst = null, _divChartInst = null;
+
+function _monoTip(T) {
+  return { backgroundColor: T.paper, titleColor: T.tick, bodyColor: T.ink,
+    borderColor: T.grid, borderWidth: 1, cornerRadius: 8, displayColors: true,
+    titleFont: { size: 10, family: 'DM Sans' }, bodyFont: { size: 12, family: 'DM Sans', weight: '700' } };
+}
+// Stacked segments split by lightness; cycle the gray ramp for many users.
+function _grayAt(i, T) { return T.series[i % T.series.length]; }
+
+function buildVaultCharts() {
+  var T = window.chartTheme();
+  if (_remitChartInst) { _remitChartInst.destroy(); _remitChartInst = null; }
+  if (_divChartInst)   { _divChartInst.destroy();   _divChartInst = null; }
+
+  if (chartByUser.length > 0) {
+    var ctx = document.getElementById('remittanceChart').getContext('2d');
+    _remitChartInst = new Chart(ctx, {
       type: 'bar',
       data: {
-        labels: divChartData.map(r => r.name),
-        datasets: [{
-          label: 'Total Distributed',
-          data: divChartData.map(r => parseFloat(r.total)),
-          backgroundColor: divChartData.map((_, i) => CHART_COLORS[i % CHART_COLORS.length]),
-          borderRadius: 6
-        }]
+        labels: months,
+        datasets: chartByUser.map((u, i) => ({
+          label: u.name, data: u.data,
+          backgroundColor: _grayAt(i, T),
+          borderColor: T.paper, borderWidth: 1,
+          borderRadius: 3, stack: 'vault'
+        }))
       },
       options: {
-        responsive: true,
-        maintainAspectRatio: true,
+        responsive: true, maintainAspectRatio: true,
         plugins: {
-          legend: { display: false },
-          tooltip: {
-            callbacks: {
-              label: c => ` ₱${parseFloat(c.raw||0).toLocaleString('en-PH',{minimumFractionDigits:2})}`
-            }
-          }
+          legend: { position: 'top', labels: { usePointStyle: true, pointStyle: 'rect', padding: 16, color: T.tick, font: { family: 'DM Sans' } } },
+          tooltip: Object.assign(_monoTip(T), { callbacks: {
+            label: c => ` ${c.dataset.label}: ₱${parseFloat(c.raw||0).toLocaleString('en-PH',{minimumFractionDigits:2})}` } })
         },
         scales: {
-          x: { grid: { display: false }, border: { display: false } },
-          y: {
-            beginAtZero: true,
-            grid: { color: '#f0ede5' },
-            border: { display: false },
-            ticks: { callback: v => '₱' + (v/1000>=1 ? (v/1000).toFixed(0)+'k' : v) }
-          }
+          x: { stacked: true, grid: { display: false }, border: { display: false }, ticks: { color: T.tick, font: { family: 'DM Sans' } } },
+          y: { stacked: true, grid: { color: T.grid }, border: { display: false },
+               ticks: { color: T.tick, font: { family: 'DM Sans' }, callback: v => '₱' + (v/1000>=1 ? (v/1000).toFixed(0)+'k' : v) } }
         }
       }
     });
   }
+
+  if (divChartData.length > 0) {
+    var ctx2 = document.getElementById('divChart');
+    if (ctx2) {
+      _divChartInst = new Chart(ctx2.getContext('2d'), {
+        type: 'bar',
+        data: {
+          labels: divChartData.map(r => r.name),
+          datasets: [{
+            label: 'Total Distributed',
+            data: divChartData.map(r => parseFloat(r.total)),
+            backgroundColor: divChartData.map((_, i) => _grayAt(i, T)),
+            borderColor: T.paper, borderWidth: 1, borderRadius: 6
+          }]
+        },
+        options: {
+          responsive: true, maintainAspectRatio: true,
+          plugins: {
+            legend: { display: false },
+            tooltip: Object.assign(_monoTip(T), { callbacks: {
+              label: c => ` ₱${parseFloat(c.raw||0).toLocaleString('en-PH',{minimumFractionDigits:2})}` } })
+          },
+          scales: {
+            x: { grid: { display: false }, border: { display: false }, ticks: { color: T.tick, font: { family: 'DM Sans' } } },
+            y: { beginAtZero: true, grid: { color: T.grid }, border: { display: false },
+                 ticks: { color: T.tick, font: { family: 'DM Sans' }, callback: v => '₱' + (v/1000>=1 ? (v/1000).toFixed(0)+'k' : v) } }
+          }
+        }
+      });
+    }
+  }
 }
+buildVaultCharts();
+window.addEventListener('laskie:themechange', buildVaultCharts);
 
 // ── Logs ─────────────────────────────────────────────────────
 function esc(s){ const d=document.createElement('div'); d.textContent=s||''; return d.innerHTML; }
@@ -1293,25 +1293,26 @@ function loadLogs() {
       const isUserRet  = r.log_type === 'user_return';
       let badge, person, amtColor, actions;
       if (isRem) {
-        badge    = `<span class="badge" style="background:var(--laskie-amber-bg);color:var(--laskie-amber-ink);font-weight:600">Remittance</span>`;
+        // Direction is carried by the ←/→ glyph, not hue (§3.3).
+        badge    = `<span class="muted-pill" style="font-weight:600">Remittance</span>`;
         person   = esc(r.person_name||'—');
-        amtColor = 'var(--primary)';
+        amtColor = 'var(--ink)';
         actions  = `<button class="btn-icon danger" title="Delete" onclick="deleteRemittance(${r.id})"><i class="fa-solid fa-trash fa-xs"></i></button>`;
       } else if (isDist) {
-        badge    = `<span class="badge" style="background:var(--laskie-teal-bg);color:var(--laskie-teal-ink);font-weight:600">Dividend</span>`;
-        person   = `<span style="color:var(--laskie-teal)">→ ${esc(r.recipient_name||'—')}</span> <span class="text-muted" style="font-size:11px">via ${esc(r.person_name||'—')}</span>`;
-        amtColor = 'var(--success)';
+        badge    = `<span class="muted-pill" style="font-weight:600">Dividend</span>`;
+        person   = `<span>→ ${esc(r.recipient_name||'—')}</span> <span class="text-muted" style="font-size:11px">via ${esc(r.person_name||'—')}</span>`;
+        amtColor = 'var(--ink)';
         actions  = `<button class="btn-icon" title="Edit" onclick="openEditDist(${r.id})"><i class="fa-solid fa-pen fa-xs"></i></button>`
                  + `<button class="btn-icon danger" title="Delete" onclick="deleteDistribution(${r.id})"><i class="fa-solid fa-trash fa-xs"></i></button>`;
       } else if (isRet) {
-        badge    = `<span class="badge" style="background:var(--laskie-coral-bg);color:var(--laskie-coral-ink);font-weight:600">Return</span>`;
-        person   = `<span style="color:var(--laskie-coral)">← ${esc(r.recipient_name||'—')}</span> <span class="text-muted" style="font-size:11px">via ${esc(r.person_name||'—')}</span>`;
-        amtColor = 'var(--laskie-coral)';
+        badge    = `<span class="muted-pill" style="font-weight:600">Return</span>`;
+        person   = `<span>← ${esc(r.recipient_name||'—')}</span> <span class="text-muted" style="font-size:11px">via ${esc(r.person_name||'—')}</span>`;
+        amtColor = 'var(--ink)';
         actions  = `<button class="btn-icon danger" title="Delete" onclick="deleteReturn(${r.id})"><i class="fa-solid fa-trash fa-xs"></i></button>`;
       } else {  // user_return
-        badge    = `<span class="badge" style="background:var(--laskie-indigo-bg);color:var(--laskie-indigo);font-weight:600">Vault→User</span>`;
-        person   = `<span style="color:var(--laskie-indigo)">→ ${esc(r.recipient_name||'—')}</span>`;
-        amtColor = 'var(--info)';
+        badge    = `<span class="muted-pill" style="font-weight:600">Vault→User</span>`;
+        person   = `<span>→ ${esc(r.recipient_name||'—')}</span>`;
+        amtColor = 'var(--ink)';
         // user_return Edit/Delete are admin-only — accountants see the row but
         // not the action buttons (backend would 403 them anyway).
         actions  = IS_ADMIN

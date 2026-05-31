@@ -53,10 +53,10 @@ include '../includes/header.php';
         <i class="fa-solid fa-rotate me-1"></i>Refresh
       </button>
       <div class="ms-auto d-none d-md-flex align-items-center gap-3">
-        <span class="d-flex align-items-center gap-1" style="font-size:12px"><span class="status-dot green"></span> Paid</span>
-        <span class="d-flex align-items-center gap-1" style="font-size:12px"><span class="status-dot amber"></span> Partial / Pending</span>
-        <span class="d-flex align-items-center gap-1" style="font-size:12px"><span class="status-dot red"></span> Overdue</span>
-        <span class="d-flex align-items-center gap-1" style="font-size:12px"><span class="status-dot gray"></span> Vacant</span>
+        <span class="d-flex align-items-center gap-1" style="font-size:12px"><span class="status-glyph green"></span> Paid</span>
+        <span class="d-flex align-items-center gap-1" style="font-size:12px"><span class="status-glyph amber"></span> Partial / Pending</span>
+        <span class="d-flex align-items-center gap-1" style="font-size:12px"><span class="status-glyph red"></span> Overdue</span>
+        <span class="d-flex align-items-center gap-1" style="font-size:12px"><span class="status-glyph gray"></span> Vacant</span>
       </div>
     </div>
   </div>
@@ -69,9 +69,9 @@ include '../includes/header.php';
       <i class="fa-solid fa-table me-2"></i>Monthly Collection Summary
     </span>
     <div class="d-flex gap-2">
-      <span id="summaryBadgeGreen" class="badge bg-success">— Paid</span>
-      <span id="summaryBadgeAmber" class="badge bg-warning text-dark">— Partial</span>
-      <span id="summaryBadgeRed"   class="badge bg-danger">— Overdue</span>
+      <span id="summaryBadgeGreen" class="ok-pill">— Paid</span>
+      <span id="summaryBadgeAmber" class="muted-pill">— Partial</span>
+      <span id="summaryBadgeRed"   class="attn-pill">— Overdue</span>
     </div>
   </div>
   <div class="table-responsive">
@@ -266,7 +266,7 @@ include '../includes/header.php';
       </div>
       <div class="modal-footer">
         <button class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
-        <button class="btn btn-sm" style="background:var(--warning);color:#fff;border-color:var(--warning)" onclick="saveCharge()">
+        <button class="btn btn-primary btn-sm" onclick="saveCharge()">
           <i class="fa-solid fa-receipt me-1"></i>Add Charge
         </button>
       </div>
@@ -376,21 +376,22 @@ function loadSummary() {
       var bal    = parseFloat(r.balance)       || 0;
       totRate += rate; totRentPaid += rentPd; totSvc += svcPd; totTotal += totPd; totBal += bal;
 
-      var dot = '<span class="status-dot ' + r.pay_status + '" title="' + r.pay_status + '"></span>';
+      var dot = '<span class="status-glyph ' + r.pay_status + '" title="' + r.pay_status + '"></span>';
       if      (r.pay_status === 'green') countG++;
       else if (r.pay_status === 'amber') countA++;
       else if (r.pay_status === 'red')   countR++;
 
+      // Balance owed = needs attention → bold ink; settled → muted dash.
       var balCell = bal > 0
-        ? '<span style="color:var(--danger);font-weight:600">' + fmt(bal) + '</span>'
-        : '<span style="color:var(--success)">—</span>';
+        ? '<span class="num" style="font-weight:700">' + fmt(bal) + '</span>'
+        : '<span class="text-muted">—</span>';
       var statusBadge = r.status === 'occupied'
         ? '<span class="badge badge-occupied">Occupied</span>'
         : '<span class="badge badge-vacant">Vacant</span>';
       var tenantCell  = r.tenant_name ? esc(r.tenant_name) : '<span class="text-muted">—</span>';
-      var rentCell    = rentPd > 0 ? '<span style="color:var(--success)">' + fmt(rentPd) + '</span>' : '<span class="text-muted">—</span>';
-      var svcCell     = svcPd  > 0 ? fmt(svcPd)  : '<span class="text-muted">—</span>';
-      var totCell     = totPd  > 0 ? fmt(totPd)  : '<span class="text-muted">—</span>';
+      var rentCell    = rentPd > 0 ? '<span class="num">' + fmt(rentPd) + '</span>' : '<span class="text-muted">—</span>';
+      var svcCell     = svcPd  > 0 ? '<span class="num">' + fmt(svcPd) + '</span>'  : '<span class="text-muted">—</span>';
+      var totCell     = totPd  > 0 ? '<span class="num">' + fmt(totPd) + '</span>'  : '<span class="text-muted">—</span>';
       var cashierCell = r.last_cashier ? esc(r.last_cashier) : '<span class="text-muted">—</span>';
 
       html +=
@@ -419,16 +420,16 @@ function loadSummary() {
     document.getElementById('summaryBody').innerHTML =
       html || '<tr><td colspan="10" class="text-center py-4 text-muted">No units found.</td></tr>';
 
-    var balColor = totBal > 0 ? 'var(--danger)' : 'var(--success)';
+    var balStyle = totBal > 0 ? 'font-weight:700' : 'color:var(--gray-500)';
     var balText  = totBal > 0 ? fmt(totBal) : 'Fully Paid';
     document.getElementById('summaryFoot').innerHTML =
-      '<tr style="background:#f0f4ff;font-weight:700;">' +
+      '<tr style="background:var(--gray-100);font-weight:700;">' +
         '<td></td><td colspan="2">TOTAL</td>' +
-        '<td class="text-end">' + fmt(totRate)     + '</td>' +
-        '<td class="text-end">' + fmt(totRentPaid) + '</td>' +
-        '<td class="text-end">' + fmt(totSvc)      + '</td>' +
-        '<td class="text-end">' + fmt(totTotal)    + '</td>' +
-        '<td class="text-end" style="color:' + balColor + '">' + balText + '</td>' +
+        '<td class="text-end num">' + fmt(totRate)     + '</td>' +
+        '<td class="text-end num">' + fmt(totRentPaid) + '</td>' +
+        '<td class="text-end num">' + fmt(totSvc)      + '</td>' +
+        '<td class="text-end num">' + fmt(totTotal)    + '</td>' +
+        '<td class="text-end num" style="' + balStyle + '">' + balText + '</td>' +
         '<td colspan="2"></td>' +
       '</tr>';
 
@@ -712,11 +713,11 @@ function viewUnitPayments(unitId, unitName, month, year) {
           : '<span class="badge badge-service">' + esc(p.service_name || 'Service') + '</span>';
         var statusBadge = '';
         if (p.status === 'voided') {
-          statusBadge = ' <span class="badge bg-secondary" style="font-size:10px">Voided</span>';
+          statusBadge = ' <span class="muted-pill" style="font-size:10px">Voided</span>';
         } else if (p.status === 'refunded') {
-          statusBadge = ' <span class="badge bg-danger" style="font-size:10px">Refunded</span>';
+          statusBadge = ' <span class="attn-pill" style="font-size:10px">Refunded</span>';
         } else if (p.status === 'partially_refunded') {
-          statusBadge = ' <span class="badge bg-warning text-dark" style="font-size:10px">Partial Refund</span>';
+          statusBadge = ' <span class="muted-pill" style="font-size:10px">Partial Refund</span>';
         }
         var alreadyRefunded = parseFloat(p.refunded_total) || 0;
         var pid    = parseInt(p.id) || 0;
@@ -738,13 +739,13 @@ function viewUnitPayments(unitId, unitName, month, year) {
             : '<button class="btn-icon" title="Void Payment" data-id="' + pid + '" data-inv="' + invEsc + '" onclick="voidPayment(+this.dataset.id, this.dataset.inv)"><i class="fa-solid fa-ban fa-xs" style="color:var(--warning)"></i></button> ';
         }
         html +=
-          '<tr' + (isVoided ? ' style="opacity:0.55"' : '') + '>' +
+          '<tr' + (isVoided ? ' class="row-voided"' : '') + '>' +
             (IS_ADMIN ? '<td class="no-print"><input type="checkbox" class="pay-chk" value="' + pid + '" onclick="updatePayBulkBar()"></td>' : '') +
             '<td style="white-space:nowrap">' + esc(p.payment_date) + '</td>' +
             '<td class="mono" style="font-size:12px">' + (p.invoice_no ? esc(p.invoice_no) : '—') + '</td>' +
             '<td>' + typeLabel + '</td>' +
             '<td style="font-size:12.5px">' + (p.notes ? esc(p.notes) : '—') + '</td>' +
-            '<td class="text-end fw-600">' + fmt(p.amount) + statusBadge + '</td>' +
+            '<td class="text-end fw-600"><span class="num">' + fmt(p.amount) + '</span>' + statusBadge + '</td>' +
             '<td style="font-size:12px">' + (p.cashier_name ? esc(p.cashier_name) : '—') + '</td>' +
             '<td class="text-center">' +
               '<a href="../payments/invoice_print.php?id=' + pid + '" target="_blank" rel="noopener noreferrer" class="btn-icon" title="Print Invoice">' +
@@ -759,14 +760,14 @@ function viewUnitPayments(unitId, unitName, month, year) {
       });
 
       html +=
-        '</tbody><tfoot><tr style="background:#f9fafb;font-weight:700">' +
-        '<td colspan="' + (IS_ADMIN ? 5 : 4) + '">Total Paid</td><td class="text-end">' + fmt(totPaid) + '</td><td colspan="2"></td>' +
+        '</tbody><tfoot><tr style="background:var(--gray-100);font-weight:700">' +
+        '<td colspan="' + (IS_ADMIN ? 5 : 4) + '">Total Paid</td><td class="text-end num">' + fmt(totPaid) + '</td><td colspan="2"></td>' +
         '</tr></tfoot></table></div>';
     }
 
     html +=
       '<div class="mt-3 d-flex justify-content-between align-items-center">' +
-        '<button class="btn btn-sm" style="background:var(--warning);color:#fff;border-color:var(--warning)" onclick="openChargeModal(' + unitId + ')">' +
+        '<button class="btn btn-outline-primary btn-sm" onclick="openChargeModal(' + unitId + ')">' +
           '<i class="fa-solid fa-receipt me-1"></i>Add Service Charge</button>' +
         '<button class="btn btn-primary btn-sm" onclick="openPaymentForUnit(' + unitId + '); unitDetailModal.hide()">' +
           '<i class="fa-solid fa-plus me-1"></i>Record Payment</button>' +

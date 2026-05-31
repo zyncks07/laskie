@@ -99,6 +99,7 @@ if ($err === 'session') $error = 'Your session has expired. Please log in again.
 <html lang="en">
 <head>
 <meta charset="UTF-8">
+<script>/* FOUC guard: set the theme before first paint */(function(){try{var t=localStorage.getItem('laskie-theme');if(t==='dark')document.documentElement.setAttribute('data-theme','dark');}catch(e){}})();</script>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Sign In — Laskie Rental Property Management System</title>
 <?= vendorCssTag('', 'google-fonts.css') ?>

@@ -10,15 +10,15 @@
 // error strings (which sometimes embed user data — refund reasons, file
 // names, exception messages) can't execute as HTML.
 window.showToast = function(msg, type = 'success') {
+    // Monochrome toast: the type is conveyed by the glyph, not hue.
     const icons  = { success: '✓', error: '✕', warning: '⚠' };
-    const colors = { success: '#1D9E75', error: '#D85A30', warning: '#EF9F27' };
     document.querySelectorAll('.laskie-toast').forEach(t => t.remove());
 
     const t = document.createElement('div');
     t.className = 'laskie-toast';
 
     const iconEl = document.createElement('span');
-    iconEl.style.cssText = `color:${colors[type] || colors.success};font-weight:700;font-size:16px;line-height:1`;
+    iconEl.style.cssText = 'color:inherit;font-weight:700;font-size:16px;line-height:1';
     iconEl.textContent = icons[type] || icons.success;
 
     const textEl = document.createElement('span');
@@ -32,6 +32,67 @@ window.showToast = function(msg, type = 'success') {
         t.classList.remove('show');
         setTimeout(() => t.remove(), 320);
     }, 3600);
+};
+
+// ─── Dark / light theme ───────────────────────────────────────
+// The <html data-theme> attribute is set by a tiny inline FOUC-guard
+// script in the page <head> (header.php / index.php) BEFORE first paint,
+// reading localStorage['laskie-theme']. These helpers flip it at runtime.
+window.LASKIE_THEME_KEY = 'laskie-theme';
+
+window.getTheme = function() {
+    return document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light';
+};
+
+// Sync the topbar toggle glyph (sun in dark mode → "switch to light", etc.)
+function syncThemeToggleIcon(theme) {
+    document.querySelectorAll('[data-theme-toggle] i').forEach(i => {
+        i.className = theme === 'dark' ? 'fa-solid fa-sun' : 'fa-solid fa-moon';
+    });
+    document.querySelectorAll('[data-theme-toggle]').forEach(b => {
+        b.setAttribute('title', theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode');
+    });
+}
+
+window.setTheme = function(theme) {
+    theme = theme === 'dark' ? 'dark' : 'light';
+    document.documentElement.setAttribute('data-theme', theme);
+    try { localStorage.setItem(window.LASKIE_THEME_KEY, theme); } catch (_) {}
+    syncThemeToggleIcon(theme);
+    // Charts and any theme-aware widget listen for this to re-read CSS vars.
+    window.dispatchEvent(new CustomEvent('laskie:themechange', { detail: { theme } }));
+};
+
+window.toggleTheme = function() {
+    window.setTheme(window.getTheme() === 'dark' ? 'light' : 'dark');
+};
+
+document.addEventListener('DOMContentLoaded', () => syncThemeToggleIcon(window.getTheme()));
+
+// ─── Chart theme tokens ───────────────────────────────────────
+// Returns the current grayscale palette read live from CSS custom
+// properties, so Chart.js stays in sync with light/dark. Series are
+// separated by lightness + dash + point shape, never hue (§3.4).
+window.chartTheme = function() {
+    const cs = getComputedStyle(document.documentElement);
+    const v = (name, fallback) => (cs.getPropertyValue(name).trim() || fallback);
+    return {
+        ink:   v('--ink', '#0a0a0a'),
+        grid:  v('--gray-200', '#e4e4e4'),
+        tick:  v('--gray-500', '#737373'),
+        paper: v('--paper', '#ffffff'),
+        muted: v('--gray-400', '#9b9b9b'),
+        // grayscale series ramp — darkest = the datum that matters
+        series: [
+            v('--ink', '#0a0a0a'),
+            v('--gray-400', '#9b9b9b'),
+            v('--gray-600', '#555555'),
+            v('--gray-300', '#c4c4c4'),
+            v('--gray-700', '#3f3f3f'),
+        ],
+        dash:   [[], [5, 4], [2, 3], [8, 4]],
+        points: ['circle', 'rect', 'triangle', 'rectRot'],
+    };
 };
 
 // ─── CSRF header helper ───────────────────────────────────────

@@ -44,6 +44,7 @@ if (!isset($depth)) {
 <html lang="en">
 <head>
 <meta charset="UTF-8">
+<script>/* FOUC guard: set the theme before first paint */(function(){try{var t=localStorage.getItem('laskie-theme');if(t==='dark')document.documentElement.setAttribute('data-theme','dark');}catch(e){}})();</script>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="csrf-token" content="<?= htmlspecialchars(csrfToken(), ENT_QUOTES, 'UTF-8') ?>">
 <title><?= clean($pageTitle ?? 'Dashboard') ?> — Laskie RMS</title>
@@ -137,7 +138,7 @@ if (!isset($depth)) {
     </a>
     <a href="<?= $depth ?>admin/requests.php" class="sidebar-nav-item <?= ($currentPage==='requests')?'active':'' ?>">
       <i class="fa-solid fa-hand-holding-dollar"></i> Cash Requests
-      <?php if ($pendingReqCount > 0): ?><span class="badge ms-auto" style="background:var(--laskie-coral,#D85A30);color:#fff;font-size:10px"><?= $pendingReqCount ?></span><?php endif; ?>
+      <?php if ($pendingReqCount > 0): ?><span class="badge ms-auto" style="background:var(--ink);color:var(--paper);font-size:10px"><?= $pendingReqCount ?></span><?php endif; ?>
     </a>
     <a href="<?= $depth ?>admin/settings.php" class="sidebar-nav-item <?= ($currentPage==='settings')?'active':'' ?>">
       <i class="fa-solid fa-gear"></i> Settings
@@ -167,17 +168,20 @@ if (!isset($depth)) {
   </button>
   <div class="topbar-title"><?= clean($pageTitle ?? 'Dashboard') ?></div>
   <div class="topbar-right">
+    <button class="btn-icon" data-theme-toggle title="Switch to dark mode" aria-label="Toggle dark mode" onclick="toggleTheme()">
+      <i class="fa-solid fa-moon"></i>
+    </button>
     <div class="topbar-notif" style="position:relative">
       <button id="notifBell" class="btn-icon" title="Notifications" aria-label="Notifications" onclick="toggleNotifPanel(event)" style="position:relative">
         <i class="fa-solid fa-bell"></i>
-        <span id="notifBadge" style="display:none;position:absolute;top:-3px;right:-3px;min-width:16px;height:16px;padding:0 4px;border-radius:8px;background:var(--laskie-coral,#D85A30);color:#fff;font-size:10px;line-height:16px;font-weight:700;text-align:center"></span>
+        <span id="notifBadge" style="display:none;position:absolute;top:-3px;right:-3px;min-width:16px;height:16px;padding:0 4px;border-radius:8px;background:var(--ink);color:var(--paper);font-size:10px;line-height:16px;font-weight:700;text-align:center"></span>
       </button>
-      <div id="notifPanel" style="display:none;position:absolute;right:0;top:calc(100% + 8px);width:320px;max-height:420px;overflow-y:auto;background:#fff;border:1px solid var(--laskie-divider,#e5e7eb);border-radius:12px;box-shadow:0 8px 28px rgba(0,0,0,.14);z-index:1080">
-        <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border-bottom:1px solid var(--laskie-divider,#eee)">
-          <strong style="font-size:13px">Notifications</strong>
-          <a href="#" onclick="markAllNotifs(event)" style="font-size:11.5px;text-decoration:none;color:var(--laskie-amber,#b45309)">Mark all read</a>
+      <div id="notifPanel" style="display:none;position:absolute;right:0;top:calc(100% + 8px);width:320px;max-height:420px;overflow-y:auto;background:var(--paper);border:1px solid var(--gray-200);border-radius:12px;box-shadow:0 8px 28px rgba(0,0,0,.14);z-index:1080">
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border-bottom:1px solid var(--gray-200)">
+          <strong style="font-size:13px;color:var(--ink)">Notifications</strong>
+          <a href="#" onclick="markAllNotifs(event)" style="font-size:11.5px;text-decoration:none;color:var(--gray-600)">Mark all read</a>
         </div>
-        <div id="notifList" style="padding:2px 0"><div style="padding:14px;color:#999;font-size:12.5px">No notifications.</div></div>
+        <div id="notifList" style="padding:2px 0"><div style="padding:14px;color:var(--gray-500);font-size:12.5px">No notifications.</div></div>
       </div>
     </div>
     <a href="<?= $depth ?>my_account.php" class="topbar-user text-decoration-none" style="color:inherit" title="My Account">

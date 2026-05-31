@@ -1,188 +1,304 @@
 /* ═══════════════════════════════════════════════════════════
-   Laskie — Magix-style design tokens & base overrides
+   Laskie — Monochrome design tokens & base overrides
    Loaded AFTER assets/css/app.css so these rules win the cascade.
-   Legacy semantic vars (--primary / --success / --danger / --warning)
-   are remapped here, not renamed, so every existing reference in the
-   codebase keeps working.
+
+   This file is the keystone of the black-and-white redesign
+   (design/REDESIGN_PLAN.md). It (1) defines a refined grayscale
+   ramp, (2) remaps every legacy semantic var (--primary/--success/…)
+   AND the Bootstrap --bs-* vars to that ramp, so every page —
+   including ones never touched — renders monochrome with no markup
+   change, and (3) ships the reusable emphasis primitives (pills,
+   glyphs, deltas) that page tiers apply for hue-free emphasis.
+
+   Dark mode: <html data-theme="dark"> overrides only the ramp
+   PRIMITIVES below; because every semantic/legacy/bs var is defined
+   as a var() reference to a primitive, the whole theme flips with it.
    ═══════════════════════════════════════════════════════════ */
 
 :root {
-  /* ── Surface ───────────────────────────────────────────── */
-  --laskie-page-bg:   #FFFFFF;
-  --laskie-card-bg:   #FFFFFF;
-  --laskie-card-dark: #26215C;
-  --laskie-divider:   #f0ede5;
+  /* ── Grayscale ramp (light) ────────────────────────────── */
+  --ink:      #0a0a0a;   /* primary text, solid buttons, emphasis fills */
+  --gray-900: #1a1a1a;   /* strong headings                            */
+  --gray-800: #2b2b2b;   /* headings                                   */
+  --gray-700: #3f3f3f;   /* strong secondary / outline-pill text       */
+  --gray-600: #555555;   /* secondary text                             */
+  --gray-500: #737373;   /* muted labels                               */
+  --gray-400: #9b9b9b;   /* hints / disabled                           */
+  --gray-300: #c4c4c4;   /* strong borders, chart secondary fill       */
+  --gray-200: #e4e4e4;   /* default borders / dividers                 */
+  --gray-100: #f4f4f4;   /* hover, table zebra, inset fills            */
+  --gray-50:  #fafafa;   /* page background                            */
+  --paper:    #ffffff;   /* card / surface                             */
+  --page-bg:  #fafafa;   /* body background                            */
+  --focus-ring: 0 0 0 3px rgba(0,0,0,.12);
 
-  /* ── Ink ───────────────────────────────────────────────── */
-  --laskie-ink:        #1b1740;
-  --laskie-ink-mute:   #888780;
-  --laskie-ink-faint:  #b4b2a9;
-
-  /* ── Amber (primary) ───────────────────────────────────── */
-  --laskie-amber:       #EF9F27;
-  --laskie-amber-soft:  #FAC775;
-  --laskie-amber-bg:    #FAEEDA;
-  --laskie-amber-ink:   #633806;
-  --laskie-amber-hover: #D88914;
-
-  /* ── Teal (success / positive) ─────────────────────────── */
-  --laskie-teal:       #1D9E75;
-  --laskie-teal-soft:  #9FE1CB;
-  --laskie-teal-bg:    #E1F5EE;
-  --laskie-teal-ink:   #085041;
-
-  /* ── Coral (danger / overdue) ──────────────────────────── */
-  --laskie-coral:       #D85A30;
-  --laskie-coral-soft:  #F5C4B3;
-  --laskie-coral-bg:    #FAECE7;
-  --laskie-coral-ink:   #712B13;
-
-  /* ── Indigo (info / purple slot) ───────────────────────── */
-  --laskie-indigo:      #5754A8;
-  --laskie-indigo-bg:   #ECEBF7;
-  --laskie-indigo-ink:  #2B295F;
-
-  /* ── Geometry ──────────────────────────────────────────── */
-  --laskie-radius-card:  20px;
-  --laskie-radius-stat:  16px;
-  --laskie-radius-input: 12px;
+  /* ── Geometry (retuned flat) ───────────────────────────── */
+  --laskie-radius-card:  14px;
+  --laskie-radius-stat:  12px;
+  --laskie-radius-input: 8px;
   --laskie-radius-pill:  999px;
 
-  /* ── Shadows ───────────────────────────────────────────── */
-  --laskie-shadow-card:       0 2px 14px rgba(60, 40, 20, 0.05);
-  --laskie-shadow-card-hover: 0 4px 20px rgba(60, 40, 20, 0.08);
-  --laskie-shadow-hero:       0 8px 30px rgba(38, 33, 92, 0.18);
+  /* ── Shadows (near-flat — the B&W look leans on borders) ── */
+  --laskie-shadow-card:       0 1px 2px rgba(0,0,0,.06);
+  --laskie-shadow-card-hover: 0 2px 8px rgba(0,0,0,.08);
+  --laskie-shadow-hero:       0 2px 10px rgba(0,0,0,.10);
 
-  /* ── Remap legacy semantic vars to the new palette ─────── */
-  /* Names kept; hex values swapped.                          */
-  --primary:        var(--laskie-amber);
-  --primary-hover:  var(--laskie-amber-hover);
-  --primary-light:  var(--laskie-amber-bg);
-  --primary-mid:    var(--laskie-amber-soft);
-  --accent:         var(--laskie-teal);
+  /* ── Legacy semantic remap (names kept; values → grayscale) ─ */
+  /* Hue is removed; emphasis now comes from the §3.3 primitives. */
+  --primary:        var(--ink);
+  --primary-hover:  #000000;
+  --primary-light:  var(--gray-100);
+  --primary-mid:    var(--gray-700);
+  --accent:         var(--gray-600);
 
-  --success:        var(--laskie-teal);
-  --success-bg:     var(--laskie-teal-bg);
-  --danger:         var(--laskie-coral);
-  --danger-bg:      var(--laskie-coral-bg);
-  --warning:        var(--laskie-amber);          /* keep .text-warning legible on white */
-  --warning-bg:     var(--laskie-amber-bg);
-  --info:           var(--laskie-indigo);
-  --info-bg:        var(--laskie-indigo-bg);
+  --success:        var(--ink);
+  --success-bg:     var(--gray-100);
+  --danger:         var(--ink);
+  --danger-bg:      var(--gray-100);
+  --warning:        var(--ink);
+  --warning-bg:     var(--gray-100);
+  --info:           var(--ink);
+  --info-bg:        var(--gray-100);
 
-  --bg:             var(--laskie-page-bg);
-  --card-bg:        var(--laskie-card-bg);
-  --sidebar-bg:     var(--laskie-card-bg);
-  --topbar-bg:      var(--laskie-card-bg);
-  --text-primary:   var(--laskie-ink);
-  --text-secondary: #4f4a6a;
-  --text-muted:     var(--laskie-ink-mute);
-  --border:         var(--laskie-divider);
-  --border-light:   #f5f2eb;
+  --bg:             var(--gray-50);
+  --card-bg:        var(--paper);
+  --sidebar-bg:     var(--paper);
+  --topbar-bg:      var(--paper);
+  --text-primary:   var(--ink);
+  --text-secondary: var(--gray-600);
+  --text-muted:     var(--gray-500);
+  --border:         var(--gray-200);
+  --border-light:   var(--gray-100);
 
   --radius:         var(--laskie-radius-input);
   --radius-lg:      var(--laskie-radius-card);
   --shadow-sm:      var(--laskie-shadow-card);
   --shadow:         var(--laskie-shadow-card-hover);
+
+  /* ── Deprecated warm-palette aliases → grayscale ─────────── */
+  /* The warm "Magix" tokens are retired. Their NAMES are kept,
+     pointed at the gray ramp, ONLY so pages not yet migrated by
+     the Sonnet/Haiku tiers resolve to mono instead of an undefined
+     var(). Remove the reference when migrating a page; do not add
+     new ones. */
+  --laskie-page-bg:   var(--gray-50);
+  --laskie-card-bg:   var(--paper);
+  --laskie-card-dark: var(--ink);
+  --laskie-divider:   var(--gray-200);
+  --laskie-ink:       var(--ink);
+  --laskie-ink-mute:  var(--gray-500);
+  --laskie-ink-faint: var(--gray-400);
+  --laskie-amber:       var(--gray-700);
+  --laskie-amber-soft:  var(--gray-300);
+  --laskie-amber-bg:    var(--gray-100);
+  --laskie-amber-ink:   var(--gray-800);
+  --laskie-amber-hover: #000000;
+  --laskie-teal:       var(--gray-700);
+  --laskie-teal-soft:  var(--gray-300);
+  --laskie-teal-bg:    var(--gray-100);
+  --laskie-teal-ink:   var(--gray-800);
+  --laskie-coral:       var(--ink);
+  --laskie-coral-soft:  var(--gray-300);
+  --laskie-coral-bg:    var(--gray-100);
+  --laskie-coral-ink:   var(--ink);
+  --laskie-indigo:      var(--gray-700);
+  --laskie-indigo-bg:   var(--gray-100);
+  --laskie-indigo-ink:  var(--gray-800);
+}
+
+/* ── Dark mode: flip ONLY the ramp primitives ──────────────── */
+/* Everything else (semantic, --bs-*, warm aliases) is a var()
+   reference to these, so the whole UI inverts automatically. */
+[data-theme="dark"] {
+  --paper:    #161616;
+  --page-bg:  #0d0d0d;
+  --gray-50:  #0f0f0f;
+  --gray-100: #1e1e1e;
+  --gray-200: #2b2b2b;
+  --gray-300: #3f3f3f;
+  --gray-400: #6b6b6b;
+  --gray-500: #8a8a8a;
+  --gray-600: #b0b0b0;
+  --gray-700: #c4c4c4;
+  --gray-800: #d8d8d8;
+  --gray-900: #ececec;
+  --ink:      #f5f5f5;
+  --focus-ring: 0 0 0 3px rgba(255,255,255,.16);
+  --laskie-shadow-card:       0 1px 2px rgba(0,0,0,.5);
+  --laskie-shadow-card-hover: 0 2px 8px rgba(0,0,0,.6);
+  --laskie-shadow-hero:       0 2px 10px rgba(0,0,0,.6);
 }
 
 /* ── Body & global type ─────────────────────────────────── */
+html { background: var(--page-bg); }
 body {
-  background: var(--laskie-page-bg);
+  background: var(--page-bg);
   font-family: 'DM Sans', system-ui, -apple-system, sans-serif;
-  color: var(--laskie-ink);
+  color: var(--ink);
 }
 
 /* ── Bootstrap palette remap ────────────────────────────── */
-/* Many existing pages use Bootstrap utility classes like .bg-success,
-   .text-danger, .badge.bg-warning, .alert-info — those resolve via the
-   --bs-*-rgb variables. Remap them once here so every utility picks up
-   the new amber / teal / coral / indigo palette automatically. */
+/* Utility classes (.bg-success, .text-danger, .badge.bg-warning,
+   .alert-info, …) resolve via these. Hex utilities reference the
+   ramp so they flip in dark mode; the -rgb variants carry literals
+   (overridden in the dark block below). */
 :root,
 [data-bs-theme="light"] {
-  --bs-primary:         #EF9F27;
-  --bs-primary-rgb:     239, 159, 39;
-  --bs-success:         #1D9E75;
-  --bs-success-rgb:     29, 158, 117;
-  --bs-danger:          #D85A30;
-  --bs-danger-rgb:      216, 90, 48;
-  --bs-warning:         #EF9F27;
-  --bs-warning-rgb:     239, 159, 39;
-  --bs-info:            #5754A8;
-  --bs-info-rgb:        87, 84, 168;
-  --bs-secondary:       #888780;
-  --bs-secondary-rgb:   136, 135, 128;
-  --bs-light:           #faf7ef;
-  --bs-light-rgb:       250, 247, 239;
-  --bs-dark:            #26215C;
-  --bs-dark-rgb:        38, 33, 92;
-  --bs-body-color:      #1b1740;
-  --bs-body-bg:         #FFFFFF;
-  --bs-border-color:    #f0ede5;
-  /* Bootstrap 5.3 ties card bg to body bg by default — pin it back to white
-     so every `.card` shows up as a crisp white box on the warm page bg. */
-  --bs-card-bg:         #FFFFFF;
+  --bs-primary:       var(--ink);
+  --bs-primary-rgb:   10, 10, 10;
+  --bs-success:       var(--ink);
+  --bs-success-rgb:   10, 10, 10;
+  --bs-danger:        var(--ink);
+  --bs-danger-rgb:    10, 10, 10;
+  --bs-warning:       var(--ink);
+  --bs-warning-rgb:   10, 10, 10;
+  --bs-info:          var(--ink);
+  --bs-info-rgb:      10, 10, 10;
+  --bs-secondary:     var(--gray-500);
+  --bs-secondary-rgb: 115, 115, 115;
+  --bs-light:         var(--gray-100);
+  --bs-light-rgb:     244, 244, 244;
+  --bs-dark:          var(--ink);
+  --bs-dark-rgb:      10, 10, 10;
+  --bs-body-color:    var(--ink);
+  --bs-body-bg:       var(--page-bg);
+  --bs-border-color:  var(--gray-200);
+  --bs-card-bg:       var(--paper);
+  --bs-emphasis-color: var(--ink);
 }
+[data-theme="dark"] {
+  --bs-primary-rgb:   245, 245, 245;
+  --bs-success-rgb:   245, 245, 245;
+  --bs-danger-rgb:    245, 245, 245;
+  --bs-warning-rgb:   245, 245, 245;
+  --bs-info-rgb:      245, 245, 245;
+  --bs-secondary-rgb: 138, 138, 138;
+  --bs-light-rgb:     30, 30, 30;
+  --bs-dark-rgb:      245, 245, 245;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   STATUS / EMPHASIS PRIMITIVES (§3.3) — the core mono language
+   Reusable classes the page tiers apply. Emphasis via fill +
+   weight + glyph, never hue.
+   ═══════════════════════════════════════════════════════════ */
+
+.attn-pill, .ok-pill, .muted-pill {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 3px 9px; border-radius: var(--laskie-radius-pill);
+  font-size: 10.5px; line-height: 1.4; white-space: nowrap;
+  vertical-align: middle;
+}
+/* needs attention: solid ink → inverts in dark automatically */
+.attn-pill  { background: var(--ink); color: var(--paper); font-weight: 700; }
+/* normal / positive: outline */
+.ok-pill    { background: transparent; border: 1px solid var(--gray-300); color: var(--gray-700); font-weight: 500; }
+/* neutral */
+.muted-pill { background: var(--gray-100); color: var(--gray-500); font-weight: 600; }
+
+/* +/− deltas: never red/green. positive normal, negative bold + caret */
+.delta-pos { font-weight: 600; color: var(--ink); white-space: nowrap; }
+.delta-neg { font-weight: 700; color: var(--ink); white-space: nowrap; }
+.delta-pos::before { content: "\25B2"; font-size: .72em; margin-right: 4px; vertical-align: 1px; }
+.delta-neg::before { content: "\25BC"; font-size: .72em; margin-right: 4px; vertical-align: 1px; }
+
+/* unit-status grid glyphs (getUnitPaymentStatus → green/amber/red/gray) */
+.status-glyph {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 22px; height: 22px; border-radius: 50%;
+  font-size: 11px; font-weight: 700; line-height: 1; flex-shrink: 0;
+}
+.status-glyph.green { border: 1px solid var(--gray-300); color: var(--gray-700); }
+.status-glyph.amber { border: 1.5px solid var(--ink); color: var(--ink); }
+.status-glyph.red   { background: var(--ink); color: var(--paper); }
+.status-glyph.gray  { color: var(--gray-400); }
+.status-glyph.green::before { content: "\2713"; }  /* ✓ */
+.status-glyph.amber::before { content: "!"; }
+.status-glyph.red::before   { content: "\2715"; }  /* ✕ */
+.status-glyph.gray::before  { content: "\2013"; }  /* – */
+
+/* voided / soft-deleted rows */
+.row-voided td, .voided-text { text-decoration: line-through; color: var(--gray-400) !important; }
+.voided-mark::after { content: " \2715"; font-size: .85em; color: var(--gray-400); }
+
+/* tabular money — monospaced + aligned columns */
+.num, td.num, .tabular-num {
+  font-family: 'DM Mono', monospace;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* ── Status dots (legend use) ───────────────────────────── */
+.status-dot.green { background: var(--gray-700); box-shadow: none; }
+.status-dot.red   { background: var(--ink); box-shadow: 0 0 0 3px rgba(0,0,0,.12); }
+.status-dot.amber { background: transparent; box-shadow: inset 0 0 0 2px var(--ink); }
+.status-dot.gray  { background: var(--gray-300); box-shadow: none; }
 
 /* ── Cards ──────────────────────────────────────────────── */
 .card {
-  background: var(--laskie-card-bg);
-  border: 1px solid transparent;
+  background: var(--paper);
+  border: 1px solid var(--gray-200);
   border-radius: var(--laskie-radius-card);
   box-shadow: var(--laskie-shadow-card);
+  color: var(--ink);
 }
 .card-header {
   background: transparent;
-  border-bottom: 1px solid var(--laskie-divider);
-  padding: 13px 18px;
+  border-bottom: 1px solid var(--gray-200);
+  padding: 12px 16px;
   border-radius: 0;
 }
-.card-body   { padding: 16px 18px; }
-.card-footer { background: transparent; border-top: 1px solid var(--laskie-divider); padding: 12px 18px; }
+.card-header-title { color: var(--ink); font-weight: 700; }
+.card-body   { padding: 14px 16px; }
+.card-footer { background: transparent; border-top: 1px solid var(--gray-200); padding: 12px 16px; }
 
-/* Hero / dark navy card modifier — used for cash-hero etc. */
+/* Inverted "hero" panel — strongest B&W emphasis. Flips to a light
+   bordered panel in dark mode because --ink/--paper invert. */
 .card.dark-card,
 .dark-card,
 .cash-hero {
-  background: var(--laskie-card-dark);
-  color: #fff;
-  border: none;
+  background: var(--ink);
+  color: var(--paper);
+  border: 1px solid var(--ink);
   border-radius: var(--laskie-radius-card);
   box-shadow: var(--laskie-shadow-hero);
 }
 .card.dark-card .card-header,
-.dark-card .card-header { border-bottom-color: rgba(255,255,255,.10); color: #fff; }
+.dark-card .card-header { border-bottom-color: rgba(127,127,127,.35); color: var(--paper); }
 .card.dark-card .card-header-title,
-.dark-card .card-header-title { color: #fff; }
-/* Override the amber-gradient .cash-hero from app.css */
-.cash-hero { background: var(--laskie-card-dark); padding: 22px 26px; }
-.cash-hero::after { background: rgba(239,159,39,.10); }
+.dark-card .card-header-title { color: var(--paper); }
+.cash-hero { background: var(--ink); padding: 22px 26px; }
+.cash-hero::after { background: rgba(127,127,127,.10); }
 
 /* ── Stat cards ─────────────────────────────────────────── */
 .stat-card {
-  background: var(--laskie-card-bg);
-  border: 1px solid transparent;
+  background: var(--paper);
+  border: 1px solid var(--gray-200);
   border-radius: var(--laskie-radius-stat);
   box-shadow: var(--laskie-shadow-card);
   padding: 16px 18px;
 }
-/* Flex children default to min-width:auto, which prevents the body from
-   shrinking below the width of its longest value (e.g. ₱550,120.00). That
-   pushed the value into the icon on narrow viewports. Letting it shrink
-   plus wrapping at any character is the universal fix. */
+/* Flex children default to min-width:auto, which prevents the body
+   from shrinking below the width of its longest value. Letting it
+   shrink + wrap at any character is the universal fix. */
 .stat-card .stat-body  { min-width: 0; flex: 1 1 auto; }
-.stat-card .stat-value { overflow-wrap: anywhere; }
+.stat-card .stat-value { overflow-wrap: anywhere; line-height: 1.15; }
 
 .stat-icon {
   width: 42px; height: 42px;
   border-radius: 50%;
   font-size: 17px;
   flex-shrink: 0;
+  background: var(--gray-100);
+  color: var(--ink);
+}
+/* All stat-icon color variants collapse to one mono treatment;
+   emphasis comes from the value, not the icon tint. */
+.stat-icon.blue, .stat-icon.green, .stat-icon.red,
+.stat-icon.amber, .stat-icon.purple, .stat-icon.teal {
+  background: var(--gray-100); color: var(--ink);
 }
 
-/* Mobile: tighten the row layout — smaller icon + gap, smaller value type.
-   !important on font-size beats inline `style="font-size:17px"` overrides
-   that several pages (my_summary.php, expenses.php) carry on each value. */
 @media (max-width: 575.98px) {
   .stat-card             { padding: 12px 14px; gap: 10px; }
   .stat-card .stat-icon  { width: 34px; height: 34px; font-size: 13.5px; }
@@ -190,24 +306,11 @@ body {
   .stat-card .stat-label { font-size: 11px; margin-bottom: 2px; }
   .stat-card .stat-sub   { font-size: 10px; }
 }
-.stat-icon.blue   { background: var(--laskie-indigo-bg); color: var(--laskie-indigo); }
-.stat-icon.green  { background: var(--laskie-teal-bg);   color: var(--laskie-teal-ink); }
-.stat-icon.red    { background: var(--laskie-coral-bg);  color: var(--laskie-coral-ink); }
-.stat-icon.amber  { background: var(--laskie-amber-bg);  color: var(--laskie-amber-ink); }
-.stat-icon.purple { background: var(--laskie-indigo-bg); color: var(--laskie-indigo); }
-.stat-icon.teal   { background: var(--laskie-teal-bg);   color: var(--laskie-teal-ink); }
+.stat-label { color: var(--gray-500); font-weight: 500; }
+.stat-value { color: var(--ink);      font-weight: 700; }
+.stat-sub   { color: var(--gray-400); }
 
-.stat-label { color: var(--laskie-ink-mute); font-weight: 500; }
-.stat-value { color: var(--laskie-ink);      font-weight: 700; }
-.stat-sub   { color: var(--laskie-ink-faint); }
-
-/* ── Status dots ────────────────────────────────────────── */
-.status-dot.green { background: var(--laskie-teal);  box-shadow: 0 0 0 3px rgba(29,158,117,.18); }
-.status-dot.red   { background: var(--laskie-coral); box-shadow: 0 0 0 3px rgba(216,90,48,.18); }
-.status-dot.amber { background: var(--laskie-amber); box-shadow: 0 0 0 3px rgba(239,159,39,.18); }
-.status-dot.gray  { background: var(--laskie-ink-faint); }
-
-/* ── Badges — pill-shaped pastel ────────────────────────── */
+/* ── Badges — collapse to mono families (§3.3) ──────────── */
 .badge {
   border-radius: var(--laskie-radius-pill);
   padding: 4px 10px;
@@ -215,22 +318,22 @@ body {
   font-size: 10.5px;
   letter-spacing: 0;
 }
-.badge-admin        { background: var(--laskie-indigo-bg); color: var(--laskie-indigo); }
-.badge-accountant   { background: var(--laskie-teal-bg);   color: var(--laskie-teal-ink); }
-.badge-staff        { background: var(--laskie-amber-bg);  color: var(--laskie-amber-ink); }
-.badge-active       { background: var(--laskie-teal-bg);   color: var(--laskie-teal-ink); }
-.badge-inactive     { background: var(--laskie-coral-bg);  color: var(--laskie-coral-ink); }
-.badge-former       { background: #efece4;                 color: var(--laskie-ink-mute); }
-.badge-vacant       { background: #efece4;                 color: var(--laskie-ink-mute); }
-.badge-occupied     { background: var(--laskie-teal-bg);   color: var(--laskie-teal-ink); }
-.badge-rent         { background: var(--laskie-amber-bg);  color: var(--laskie-amber-ink); }
-.badge-service      { background: var(--laskie-indigo-bg); color: var(--laskie-indigo); }
-.badge-received     { background: var(--laskie-teal-bg);   color: var(--laskie-teal-ink); }
-.badge-remitted     { background: var(--laskie-amber-bg);  color: var(--laskie-amber-ink); }
-.badge-expense      { background: var(--laskie-coral-bg);  color: var(--laskie-coral-ink); }
-.badge-vault-return { background: var(--laskie-indigo-bg); color: var(--laskie-indigo); }
+/* attention family: solid ink */
+.badge-inactive, .badge-expense {
+  background: var(--ink); color: var(--paper);
+}
+/* neutral / muted family */
+.badge-former, .badge-vacant {
+  background: var(--gray-100); color: var(--gray-500);
+}
+/* default outline family — everything else */
+.badge-admin, .badge-accountant, .badge-staff,
+.badge-active, .badge-occupied, .badge-rent, .badge-service,
+.badge-received, .badge-remitted, .badge-vault-return {
+  background: transparent; border: 1px solid var(--gray-300); color: var(--gray-700);
+}
 
-/* ── Buttons — pill-shaped ──────────────────────────────── */
+/* ── Buttons ────────────────────────────────────────────── */
 .btn {
   border-radius: var(--laskie-radius-pill);
   font-weight: 500;
@@ -238,236 +341,252 @@ body {
 .btn-sm, .btn-xs { border-radius: var(--laskie-radius-pill); }
 
 .btn-primary {
-  background: var(--laskie-card-dark);
-  border-color: var(--laskie-card-dark);
-  color: #fff;
+  background: var(--ink);
+  border-color: var(--ink);
+  color: var(--paper);
 }
 .btn-primary:hover,
 .btn-primary:focus {
-  background: #18143d;
-  border-color: #18143d;
-  color: #fff;
+  background: #000;
+  border-color: #000;
+  color: var(--paper);
   box-shadow: none;
 }
+[data-theme="dark"] .btn-primary:hover,
+[data-theme="dark"] .btn-primary:focus { background: #fff; border-color: #fff; }
+
 .btn-outline-primary {
-  border-color: var(--laskie-card-dark);
-  color: var(--laskie-card-dark);
+  border-color: var(--ink);
+  color: var(--ink);
   background: transparent;
 }
 .btn-outline-primary:hover,
 .btn-outline-primary:focus {
-  background: var(--laskie-card-dark);
-  border-color: var(--laskie-card-dark);
-  color: #fff;
+  background: var(--ink);
+  border-color: var(--ink);
+  color: var(--paper);
 }
 .btn-outline-secondary {
-  border-color: var(--laskie-divider);
-  color: var(--laskie-ink);
-  background: #fff;
+  border-color: var(--gray-300);
+  color: var(--ink);
+  background: var(--paper);
 }
 .btn-outline-secondary:hover,
 .btn-outline-secondary:focus {
-  background: var(--laskie-divider);
-  border-color: var(--laskie-divider);
-  color: var(--laskie-ink);
+  background: var(--gray-100);
+  border-color: var(--gray-300);
+  color: var(--ink);
 }
+/* Bootstrap contextual buttons → mono so .btn-success/.btn-danger
+   on un-migrated pages don't reintroduce hue. */
+.btn-success, .btn-danger, .btn-warning, .btn-info {
+  background: var(--ink); border-color: var(--ink); color: var(--paper);
+}
+.btn-success:hover, .btn-danger:hover, .btn-warning:hover, .btn-info:hover {
+  background: #000; border-color: #000; color: var(--paper);
+}
+.btn-light { background: var(--gray-100); border-color: var(--gray-200); color: var(--ink); }
 
 /* Small round icon-only buttons */
 .btn-icon {
   border-radius: 50%;
-  border-color: var(--laskie-divider);
-  background: #fff;
-  color: var(--laskie-ink-mute);
+  border: 1px solid var(--gray-300);
+  background: var(--paper);
+  color: var(--gray-600);
 }
 .btn-icon:hover {
-  border-color: var(--laskie-amber);
-  color: var(--laskie-amber);
-  background: var(--laskie-amber-bg);
+  border-color: var(--ink);
+  color: var(--ink);
+  background: var(--gray-100);
 }
 .btn-icon.danger:hover {
-  border-color: var(--laskie-coral);
-  color: var(--laskie-coral);
-  background: var(--laskie-coral-bg);
+  border-color: var(--ink);
+  color: var(--paper);
+  background: var(--ink);
 }
 
 /* ── Forms ──────────────────────────────────────────────── */
 .form-control, .form-select {
-  border-color: var(--laskie-divider);
+  border-color: var(--gray-300);
   border-radius: var(--laskie-radius-input);
-  background: #fff;
-  color: var(--laskie-ink);
+  background: var(--paper);
+  color: var(--ink);
 }
+.form-control::placeholder { color: var(--gray-400); }
 .form-control:focus, .form-select:focus {
-  border-color: var(--laskie-amber);
-  box-shadow: 0 0 0 3px rgba(239,159,39,.18);
+  border-color: var(--ink);
+  box-shadow: var(--focus-ring);
+  background: var(--paper);
+  color: var(--ink);
 }
-.form-label { color: var(--laskie-ink); font-weight: 600; }
-.form-text  { color: var(--laskie-ink-mute); }
+.form-label { color: var(--gray-700); font-weight: 600; }
+.form-text  { color: var(--gray-500); }
+.form-check-input:checked { background-color: var(--ink); border-color: var(--ink); }
+.form-check-input:focus { border-color: var(--ink); box-shadow: var(--focus-ring); }
+.input-group-text { background: var(--gray-100); border-color: var(--gray-300); color: var(--gray-600); }
 
 /* ── Tables ─────────────────────────────────────────────── */
+.table { color: var(--ink); }
 .table thead th {
   background: transparent;
-  color: var(--laskie-ink-mute);
-  border-bottom: 1px solid var(--laskie-divider);
-  letter-spacing: .04em;
+  color: var(--gray-500);
+  border-bottom: 1px solid var(--gray-200);
+  letter-spacing: .05em;
+  text-transform: uppercase;
 }
-.table tbody td       { border-bottom: 1px solid var(--laskie-divider); }
-.table tbody tr:hover td { background: #fbf9f4; }
+.table tbody td       { border-bottom: 1px solid var(--gray-200); color: var(--ink); }
+.table tbody tr:hover td { background: var(--gray-100); }
+.table-striped > tbody > tr:nth-of-type(odd) > * { background: var(--gray-50); color: var(--ink); }
+.table-card { border: 1px solid var(--gray-200); border-radius: var(--laskie-radius-card); }
+/* Compact density variant for the big grids (collection/transactions/logs/vault) */
+.table.density-compact thead th,
+.table.density-compact tbody td { padding: 5px 10px; }
+/* Horizontal scroll wrapper so wide tables never overflow the page */
+.table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
 
-/* ── Page header & title ────────────────────────────────── */
+/* ── Page header, title, toolbar ────────────────────────── */
 .page-header { margin-bottom: 16px; }
-.page-title  { color: var(--laskie-ink); font-weight: 700; }
+.page-title  { color: var(--ink); font-weight: 700; }
+/* Standardised responsive filter/action bar (§3.6) */
+.page-toolbar {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 10px;
+  margin-bottom: 14px;
+}
+.page-toolbar .toolbar-spacer { flex: 1 1 auto; }
+.section-label {
+  font-size: 10px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: .12em; color: var(--gray-500);
+}
+@media (max-width: 575.98px) {
+  .page-toolbar { gap: 8px; }
+  .page-toolbar > .form-control,
+  .page-toolbar > .form-select,
+  .page-toolbar > .btn { flex: 1 1 auto; }
+}
 
 /* ── Modal ──────────────────────────────────────────────── */
-.modal-content { border-radius: var(--laskie-radius-card); border: 1px solid var(--laskie-divider); }
-.modal-header  { border-bottom: 1px solid var(--laskie-divider); }
-.modal-footer  { border-top: 1px solid var(--laskie-divider); }
+.modal-content { border-radius: var(--laskie-radius-card); border: 1px solid var(--gray-200); background: var(--paper); color: var(--ink); }
+.modal-header  { border-bottom: 1px solid var(--gray-200); }
+.modal-footer  { border-top: 1px solid var(--gray-200); }
+.modal-title   { color: var(--ink); }
+.btn-close { filter: none; }
+[data-theme="dark"] .btn-close { filter: invert(1) grayscale(1) brightness(1.6); }
+
+/* ── Alerts → mono ──────────────────────────────────────── */
+.alert-success, .alert-info { background: var(--gray-100); border: 1px solid var(--gray-200); color: var(--ink); }
+.alert-danger, .alert-warning { background: var(--gray-100); border: 1px solid var(--ink); color: var(--ink); }
+
+/* ── Nav tabs ───────────────────────────────────────────── */
+.nav-tabs .nav-link { color: var(--gray-500); }
+.nav-tabs .nav-link.active { color: var(--ink); border-bottom-color: var(--ink); }
+
+/* ── Misc links / dividers ──────────────────────────────── */
+a { color: var(--ink); }
+a:hover { color: #000; }
+[data-theme="dark"] a:hover { color: #fff; }
+hr, .section-divider { border-color: var(--gray-200); }
+.ip-badge { background: var(--gray-100); color: var(--gray-700); }
+
+/* ── Toast ──────────────────────────────────────────────── */
+.laskie-toast { background: var(--ink); color: var(--paper); }
 
 /* ═══════════════════════════════════════════════════════════
-   NAVIGATION SHELL — Magix-style sidebar + topbar
+   NAVIGATION SHELL — monochrome sidebar + topbar
    ═══════════════════════════════════════════════════════════ */
 
-/* Sidebar shell */
 #sidebar {
-  background: var(--laskie-card-bg);
-  border-right: 1px solid var(--laskie-divider);
+  background: var(--paper);
+  border-right: 1px solid var(--gray-200);
   padding: 6px 0 0;
 }
-#sidebar::-webkit-scrollbar-thumb { background: var(--laskie-divider); }
+#sidebar::-webkit-scrollbar-thumb { background: var(--gray-300); }
 
-/* Brand wordmark */
 .sidebar-brand {
   padding: 16px 18px 18px;
-  border-bottom: 1px solid var(--laskie-divider);
+  border-bottom: 1px solid var(--gray-200);
   gap: 11px;
 }
 .brand-icon {
   width: 34px; height: 34px;
-  background: var(--laskie-card-dark);
+  background: var(--ink);
   border-radius: 10px;
-  color: #fff;
+  color: var(--paper);
   font-size: 15px;
 }
-.brand-text {
-  font-size: 14px;
-  font-weight: 800;
-  letter-spacing: .02em;
-  color: var(--laskie-ink);
-}
-.brand-sub {
-  font-size: 10px;
-  color: var(--laskie-ink-mute);
-  letter-spacing: .04em;
-}
+.brand-text { font-size: 14px; font-weight: 800; letter-spacing: .02em; color: var(--ink); }
+.brand-sub  { font-size: 10px; color: var(--gray-500); letter-spacing: .04em; }
 
-/* Section + label */
 .sidebar-section { padding: 14px 0 4px; }
 .sidebar-section-label {
   font-size: 10px; font-weight: 700;
-  color: var(--laskie-ink-faint);
-  text-transform: uppercase;
-  letter-spacing: .12em;
+  color: var(--gray-400);
+  text-transform: uppercase; letter-spacing: .12em;
   padding: 0 22px 8px;
 }
 
-/* Nav items */
 .sidebar-nav-item {
-  display: flex;
-  align-items: center;
-  gap: 11px;
+  display: flex; align-items: center; gap: 11px;
   padding: 8px 12px;
   margin: 2px 10px;
-  border-radius: var(--laskie-radius-pill);
-  color: var(--laskie-ink);
-  font-size: 13px;
-  font-weight: 500;
+  border-radius: var(--laskie-radius-input);
+  color: var(--gray-700);
+  font-size: 13px; font-weight: 500;
   text-decoration: none;
   transition: background .14s, color .14s;
 }
-
-/* Convert each FontAwesome <i> into a small circular icon pill */
+/* Uniform circular icon chip — no colored tints */
 .sidebar-nav-item i {
   width: 30px; height: 30px;
   border-radius: 50%;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 12px;
-  flex-shrink: 0;
-  background: var(--laskie-indigo-bg);
-  color: var(--laskie-indigo);
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 12px; flex-shrink: 0;
+  background: var(--gray-100);
+  color: var(--gray-700);
   transition: background .14s, color .14s;
 }
+/* Per-section tints all collapse to the single mono chip */
+.sidebar-section .sidebar-nav-item i { background: var(--gray-100); color: var(--gray-700); }
 
-/* Per-section icon tint */
-.sidebar-section[data-section="overview"]   .sidebar-nav-item i { background: var(--laskie-indigo-bg); color: var(--laskie-indigo); }
-.sidebar-section[data-section="payments"]   .sidebar-nav-item i { background: var(--laskie-amber-bg);  color: var(--laskie-amber-ink); }
-.sidebar-section[data-section="financials"] .sidebar-nav-item i { background: var(--laskie-teal-bg);   color: var(--laskie-teal-ink); }
-.sidebar-section[data-section="accounting"] .sidebar-nav-item i { background: var(--laskie-indigo-bg); color: var(--laskie-indigo); }
-.sidebar-section[data-section="admin"]      .sidebar-nav-item i { background: var(--laskie-coral-bg);  color: var(--laskie-coral-ink); }
+.sidebar-nav-item.text-danger { color: var(--gray-700) !important; }
+.sidebar-nav-item.text-danger i { background: var(--gray-100); color: var(--gray-700); }
+.sidebar-nav-item.text-danger:hover { background: var(--gray-100); }
+.sidebar-nav-item.text-danger:hover i { background: var(--ink); color: var(--paper); }
 
-/* Sign Out (text-danger) always coral */
-.sidebar-nav-item.text-danger { color: var(--laskie-coral) !important; }
-.sidebar-nav-item.text-danger i {
-  background: var(--laskie-coral-bg);
-  color: var(--laskie-coral);
-}
-.sidebar-nav-item.text-danger:hover {
-  background: var(--laskie-coral-bg);
-}
+.sidebar-nav-item:hover { background: var(--gray-100); color: var(--ink); }
+.sidebar-nav-item:hover i { background: var(--gray-200); color: var(--ink); }
 
-/* Hover state */
-.sidebar-nav-item:hover {
-  background: #f7f4ec;
-  color: var(--laskie-ink);
-}
-
-/* Active state — soft amber pill with solid dark icon circle */
+/* Active — gray fill + ink text + 2px ink left marker (replaces pill) */
 .sidebar-nav-item.active {
-  background: var(--laskie-amber-bg);
-  color: var(--laskie-ink);
+  background: var(--gray-100);
+  color: var(--ink);
   font-weight: 700;
+  box-shadow: inset 2px 0 0 var(--ink);
 }
-.sidebar-nav-item.active i {
-  background: var(--laskie-card-dark);
-  color: #fff;
-}
+.sidebar-nav-item.active i { background: var(--ink); color: var(--paper); }
 
-/* Footer (user info) */
-.sidebar-footer {
-  border-top: 1px solid var(--laskie-divider);
-  padding: 12px 10px 14px;
-}
-.user-info { padding: 8px 12px; border-radius: var(--laskie-radius-pill); }
-.user-info:hover { background: #f7f4ec; }
-.user-avatar-sm {
-  background: var(--laskie-amber);
-  color: #fff;
-  font-weight: 700;
-}
-.user-name-sm { color: var(--laskie-ink); }
-.user-role-sm { color: var(--laskie-ink-mute); }
+.sidebar-footer { border-top: 1px solid var(--gray-200); padding: 12px 10px 14px; }
+.user-info { padding: 8px 12px; border-radius: var(--laskie-radius-input); }
+.user-info:hover { background: var(--gray-100); }
+.user-avatar-sm { background: var(--ink); color: var(--paper); font-weight: 700; }
+.user-name-sm { color: var(--ink); }
+.user-role-sm { color: var(--gray-500); }
 
 /* ── Topbar ─────────────────────────────────────────────── */
 #topbar {
-  background: var(--laskie-page-bg);
-  border-bottom: none;
+  background: var(--paper);
+  border-bottom: 1px solid var(--gray-200);
   box-shadow: none;
   padding: 0 24px;
 }
 .btn-toggle-sidebar {
-  color: var(--laskie-ink);
+  color: var(--ink);
   border-radius: 50%;
   width: 36px; height: 36px;
   display: inline-flex; align-items: center; justify-content: center;
 }
-.btn-toggle-sidebar:hover { background: rgba(255,255,255,.6); }
-.topbar-title {
-  color: var(--laskie-ink);
-  font-weight: 700;
-  font-size: 16px;
-}
-.user-avatar {
-  background: var(--laskie-amber);
-  color: #fff;
-}
+.btn-toggle-sidebar:hover { background: var(--gray-100); }
+.topbar-title { color: var(--ink); font-weight: 700; font-size: 16px; }
+.user-avatar { background: var(--ink); color: var(--paper); }
+
+/* Theme toggle button (sun/moon) lives in the topbar */
+.btn-theme-toggle i { transition: transform .2s ease; }

@@ -30,11 +30,10 @@ function showToast(msg, type = 'success') {
         return window.showToast(msg, type);
     }
     const icons  = { success: '✓', error: '✕', warning: '!' };
-    const colors = { success: '#1D9E75', error: '#D85A30', warning: '#EF9F27' };
     const t = document.createElement('div');
     t.className = 'laskie-toast';
     const iconEl = document.createElement('span');
-    iconEl.style.cssText = `color:${colors[type] || colors.success};font-weight:700;font-size:16px`;
+    iconEl.style.cssText = 'color:inherit;font-weight:700;font-size:16px';
     iconEl.textContent = icons[type] || icons.success;
     const textEl = document.createElement('span');
     textEl.textContent = ' ' + (msg == null ? '' : String(msg));
@@ -87,7 +86,7 @@ function fmt(n) { return '₱' + parseFloat(n||0).toLocaleString('en-PH', {minim
       listEl.textContent = '';
       if (!r.notifications.length) {
         var empty = document.createElement('div');
-        empty.style.cssText = 'padding:14px;color:#999;font-size:12.5px';
+        empty.style.cssText = 'padding:14px;color:var(--gray-500);font-size:12.5px';
         empty.textContent = 'No notifications.';
         listEl.appendChild(empty);
         return;
@@ -95,13 +94,13 @@ function fmt(n) { return '₱' + parseFloat(n||0).toLocaleString('en-PH', {minim
       r.notifications.forEach(function (n) {
         var a = document.createElement('a');
         a.href = '#';
-        a.style.cssText = 'display:block;padding:10px 14px;border-bottom:1px solid #f1f1f1;text-decoration:none;color:inherit;' +
-          (String(n.is_read) === '1' ? '' : 'background:rgba(239,159,39,.08)');
+        a.style.cssText = 'display:block;padding:10px 14px;border-bottom:1px solid var(--gray-200);text-decoration:none;color:var(--ink);' +
+          (String(n.is_read) === '1' ? '' : 'background:var(--gray-100)');
         var msg = document.createElement('div');
         msg.style.cssText = 'font-size:12.5px;line-height:1.35';
         msg.textContent = n.message;
         var t = document.createElement('div');
-        t.style.cssText = 'font-size:10.5px;color:#999;margin-top:3px';
+        t.style.cssText = 'font-size:10.5px;color:var(--gray-500);margin-top:3px';
         t.textContent = n.created_at;
         a.appendChild(msg); a.appendChild(t);
         a.onclick = function (ev) {

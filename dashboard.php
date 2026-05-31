@@ -150,141 +150,61 @@ logActivity($pdo, 'VIEW_DASHBOARD', 'Dashboard', "Viewed annual dashboard for $s
 include 'includes/header.php';
 ?>
 <style>
-/* ── Dashboard — Magix-style overrides ───────────────────── */
+/* ── Dashboard — monochrome ───────────────────────────────── */
 .page-header           { margin-bottom: 14px; }
 .db-row                { margin-bottom: 12px; }
 
-.db-card               { background: var(--laskie-card-bg); border: 1px solid transparent; border-radius: var(--laskie-radius-card); box-shadow: var(--laskie-shadow-card); }
-.db-card .card-header  { padding: 12px 16px; border-bottom: 1px solid var(--laskie-divider); }
+/* All non-hero cards are clean white surfaces (hairline + whisper shadow) */
+.db-card               { background: var(--paper); border: 1px solid var(--gray-200); border-radius: var(--laskie-radius-card); box-shadow: var(--laskie-shadow-card); }
+.db-card .card-header  { padding: 12px 16px; border-bottom: 1px solid var(--gray-200); }
+.db-card .card-header-title { color: var(--ink); font-size: 14px; }
 .db-card .card-body    { padding: 12px 16px; }
+.db-accent             { border-left: 3px solid var(--ink); }
 
-/* Stat cards — icon in top-right corner, label + value left-aligned */
-.db-stat {
-    position: relative;
-    display: block;
-    padding: 18px 18px 16px;
-    background: var(--laskie-card-bg);
-    border-radius: var(--laskie-radius-stat);
-    box-shadow: var(--laskie-shadow-card);
-    border: 1px solid transparent;
-    min-height: 92px;
+/* ── Inverted KPI hero strip — the single B&W "hero" (§3.6) ── */
+.db-hero {
+    display: flex; flex-wrap: wrap;
+    background: var(--ink); color: var(--paper);
+    border: 1px solid var(--ink);
+    border-radius: var(--laskie-radius-card);
+    box-shadow: var(--laskie-shadow-hero);
+    overflow: hidden;
 }
-.db-stat .stat-icon {
-    position: absolute;
-    top: 14px; right: 14px;
-    width: 36px; height: 36px;
-    border-radius: 50%;
-    font-size: 13px;
+.db-hero-cell {
+    flex: 1 1 0; min-width: 150px;
+    padding: 18px 20px;
+    border-left: 1px solid rgba(128,128,128,.32);
 }
-.db-stat .stat-body  { padding-right: 44px; min-width: 0; }
-.db-stat .stat-label { font-size: 11px; color: var(--laskie-ink-mute); font-weight: 500; margin-bottom: 8px; letter-spacing: .02em; }
-.db-stat .stat-value { font-size: 22px; font-weight: 700; color: var(--laskie-ink); line-height: 1.1; overflow-wrap: anywhere; }
-.db-stat .stat-sub   { font-size: 10.5px; color: var(--laskie-ink-faint); margin-top: 6px; }
-
-/* Mobile: 2-col stat-card layout can't fit a ₱500k value at 22px next to a 36px icon.
-   Pull padding/icon in and scale the value type so the icon and number can't touch. */
+.db-hero-cell:first-child { border-left: none; }
+.db-hero .stat-label { font-size: 11px; font-weight: 500; opacity: .62; margin-bottom: 8px; letter-spacing: .02em; }
+.db-hero .stat-value { font-size: 22px; font-weight: 700; line-height: 1.15; overflow-wrap: anywhere; }
+.db-hero .stat-value .caret { font-size: .72em; vertical-align: 1px; margin-right: 3px; opacity: .85; }
+.db-hero .stat-sub   { font-size: 10.5px; opacity: .45; margin-top: 6px; }
 @media (max-width: 575.98px) {
-  .db-stat                { padding: 14px 14px 12px; min-height: 78px; }
-  .db-stat .stat-icon     { top: 10px; right: 10px; width: 30px; height: 30px; font-size: 11.5px; }
-  .db-stat .stat-body     { padding-right: 38px; }
-  .db-stat .stat-label    { font-size: 10.5px; margin-bottom: 6px; }
-  .db-stat .stat-value    { font-size: 16.5px; }
-  .db-stat .stat-sub      { font-size: 10px; margin-top: 4px; }
+  .db-hero-cell { flex: 1 1 50%; min-width: 0; padding: 14px 16px; }
+  .db-hero-cell:nth-child(odd) { border-left: none; }
+  .db-hero-cell:nth-child(n+3) { border-top: 1px solid rgba(128,128,128,.32); }
+  .db-hero .stat-value { font-size: 17px; }
 }
 
-/* Tighter table cells inside dashboard cards */
+/* Tighter table cells inside dashboard cards; right-aligned = tabular money */
 .db-tbl td, .db-tbl th { padding: 7px 12px !important; font-size: 12.5px; }
-.db-tbl thead th       { background: transparent; border-bottom: 1px solid var(--laskie-divider); }
-.db-tbl tfoot tr       { background: #faf7ef !important; }
+.db-tbl thead th       { background: transparent; border-bottom: 1px solid var(--gray-200); }
+.db-tbl td.text-end    { font-family: 'DM Mono', monospace; font-variant-numeric: tabular-nums; }
+.db-tbl tfoot tr       { background: var(--gray-50) !important; font-weight: 700; }
+.db-tbl tfoot td       { border-top: 1px solid var(--gray-200); }
+.db-row-now            { background: var(--gray-100) !important; }
+/* Unit-status: give the status cell room so amount + "Late fee" can stack
+   without overflowing (§3.5) */
+#unitStatusTable td:last-child { min-width: 124px; }
 
 .db-chart              { position: relative; height: 220px; }
 .db-card-fill          { display: flex; flex-direction: column; }
 .db-chart-grow         { position: relative; flex: 1; min-height: 220px; }
 
-/* Magix dark-hero treatment — shared by every box on the dashboard.
-   Goal: SOLID violet plane inside the card — no internal hairlines,
-   dividers, hover tints or zebra stripes. */
-.db-card.dark-card                    { background: var(--laskie-card-dark); color: #fff; border: none; box-shadow: var(--laskie-shadow-hero); }
-.db-card.dark-card .card-header       { border-bottom: none !important; padding: 16px 20px 4px; }
-.db-card.dark-card .card-header-title { color: #fff; font-size: 14.5px; letter-spacing: .01em; }
-.db-card.dark-card .card-body         { padding: 10px 18px 16px; }
-.db-card.dark-card .db-chart          { height: 260px; }
-
-/* Unit-chart card — period strip, selector, spinner — borderless */
-.db-card.dark-card #unitChartStats          { border: none !important; padding-top: 6px !important; margin-top: 4px !important; }
-.db-card.dark-card #unitChartStats span     { color: rgba(255,255,255,.55) !important; }
-.db-card.dark-card #unitChartStats #ucTitle { color: rgba(255,255,255,.45) !important; }
-.db-card.dark-card #unitChartPeriod {
-    background: rgba(255,255,255,.06);
-    border-color: transparent;
-    color: #fff;
-    background-image: linear-gradient(45deg, transparent 50%, rgba(255,255,255,.65) 50%),
-                      linear-gradient(135deg, rgba(255,255,255,.65) 50%, transparent 50%),
-                      none;
-    background-position: calc(100% - 14px) 50%, calc(100% - 9px) 50%;
-    background-size: 5px 5px;
-    background-repeat: no-repeat;
-}
-.db-card.dark-card #unitChartPeriod:focus    { box-shadow: 0 0 0 3px rgba(239,159,39,.25); border-color: transparent; }
-.db-card.dark-card #unitChartPeriod option,
-.db-card.dark-card #unitChartPeriod optgroup { color: var(--laskie-ink); background: #fff; }
-.db-card.dark-card #unitChartSpinner         { background: rgba(38,33,92,.78) !important; }
-
-/* Stat cards on dark — solid plane */
-.db-stat.dark-card {
-    background: var(--laskie-card-dark);
-    color: #fff;
-    border: none;
-    box-shadow: var(--laskie-shadow-hero);
-}
-.db-stat.dark-card .stat-label { color: rgba(255,255,255,.55); }
-.db-stat.dark-card .stat-value { color: #fff; }
-.db-stat.dark-card .stat-sub   { color: rgba(255,255,255,.35); }
-
-/* Stat-icon: solid coloured chip on the violet plane (no pastel pill) */
-.db-stat.dark-card .stat-icon.blue,
-.db-stat.dark-card .stat-icon.purple { background: var(--laskie-indigo); color: #fff; }
-.db-stat.dark-card .stat-icon.red    { background: var(--laskie-coral);  color: #fff; }
-.db-stat.dark-card .stat-icon.green,
-.db-stat.dark-card .stat-icon.teal   { background: var(--laskie-teal);   color: #fff; }
-.db-stat.dark-card .stat-icon.amber  { background: var(--laskie-amber);  color: #fff; }
-
-/* Tables on dark cards — zero internal borders, zero hover/foot tints */
-.db-card.dark-card .table                          { color: rgba(255,255,255,.88); margin: 0; --bs-table-bg: transparent; --bs-table-color: rgba(255,255,255,.88); --bs-table-striped-bg: transparent; --bs-table-hover-bg: transparent; --bs-table-border-color: transparent; }
-.db-card.dark-card .table thead th                 { color: rgba(255,255,255,.5); background: transparent; border: none !important; }
-.db-card.dark-card .table tbody td                 { color: rgba(255,255,255,.88); background: transparent; border: none !important; }
-.db-card.dark-card .table tbody tr:last-child td   { border: none !important; }
-.db-card.dark-card .table tbody tr:hover td        { background: transparent !important; }
-.db-card.dark-card .table tfoot tr                 { background: transparent !important; color: #fff; }
-.db-card.dark-card .table tfoot td                 { border: none !important; }
-.db-card.dark-card .text-muted                     { color: rgba(255,255,255,.45) !important; }
-.db-card.dark-card .border-end                     { border-color: transparent !important; }
-
-/* DataTables chrome on dark cards — borderless input pills */
-.db-card.dark-card .dataTables_filter input,
-.db-card.dark-card .dataTables_length select {
-    background: rgba(255,255,255,.06);
-    border: 1px solid transparent;
-    color: #fff;
-}
-.db-card.dark-card .dataTables_filter input:focus,
-.db-card.dark-card .dataTables_length select:focus { outline: none; box-shadow: 0 0 0 3px rgba(239,159,39,.20); border-color: transparent; }
-.db-card.dark-card .dataTables_filter input::placeholder { color: rgba(255,255,255,.35); }
-.db-card.dark-card .dataTables_filter,
-.db-card.dark-card .dataTables_length,
-.db-card.dark-card .dataTables_info { color: rgba(255,255,255,.55); }
-.db-card.dark-card .dataTables_paginate .paginate_button { color: rgba(255,255,255,.65) !important; border-color: transparent !important; background: transparent !important; }
-.db-card.dark-card .dataTables_paginate .paginate_button:hover    { background: rgba(255,255,255,.08) !important; color: #fff !important; border-color: transparent !important; }
-.db-card.dark-card .dataTables_paginate .paginate_button.current,
-.db-card.dark-card .dataTables_paginate .paginate_button.current:hover { background: var(--laskie-amber) !important; color: #fff !important; border-color: transparent !important; }
-
-/* DataTables scroll-y container (Unit Status) — kill the white inner border */
-.db-card.dark-card .dataTables_scroll,
-.db-card.dark-card .dataTables_scrollBody,
-.db-card.dark-card .dataTables_scrollHead { border: none !important; background: transparent !important; }
-
-/* Year-picker (page-header) — translucent pill on warm bg */
-.page-header .form-select { background: rgba(255,255,255,.6); border-color: var(--laskie-divider); color: var(--laskie-ink); }
+/* Unit-chart stats strip + period selector (on white card now) */
+#unitChartStats span     { color: var(--gray-500); }
+#unitChartStats #ucTitle { color: var(--gray-400); }
 </style>
 
 <div class="page-header">
@@ -299,47 +219,27 @@ include 'includes/header.php';
   </form>
 </div>
 
-<!-- ── Row 1: Stat Cards ───────────────────────────────────── -->
-<div class="row g-2 db-row">
-  <div class="col-6 col-md-3">
-    <div class="stat-card db-stat dark-card">
-      <div class="stat-icon blue"><i class="fa-solid fa-coins"></i></div>
-      <div class="stat-body">
-        <div class="stat-label">Total Revenue</div>
-        <div class="stat-value"><?= money($totalRev) ?></div>
-        <div class="stat-sub"><?= $selectedYear ?></div>
-      </div>
-    </div>
+<!-- ── Row 1: Inverted KPI hero strip ──────────────────────── -->
+<div class="db-hero db-row">
+  <div class="db-hero-cell">
+    <div class="stat-label">Total Revenue</div>
+    <div class="stat-value num"><?= money($totalRev) ?></div>
+    <div class="stat-sub"><?= $selectedYear ?></div>
   </div>
-  <div class="col-6 col-md-3">
-    <div class="stat-card db-stat dark-card">
-      <div class="stat-icon red"><i class="fa-solid fa-file-invoice-dollar"></i></div>
-      <div class="stat-body">
-        <div class="stat-label">Total Expenses</div>
-        <div class="stat-value"><?= money($totalExp) ?></div>
-        <div class="stat-sub"><?= $selectedYear ?></div>
-      </div>
-    </div>
+  <div class="db-hero-cell">
+    <div class="stat-label">Total Expenses</div>
+    <div class="stat-value num"><?= money($totalExp) ?></div>
+    <div class="stat-sub"><?= $selectedYear ?></div>
   </div>
-  <div class="col-6 col-md-3">
-    <div class="stat-card db-stat dark-card">
-      <div class="stat-icon green"><i class="fa-solid fa-chart-line"></i></div>
-      <div class="stat-body">
-        <div class="stat-label">Net Income</div>
-        <div class="stat-value" style="color:<?= money_gte($totalNet, '0.00') ? 'var(--success)' : 'var(--danger)' ?>"><?= money($totalNet) ?></div>
-        <div class="stat-sub"><?= $selectedYear ?></div>
-      </div>
-    </div>
+  <div class="db-hero-cell">
+    <div class="stat-label">Net Income</div>
+    <div class="stat-value num<?= money_gte($totalNet, '0.00') ? '' : ' fw-bold' ?>"><span class="caret" aria-hidden="true"><?= money_gte($totalNet, '0.00') ? '▲' : '▼' ?></span><?= money($totalNet) ?></div>
+    <div class="stat-sub"><?= $selectedYear ?></div>
   </div>
-  <div class="col-6 col-md-3">
-    <div class="stat-card db-stat dark-card">
-      <div class="stat-icon teal"><i class="fa-solid fa-door-open"></i></div>
-      <div class="stat-body">
-        <div class="stat-label">Units Occupied</div>
-        <div class="stat-value"><?= $occupiedUnits ?> / <?= $totalUnits ?></div>
-        <div class="stat-sub">Rental units</div>
-      </div>
-    </div>
+  <div class="db-hero-cell">
+    <div class="stat-label">Units Occupied</div>
+    <div class="stat-value"><?= $occupiedUnits ?> / <?= $totalUnits ?></div>
+    <div class="stat-sub">Rental units</div>
   </div>
 </div>
 
@@ -350,7 +250,7 @@ include 'includes/header.php';
   <div class="col-lg-5 d-flex flex-column gap-2">
 
     <!-- Month-to-date -->
-    <div class="card db-card dark-card" style="border-left:3px solid var(--laskie-amber)">
+    <div class="card db-card db-accent">
       <div class="card-header">
         <span class="card-header-title"><i class="fa-solid fa-calendar-day me-1"></i><?= date('F Y') ?> — Month to Date</span>
       </div>
@@ -358,15 +258,15 @@ include 'includes/header.php';
         <div class="row g-0 text-center">
           <div class="col-4 border-end">
             <div class="text-muted" style="font-size:11px">Revenue</div>
-            <div class="fw-bold" style="font-size:14px;color:var(--primary)"><?= money($cmRev) ?></div>
+            <div class="fw-bold num" style="font-size:14px"><?= money($cmRev) ?></div>
           </div>
           <div class="col-4 border-end">
             <div class="text-muted" style="font-size:11px">Expenses</div>
-            <div class="fw-bold" style="font-size:14px;color:var(--danger)"><?= money($cmExp) ?></div>
+            <div class="fw-bold num" style="font-size:14px"><?= money($cmExp) ?></div>
           </div>
           <div class="col-4">
             <div class="text-muted" style="font-size:11px">Net Income</div>
-            <div class="fw-bold" style="font-size:14px;color:<?= money_gte($cmNet, '0.00') ? 'var(--success)' : 'var(--danger)' ?>"><?= money($cmNet) ?></div>
+            <div class="num <?= money_gte($cmNet, '0.00') ? 'delta-pos' : 'delta-neg' ?>" style="font-size:14px"><?= money($cmNet) ?></div>
           </div>
         </div>
       </div>
@@ -374,7 +274,7 @@ include 'includes/header.php';
 
     <!-- Unit payment status -->
     <?php if (!empty($unitStatusData)): ?>
-    <div class="card db-card dark-card">
+    <div class="card db-card">
       <div class="card-header">
         <span class="card-header-title"><i class="fa-solid fa-building me-1"></i><?= date('F Y') ?> — Unit Status</span>
       </div>
@@ -392,7 +292,7 @@ include 'includes/header.php';
             <tr>
               <td class="fw-600"><?= clean($u['unit_name']) ?></td>
               <td class="text-muted">—</td>
-              <td data-order="3"><span class="badge" style="background:rgba(255,255,255,.10);color:rgba(255,255,255,.65);font-size:10px">Vacant</span></td>
+              <td data-order="3"><span class="muted-pill">Vacant</span></td>
             </tr>
           <?php else:
               $rate         = getRateForMonth($pdo, (int)$u['id'], (float)$u['monthly_rate'], $curMonth, $curYear);
@@ -412,11 +312,11 @@ include 'includes/header.php';
               <td style="max-width:100px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><?= clean($u['tenant_name'] ?? '—') ?></td>
               <td data-order="<?= $sortKey ?>">
                 <?php if ($curMonthPaid): ?>
-                  <span style="color:var(--success);font-weight:600;font-size:12px"><i class="fa-solid fa-circle-check me-1"></i>Paid</span>
+                  <span class="ok-pill"><i class="fa-solid fa-check"></i>Paid</span>
                 <?php else: ?>
-                  <span style="color:var(--danger);font-weight:600;font-size:12px"><i class="fa-solid fa-circle-xmark me-1"></i><?= money($amountDue) ?></span>
+                  <span class="attn-pill"><i class="fa-solid fa-xmark"></i><?= money($amountDue) ?></span>
                   <?php if ($isLate): ?>
-                  <br><span style="color:var(--warning);font-size:11px"><i class="fa-solid fa-triangle-exclamation me-1"></i>Late fee applies</span>
+                  <div class="stat-sub mt-1"><i class="fa-solid fa-triangle-exclamation me-1"></i>Late fee applies</div>
                   <?php endif; ?>
                 <?php endif; ?>
               </td>
@@ -432,7 +332,7 @@ include 'includes/header.php';
   </div><!-- /col-lg-5 -->
 
   <div class="col-lg-7">
-    <div class="card db-card db-card-fill dark-card h-100">
+    <div class="card db-card db-card-fill h-100">
       <div class="card-header" style="display:block">
         <div style="display:flex;align-items:center;gap:8px">
           <span class="card-header-title me-auto"><i class="fa-solid fa-chart-bar me-1"></i>Revenue vs Expenses by Unit</span>
@@ -451,16 +351,16 @@ include 'includes/header.php';
             <?php endforeach; ?>
           </select>
         </div>
-        <div id="unitChartStats" style="display:flex;gap:14px;flex-wrap:wrap;font-size:11px;margin-top:6px;padding-top:6px;border-top:1px solid var(--laskie-divider)">
-          <span style="color:var(--laskie-ink-mute)">Rev: <strong id="ucRev" style="color:var(--laskie-amber)">—</strong></span>
-          <span style="color:var(--laskie-ink-mute)">Exp: <strong id="ucExp" style="color:var(--laskie-coral)">—</strong></span>
-          <span style="color:var(--laskie-ink-mute)">Net: <strong id="ucNet">—</strong></span>
-          <span id="ucTitle" style="margin-left:auto;color:var(--laskie-ink-faint);font-style:italic;font-size:10.5px"></span>
+        <div id="unitChartStats" style="display:flex;gap:14px;flex-wrap:wrap;font-size:11px;margin-top:6px;padding-top:6px;border-top:1px solid var(--gray-200)">
+          <span style="color:var(--gray-500)">Rev: <strong id="ucRev" class="num">—</strong></span>
+          <span style="color:var(--gray-500)">Exp: <strong id="ucExp" class="num">—</strong></span>
+          <span style="color:var(--gray-500)">Net: <strong id="ucNet" class="num">—</strong></span>
+          <span id="ucTitle" style="margin-left:auto;color:var(--gray-400);font-style:italic;font-size:10.5px"></span>
         </div>
       </div>
       <div class="card-body db-chart-grow" style="position:relative">
-        <div id="unitChartSpinner" style="display:none;position:absolute;inset:0;background:rgba(255,255,255,.82);z-index:10;align-items:center;justify-content:center;border-radius:0 0 var(--laskie-radius-card) var(--laskie-radius-card)">
-          <div class="spinner-border spinner-border-sm" style="color:var(--laskie-amber)" role="status"><span class="visually-hidden">Loading…</span></div>
+        <div id="unitChartSpinner" style="display:none;position:absolute;inset:0;background:var(--paper);z-index:10;align-items:center;justify-content:center;border-radius:0 0 var(--laskie-radius-card) var(--laskie-radius-card)">
+          <div class="spinner-border spinner-border-sm" style="color:var(--ink)" role="status"><span class="visually-hidden">Loading…</span></div>
         </div>
         <canvas id="unitChart"></canvas>
       </div>
@@ -472,7 +372,7 @@ include 'includes/header.php';
 <!-- ── Row 3 (current year): Monthly chart | Category pie ─── -->
 <div class="row g-2 db-row">
   <div class="col-lg-8">
-    <div class="card db-card dark-card">
+    <div class="card db-card">
       <div class="card-header">
         <span class="card-header-title"><i class="fa-solid fa-chart-line me-1"></i>Monthly Revenue & Net Income — <?= $selectedYear ?></span>
       </div>
@@ -480,7 +380,7 @@ include 'includes/header.php';
     </div>
   </div>
   <div class="col-lg-4">
-    <div class="card db-card dark-card h-100">
+    <div class="card db-card h-100">
       <div class="card-header">
         <span class="card-header-title"><i class="fa-solid fa-chart-pie me-1"></i>Expenses by Category</span>
       </div>
@@ -493,7 +393,7 @@ include 'includes/header.php';
 <!-- ── Row 2 (other years): Bar chart | Category pie ─────── -->
 <div class="row g-2 db-row">
   <div class="col-lg-8">
-    <div class="card db-card dark-card">
+    <div class="card db-card">
       <div class="card-header" style="display:block">
         <div style="display:flex;align-items:center;gap:8px">
           <span class="card-header-title me-auto"><i class="fa-solid fa-chart-bar me-1"></i>Revenue vs Expenses by Unit</span>
@@ -512,23 +412,23 @@ include 'includes/header.php';
             <?php endforeach; ?>
           </select>
         </div>
-        <div id="unitChartStats" style="display:flex;gap:14px;flex-wrap:wrap;font-size:11px;margin-top:6px;padding-top:6px;border-top:1px solid var(--laskie-divider)">
-          <span style="color:var(--laskie-ink-mute)">Rev: <strong id="ucRev" style="color:var(--laskie-amber)">—</strong></span>
-          <span style="color:var(--laskie-ink-mute)">Exp: <strong id="ucExp" style="color:var(--laskie-coral)">—</strong></span>
-          <span style="color:var(--laskie-ink-mute)">Net: <strong id="ucNet">—</strong></span>
-          <span id="ucTitle" style="margin-left:auto;color:var(--laskie-ink-faint);font-style:italic;font-size:10.5px"></span>
+        <div id="unitChartStats" style="display:flex;gap:14px;flex-wrap:wrap;font-size:11px;margin-top:6px;padding-top:6px;border-top:1px solid var(--gray-200)">
+          <span style="color:var(--gray-500)">Rev: <strong id="ucRev" class="num">—</strong></span>
+          <span style="color:var(--gray-500)">Exp: <strong id="ucExp" class="num">—</strong></span>
+          <span style="color:var(--gray-500)">Net: <strong id="ucNet" class="num">—</strong></span>
+          <span id="ucTitle" style="margin-left:auto;color:var(--gray-400);font-style:italic;font-size:10.5px"></span>
         </div>
       </div>
       <div class="card-body db-chart" style="position:relative">
-        <div id="unitChartSpinner" style="display:none;position:absolute;inset:0;background:rgba(255,255,255,.82);z-index:10;align-items:center;justify-content:center;border-radius:0 0 var(--laskie-radius-card) var(--laskie-radius-card)">
-          <div class="spinner-border spinner-border-sm" style="color:var(--laskie-amber)" role="status"><span class="visually-hidden">Loading…</span></div>
+        <div id="unitChartSpinner" style="display:none;position:absolute;inset:0;background:var(--paper);z-index:10;align-items:center;justify-content:center;border-radius:0 0 var(--laskie-radius-card) var(--laskie-radius-card)">
+          <div class="spinner-border spinner-border-sm" style="color:var(--ink)" role="status"><span class="visually-hidden">Loading…</span></div>
         </div>
         <canvas id="unitChart"></canvas>
       </div>
     </div>
   </div>
   <div class="col-lg-4">
-    <div class="card db-card dark-card h-100">
+    <div class="card db-card h-100">
       <div class="card-header">
         <span class="card-header-title"><i class="fa-solid fa-chart-pie me-1"></i>Expenses by Category</span>
       </div>
@@ -540,7 +440,7 @@ include 'includes/header.php';
 <!-- ── Row 3 (other years): Monthly chart ─────────────────── -->
 <div class="row g-2 db-row">
   <div class="col-12">
-    <div class="card db-card dark-card">
+    <div class="card db-card">
       <div class="card-header">
         <span class="card-header-title"><i class="fa-solid fa-chart-line me-1"></i>Monthly Revenue & Net Income — <?= $selectedYear ?></span>
       </div>
@@ -553,7 +453,7 @@ include 'includes/header.php';
 <!-- ── Row 4: Monthly summary | Per-unit summary ──────────── -->
 <div class="row g-2 db-row">
   <div class="col-lg-5">
-    <div class="card db-card dark-card">
+    <div class="card db-card">
       <div class="card-header">
         <span class="card-header-title"><i class="fa-solid fa-table me-1"></i>Monthly Summary — <?= $selectedYear ?></span>
         <button class="btn btn-sm btn-outline-secondary no-print" onclick="window.print()"><i class="fa-solid fa-print me-1"></i>Print</button>
@@ -573,14 +473,14 @@ include 'includes/header.php';
             // data-order on month so DataTables sorts chronologically by
             // numeric month (1..12) regardless of displayed Jan/Feb names.
           ?>
-          <tr<?= $isCurrent ? ' style="background:rgba(239,159,39,.18);"' : '' ?>>
+          <tr<?= $isCurrent ? ' class="db-row-now"' : '' ?>>
             <td data-order="<?= $m ?>">
               <?= date('M', mktime(0,0,0,$m,1)) ?>
-              <?php if ($isCurrent): ?><span class="badge ms-1" style="background:var(--laskie-amber);color:#fff;font-size:9px">Now</span><?php endif; ?>
+              <?php if ($isCurrent): ?><span class="badge ms-1" style="background:var(--ink);color:var(--paper);font-size:9px">Now</span><?php endif; ?>
             </td>
             <td class="text-end" data-order="<?= (float)$r ?>"><?= money($r) ?></td>
             <td class="text-end" data-order="<?= (float)$e ?>"><?= money($e) ?></td>
-            <td class="text-end fw-bold" data-order="<?= (float)$n ?>" style="color:<?= money_gte($n, '0.00') ? 'var(--success)' : 'var(--danger)' ?>"><?= money($n) ?></td>
+            <td class="text-end fw-bold<?= money_gte($n, '0.00') ? '' : ' delta-neg' ?>" data-order="<?= (float)$n ?>"><?= money($n) ?></td>
           </tr>
           <?php } ?>
           </tbody>
@@ -588,7 +488,7 @@ include 'includes/header.php';
             <td>Total</td>
             <td class="text-end"><?= money($totalRev) ?></td>
             <td class="text-end"><?= money($totalExp) ?></td>
-            <td class="text-end" style="color:<?= money_gte($totalNet, '0.00') ? 'var(--success)' : 'var(--danger)' ?>"><?= money($totalNet) ?></td>
+            <td class="text-end<?= money_gte($totalNet, '0.00') ? '' : ' delta-neg' ?>"><?= money($totalNet) ?></td>
           </tr></tfoot>
         </table>
       </div>
@@ -596,7 +496,7 @@ include 'includes/header.php';
   </div>
 
   <div class="col-lg-7">
-    <div class="card db-card dark-card">
+    <div class="card db-card">
       <div class="card-header">
         <span class="card-header-title"><i class="fa-solid fa-building me-1"></i>Revenue, Expenses & Net per Unit — <?= $selectedYear ?></span>
       </div>
@@ -616,7 +516,7 @@ include 'includes/header.php';
             <td><span class="badge badge-staff"><?= clean($u['type_name']??'—') ?></span></td>
             <td class="text-end" data-order="<?= (float)$rev ?>"><?= money($rev) ?></td>
             <td class="text-end" data-order="<?= (float)$exp ?>"><?= money($exp) ?></td>
-            <td class="text-end fw-bold" data-order="<?= (float)$net ?>" style="color:<?= money_gte($net, '0.00') ? 'var(--success)' : 'var(--danger)' ?>"><?= money($net) ?></td>
+            <td class="text-end fw-bold<?= money_gte($net, '0.00') ? '' : ' delta-neg' ?>" data-order="<?= (float)$net ?>"><?= money($net) ?></td>
           </tr>
           <?php endforeach; ?>
           <?php if (money_is_pos($orphanRev) || money_is_pos($orphanExp)):
@@ -626,12 +526,12 @@ include 'includes/header.php';
                (rows that survived a unit deletion via FK ON DELETE SET NULL).
                Without this, $totalRev/$totalExp at the top would silently
                disagree with the per-unit body sum below. -->
-          <tr style="background:rgba(239,159,39,.15)">
-            <td class="fw-600" style="color:var(--laskie-amber)"><i class="fa-solid fa-link-slash me-1"></i>Unallocated</td>
-            <td><span class="badge" style="background:var(--laskie-amber);color:#fff;font-size:10px">deleted unit</span></td>
+          <tr class="db-row-now">
+            <td class="fw-600"><i class="fa-solid fa-link-slash me-1"></i>Unallocated</td>
+            <td><span class="badge" style="background:var(--ink);color:var(--paper);font-size:10px">deleted unit</span></td>
             <td class="text-end" data-order="<?= (float)$orphanRev ?>"><?= money($orphanRev) ?></td>
             <td class="text-end" data-order="<?= (float)$orphanExp ?>"><?= money($orphanExp) ?></td>
-            <td class="text-end fw-bold" data-order="<?= (float)$orphanNet ?>" style="color:<?= money_gte($orphanNet, '0.00') ? 'var(--success)' : 'var(--danger)' ?>"><?= money($orphanNet) ?></td>
+            <td class="text-end fw-bold<?= money_gte($orphanNet, '0.00') ? '' : ' delta-neg' ?>" data-order="<?= (float)$orphanNet ?>"><?= money($orphanNet) ?></td>
           </tr>
           <?php endif; ?>
           </tbody>
@@ -639,7 +539,7 @@ include 'includes/header.php';
             <td colspan="2">Total</td>
             <td class="text-end"><?= money($totalRev) ?></td>
             <td class="text-end"><?= money($totalExp) ?></td>
-            <td class="text-end" style="color:<?= money_gte($totalNet, '0.00') ? 'var(--success)' : 'var(--danger)' ?>"><?= money($totalNet) ?></td>
+            <td class="text-end<?= money_gte($totalNet, '0.00') ? '' : ' delta-neg' ?>"><?= money($totalNet) ?></td>
           </tr></tfoot>
         </table>
       </div>
@@ -666,12 +566,40 @@ var _phpFmt = function(v) {
   return '₱' + parseFloat(v || 0).toLocaleString('en-PH', {minimumFractionDigits: 2, maximumFractionDigits: 2});
 };
 
+// Monochrome chart scaffolding — every color comes from window.chartTheme()
+// (read live from CSS vars) so light/dark stay in sync. Series are split by
+// lightness + dash + point shape, never hue (§3.4).
+function _monoTooltip(T, extra) {
+  return Object.assign({
+    backgroundColor: T.paper, titleColor: T.tick, bodyColor: T.ink,
+    borderColor: T.grid, borderWidth: 1,
+    titleFont: { size: 10, family: 'DM Sans', weight: '500' },
+    bodyFont:  { size: 12, family: 'DM Sans', weight: '700' },
+    padding: { x: 12, y: 8 }, cornerRadius: 8, caretSize: 6, caretPadding: 8,
+    displayColors: false
+  }, extra || {});
+}
+function _monoLegend(T) {
+  return { font: { size: 11, family: 'DM Sans' }, color: T.tick, boxWidth: 8, boxHeight: 8, padding: 10, usePointStyle: true, pointStyleWidth: 10 };
+}
+function _monoScales(T, tickColor, tickWeight) {
+  return {
+    y: { beginAtZero: true, grid: { color: T.grid }, border: { display: false },
+         ticks: { callback: _phpFmt, font: { size: 10, family: 'DM Sans' }, color: T.tick } },
+    x: { grid: { display: false }, border: { display: false },
+         ticks: { font: { size: 11, family: 'DM Sans', weight: tickWeight || '500' }, color: tickColor || T.tick, padding: 6 } }
+  };
+}
+
 // ── Unit chart — AJAX-driven ─────────────────────────────────
 var _unitChartInst = null;
+var _unitChartData = null;          // last payload, for theme re-render
+var _currentUnitPeriod = null;
 
 function loadUnitChart(period) {
   period = period || (document.getElementById('unitChartPeriod') ? document.getElementById('unitChartPeriod').value : null);
   if (!period) return;
+  _currentUnitPeriod = period;
   var parts = period.split('_');
   var qs = parts[0] === 'year'
     ? 'period_type=year&year=' + parts[1]
@@ -682,7 +610,7 @@ function loadUnitChart(period) {
     .then(function(r) { return r.json(); })
     .then(function(res) {
       if (spinner) spinner.style.display = 'none';
-      if (res.success) _renderUnitChart(res);
+      if (res.success) { _unitChartData = res; _renderUnitChart(res); }
       else showToast(res.error || 'Chart load failed.', 'danger');
     })
     .catch(function() {
@@ -695,18 +623,8 @@ function _renderUnitChart(data) {
   if (_unitChartInst) { _unitChartInst.destroy(); _unitChartInst = null; }
   var canvas = document.getElementById('unitChart');
   if (!canvas) return;
+  var T = window.chartTheme();
   var ctx = canvas.getContext('2d');
-  var h = canvas.parentElement.offsetHeight || 300;
-
-  var gRev = ctx.createLinearGradient(0, 0, 0, h);
-  gRev.addColorStop(0,    '#A26515');
-  gRev.addColorStop(0.45, '#EF9F27');
-  gRev.addColorStop(1,    '#FAC775');
-
-  var gExp = ctx.createLinearGradient(0, 0, 0, h);
-  gExp.addColorStop(0,    '#7A2A12');
-  gExp.addColorStop(0.45, '#D85A30');
-  gExp.addColorStop(1,    '#F5C4B3');
 
   // Update stats strip
   var net = (data.totalRev || 0) - (data.totalExp || 0);
@@ -715,8 +633,8 @@ function _renderUnitChart(data) {
   if (ucRev)   ucRev.textContent = _phpFmt(data.totalRev);
   if (ucExp)   ucExp.textContent = _phpFmt(data.totalExp);
   if (ucNet) {
-    ucNet.textContent = (net < 0 ? '-' : '') + _phpFmt(Math.abs(net));
-    ucNet.style.color = net >= 0 ? 'var(--laskie-teal)' : 'var(--laskie-coral)';
+    ucNet.textContent = (net < 0 ? '▼ ' : '▲ ') + _phpFmt(Math.abs(net));
+    ucNet.style.fontWeight = net < 0 ? '700' : '600';
   }
   if (ucTitle) ucTitle.textContent = data.title || '';
 
@@ -725,34 +643,19 @@ function _renderUnitChart(data) {
     data: {
       labels: data.labels,
       datasets: [
-        { label: 'Revenue',  data: data.revenue,  backgroundColor: gRev, borderRadius: 10, borderSkipped: false, borderWidth: 0, barPercentage: 0.7, categoryPercentage: 0.7 },
-        { label: 'Expenses', data: data.expenses, backgroundColor: gExp, borderRadius: 10, borderSkipped: false, borderWidth: 0, barPercentage: 0.7, categoryPercentage: 0.7 }
+        // Revenue = the headline figure → solid ink; Expenses recede in gray.
+        { label: 'Revenue',  data: data.revenue,  backgroundColor: T.ink,        borderRadius: 6, borderSkipped: false, borderWidth: 0, barPercentage: 0.7, categoryPercentage: 0.7 },
+        { label: 'Expenses', data: data.expenses, backgroundColor: T.series[1],  borderRadius: 6, borderSkipped: false, borderWidth: 0, barPercentage: 0.7, categoryPercentage: 0.7 }
       ]
     },
     options: {
-      responsive: true,
-      maintainAspectRatio: false,
+      responsive: true, maintainAspectRatio: false,
       animation: { duration: 420, easing: 'easeOutQuart' },
       layout: { padding: { top: 24 } },
       plugins: {
-        legend: {
-          position: 'top',
-          align: 'start',
-          labels: { font: { size: 11, family: 'DM Sans' }, color: 'rgba(255,255,255,.75)', boxWidth: 8, boxHeight: 8, padding: 10, usePointStyle: true, pointStyleWidth: 8 }
-        },
-        tooltip: {
-          mode: 'index',
-          intersect: false,
-          backgroundColor: '#EF9F27',
-          titleColor: 'rgba(255,255,255,.85)',
-          bodyColor: '#fff',
-          titleFont: { size: 10, family: 'DM Sans', weight: '500' },
-          bodyFont:  { size: 12, family: 'DM Sans', weight: '700' },
-          padding: { x: 12, y: 8 },
-          cornerRadius: 14,
-          caretSize: 6,
-          caretPadding: 8,
-          displayColors: false,
+        legend: { position: 'top', align: 'start', labels: _monoLegend(T) },
+        tooltip: _monoTooltip(T, {
+          mode: 'index', intersect: false,
           callbacks: {
             label: function(c) { return c.dataset.label + ': ' + _phpFmt(c.parsed.y); },
             afterBody: function(items) {
@@ -761,134 +664,98 @@ function _renderUnitChart(data) {
               return ['Net: ' + (n < 0 ? '-' : '') + _phpFmt(Math.abs(n))];
             }
           }
-        }
+        })
       },
-      scales: {
-        y: {
-          beginAtZero: true,
-          grid:   { color: 'rgba(255,255,255,.08)' },
-          border: { display: false },
-          ticks:  { callback: _phpFmt, font: { size: 10, family: 'DM Sans' }, color: 'rgba(255,255,255,.45)' }
-        },
-        x: {
-          grid:   { display: false },
-          border: { display: false },
-          ticks:  { font: { size: 11, family: 'DM Sans', weight: '500' }, color: 'rgba(255,255,255,.65)', padding: 6 }
-        }
-      }
+      scales: _monoScales(T)
     }
   });
 }
 
 // ── Page init ────────────────────────────────────────────────
-document.addEventListener('DOMContentLoaded', function() {
+var _catChartInst = null, _monthlyChartInst = null;
+
+function buildCatChart() {
+  var el = document.getElementById('catChart');
+  if (!el) return;
+  if (_catChartInst) { _catChartInst.destroy(); _catChartInst = null; }
+  var T = window.chartTheme();
   var d = CHART_DATA;
-  var pallette = ['#EF9F27','#1D9E75','#D85A30','#5754A8','#FAC775','#9FE1CB','#F5C4B3','#26215C','#D88914','#085041','#712B13','#2B295F'];
-
-  // Period dropdown wires up loadUnitChart on change
-  var ucSel = document.getElementById('unitChartPeriod');
-  if (ucSel) {
-    ucSel.addEventListener('change', function() { loadUnitChart(this.value); });
-    loadUnitChart(UNIT_CHART_INIT);
-  }
-
-  var catFiltered = { labels: [], data: [] };
+  // grayscale ramp spread across slices (cycles if categories exceed ramp)
+  var ramp = [T.ink, T.series[2], T.series[1], T.series[3], T.series[4], T.tick, T.grid];
+  var catFiltered = { labels: [], data: [], colors: [] };
   d.catLabels.forEach(function(label, i) {
-    if (d.catTotals[i] > 0) { catFiltered.labels.push(label); catFiltered.data.push(d.catTotals[i]); }
+    if (d.catTotals[i] > 0) {
+      catFiltered.labels.push(label);
+      catFiltered.data.push(d.catTotals[i]);
+      catFiltered.colors.push(ramp[catFiltered.labels.length % ramp.length]);
+    }
   });
-  new Chart(document.getElementById('catChart'), {
+  _catChartInst = new Chart(el, {
     type: 'doughnut',
-    data: {
-      labels: catFiltered.labels,
-      datasets: [{ data: catFiltered.data, backgroundColor: pallette, hoverOffset: 8, borderWidth: 2, borderColor: '#26215C' }]
-    },
+    data: { labels: catFiltered.labels,
+      datasets: [{ data: catFiltered.data, backgroundColor: catFiltered.colors, hoverOffset: 8, borderWidth: 2, borderColor: T.paper }] },
     options: {
       responsive: true, maintainAspectRatio: false, cutout: '62%',
       plugins: {
-        legend: {
-          position: 'bottom',
-          labels: { font: { size: 10, family: 'DM Sans' }, color: 'rgba(255,255,255,.75)', padding: 8, boxWidth: 8, boxHeight: 8, usePointStyle: true, pointStyleWidth: 8 }
-        },
-        tooltip: {
-          backgroundColor: '#EF9F27',
-          titleColor: 'rgba(255,255,255,.85)',
-          bodyColor: '#fff',
-          titleFont: { size: 10, family: 'DM Sans', weight: '500' },
-          bodyFont:  { size: 12, family: 'DM Sans', weight: '700' },
-          padding: { x: 12, y: 8 },
-          cornerRadius: 14,
-          caretSize: 6,
-          caretPadding: 8,
-          displayColors: false,
-          callbacks: { label: function(c) { return _phpFmt(c.parsed); } }
-        }
+        legend: { position: 'bottom', labels: _monoLegend(T) },
+        tooltip: _monoTooltip(T, { callbacks: { label: function(c) { return _phpFmt(c.parsed); } } })
       }
     }
   });
+}
 
-  // Magix-style bar: two-tone amber gradient per bar; current month painted teal.
-  function _barColor(ctx) {
-    if (ctx.dataIndex === MONTHLY_HIGHLIGHT_IDX) return '#1D9E75';
-    var chart = ctx.chart;
-    var area  = chart.chartArea;
-    if (!area) return '#EF9F27';
-    var g = chart.ctx.createLinearGradient(0, area.top, 0, area.bottom);
-    g.addColorStop(0,    '#A26515');   // top — deep amber
-    g.addColorStop(0.45, '#EF9F27');   // mid — brand amber
-    g.addColorStop(1,    '#FAC775');   // bottom — soft amber
-    return g;
-  }
-  function _tickColor(ctx) {
-    return ctx.index === MONTHLY_HIGHLIGHT_IDX ? '#fff' : 'rgba(255,255,255,.55)';
-  }
-  function _tickWeight(ctx) {
-    return ctx.index === MONTHLY_HIGHLIGHT_IDX ? '700' : '500';
-  }
-
-  new Chart(document.getElementById('monthlyChart'), {
+function buildMonthlyChart() {
+  var el = document.getElementById('monthlyChart');
+  if (!el) return;
+  if (_monthlyChartInst) { _monthlyChartInst.destroy(); _monthlyChartInst = null; }
+  var T = window.chartTheme();
+  var d = CHART_DATA;
+  // bars recede in gray; the current month pops in solid ink (§3.4 emphasis)
+  function _barColor(ctx) { return ctx.dataIndex === MONTHLY_HIGHLIGHT_IDX ? T.ink : T.series[3]; }
+  function _tickColor(ctx) { return ctx.index === MONTHLY_HIGHLIGHT_IDX ? T.ink : T.tick; }
+  function _tickWeight(ctx) { return ctx.index === MONTHLY_HIGHLIGHT_IDX ? '700' : '500'; }
+  _monthlyChartInst = new Chart(el, {
     type: 'bar',
     data: {
       labels: d.monthLabels,
       datasets: [
-        { type: 'bar',  label: 'Revenue',    data: d.monthRev,
+        { type: 'bar',  label: 'Revenue', data: d.monthRev,
           backgroundColor: _barColor,
-          borderRadius: 10, borderSkipped: false, borderWidth: 0,
+          borderRadius: 6, borderSkipped: false, borderWidth: 0,
           barPercentage: 0.55, categoryPercentage: 0.7, yAxisID: 'y' },
         { type: 'line', label: 'Net Income', data: d.monthNet,
-          borderColor: 'rgba(255,255,255,.55)', backgroundColor: 'transparent',
-          borderDash: [5,5], borderWidth: 1.5,
-          pointRadius: 2, pointBackgroundColor: 'rgba(255,255,255,.85)', pointBorderWidth: 0,
-          tension: .25, fill: false, yAxisID: 'y' }
+          borderColor: T.ink, backgroundColor: 'transparent',
+          borderWidth: 2, pointRadius: 2.5, pointBackgroundColor: T.ink, pointBorderWidth: 0,
+          pointStyle: 'circle', tension: .25, fill: false, yAxisID: 'y' }
       ]
     },
     options: {
       responsive: true, maintainAspectRatio: false,
       layout: { padding: { top: 30 } },
       plugins: {
-        legend: { position: 'top', align: 'start', labels: { font: { size: 11, family: 'DM Sans' }, color: 'rgba(255,255,255,.75)', boxWidth: 8, boxHeight: 8, padding: 8, usePointStyle: true, pointStyleWidth: 8 } },
-        tooltip: {
-          backgroundColor: '#EF9F27',
-          titleColor: 'rgba(255,255,255,.85)',
-          bodyColor: '#fff',
-          titleFont: { size: 10, family: 'DM Sans', weight: '500' },
-          bodyFont:  { size: 13, family: 'DM Sans', weight: '700' },
-          padding: { x: 12, y: 8 },
-          cornerRadius: 14,
-          caretSize: 6,
-          caretPadding: 8,
-          displayColors: false,
-          callbacks: { label: function(c) { return _phpFmt(c.parsed.y); } }
-        }
+        legend: { position: 'top', align: 'start', labels: _monoLegend(T) },
+        tooltip: _monoTooltip(T, { callbacks: { label: function(c) { return c.dataset.label + ': ' + _phpFmt(c.parsed.y); } } })
       },
-      scales: {
-        y: { beginAtZero: true,
-             ticks: { callback: _phpFmt, font: { size: 10, family: 'DM Sans' }, color: 'rgba(255,255,255,.45)' },
-             grid:  { color: 'rgba(255,255,255,.08)' },
-             border:{ display: false } },
-        x: { grid: { display: false }, border: { display: false },
-             ticks: { font: { size: 11, family: 'DM Sans', weight: _tickWeight }, color: _tickColor, padding: 6 } }
-      }
+      scales: _monoScales(T, _tickColor, _tickWeight)
     }
+  });
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+  // Period dropdown wires up loadUnitChart on change
+  var ucSel = document.getElementById('unitChartPeriod');
+  if (ucSel) {
+    ucSel.addEventListener('change', function() { loadUnitChart(this.value); });
+    loadUnitChart(UNIT_CHART_INIT);
+  }
+  buildCatChart();
+  buildMonthlyChart();
+
+  // Re-theme every chart when the user toggles dark mode (§3.4)
+  window.addEventListener('laskie:themechange', function() {
+    buildCatChart();
+    buildMonthlyChart();
+    if (_unitChartData) _renderUnitChart(_unitChartData);
   });
 
   // ── DataTables wiring for the three dashboard tables ──────────────
