@@ -697,7 +697,7 @@ include '../includes/header.php';
     <?php if (empty($chartByUser)): ?>
     <div class="text-center text-muted py-5"><i class="fa-solid fa-chart-bar fa-2x mb-2 d-block" style="opacity:.2"></i>No remittances recorded for <?= $selectedYear ?>.</div>
     <?php else: ?>
-    <canvas id="remittanceChart" style="max-height:320px"></canvas>
+    <div class="chart-wrap"><canvas id="remittanceChart"></canvas></div>
     <?php endif; ?>
   </div>
 </div>
@@ -720,7 +720,7 @@ include '../includes/header.php';
     <?php if (empty($divChart)): ?>
     <div class="text-center text-muted py-5"><i class="fa-solid fa-chart-column fa-2x mb-2 d-block" style="opacity:.2"></i>No recipients added yet.</div>
     <?php else: ?>
-    <canvas id="divChart" style="max-height:280px"></canvas>
+    <div class="chart-wrap"><canvas id="divChart"></canvas></div>
     <?php endif; ?>
   </div>
 </div>
@@ -1221,7 +1221,7 @@ function buildVaultCharts() {
         }))
       },
       options: {
-        responsive: true, maintainAspectRatio: true,
+        responsive: true, maintainAspectRatio: false,
         plugins: {
           legend: { position: 'top', labels: { usePointStyle: true, pointStyle: 'rect', padding: 16, color: T.tick, font: { family: 'DM Sans' } } },
           tooltip: Object.assign(_monoTip(T), { callbacks: {
@@ -1251,7 +1251,7 @@ function buildVaultCharts() {
           }]
         },
         options: {
-          responsive: true, maintainAspectRatio: true,
+          responsive: true, maintainAspectRatio: false,
           plugins: {
             legend: { display: false },
             tooltip: Object.assign(_monoTip(T), { callbacks: {

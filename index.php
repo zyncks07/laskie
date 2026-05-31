@@ -194,7 +194,7 @@ if ($err === 'session') $error = 'Your session has expired. Please log in again.
   .system-info a:hover { color: var(--ink); }
 
   .login-theme-btn {
-    position: fixed; top: 14px; right: 16px;
+    position: fixed; top: 14px; right: 16px; z-index: 100;
     width: 36px; height: 36px; border-radius: 50%;
     border: 1px solid var(--gray-300);
     background: var(--paper); color: var(--gray-600);

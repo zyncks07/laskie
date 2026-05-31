@@ -675,3 +675,16 @@ hr, .section-divider { border-color: var(--gray-200); }
 
 /* Theme toggle button (sun/moon) lives in the topbar */
 .btn-theme-toggle i { transition: transform .2s ease; }
+
+/* Notification panel — on mobile the absolute+right:0 panel overshoots the
+   left edge of the screen. Switch to fixed, stretch edge-to-edge under topbar. */
+@media (max-width: 767.98px) {
+  #notifPanel {
+    position: fixed !important;
+    top: calc(var(--topbar-h) + 2px) !important;
+    left: 8px !important;
+    right: 8px !important;
+    width: auto !important;
+    max-height: 70vh !important;
+  }
+}

@@ -205,6 +205,10 @@ include 'includes/header.php';
 .db-chart              { position: relative; height: 220px; }
 .db-card-fill          { display: flex; flex-direction: column; }
 .db-chart-grow         { position: relative; flex: 1; min-height: 220px; }
+@media (max-width: 767.98px) {
+  .db-chart      { height: 440px !important; }
+  .db-chart-grow { min-height: 440px !important; }
+}
 
 /* Unit-chart stats strip + period selector (on white card now) */
 #unitChartStats span     { color: var(--gray-500); }
