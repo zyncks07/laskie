@@ -259,7 +259,7 @@ if ($action === 'restore_deleted_payment') {
                 $stName  = $stRow->fetchColumn() ?: 'Service';
                 $chgDesc = $p['notes'] ?: $stName;
                 $pdo->prepare("INSERT INTO unit_charges (unit_id,tenant_id,service_type_id,amount,description,charge_date,period_month,period_year,payment_id,source,created_by) VALUES (?,?,?,?,?,?,?,?,?,'auto_collected',?)")
-                    ->execute([$p['unit_id'], $p['tenant_id'], $p['service_type_id'], $p['amount'], $chgDesc, $p['payment_date'], $p['period_month'], $p['period_year'], $id, $p['received_by']]);
+                    ->execute([$p['unit_id'], $p['tenant_id'], $p['service_type_id'], $p['amount'], $chgDesc, $p['payment_date'], $p['period_month'], $p['period_year'], $id, $cashUserId]);
             }
         }
         logActivity($pdo,'RESTORE_PAYMENT','Payments',"Restored deleted payment #{$id} ({$p['invoice_no']}) ₱{$p['amount']}");
@@ -378,7 +378,7 @@ if ($action === 'restore_payment') {
                 $stName  = $stRow->fetchColumn() ?: 'Service';
                 $chgDesc = $p['notes'] ?: $stName;
                 $pdo->prepare("INSERT INTO unit_charges (unit_id,tenant_id,service_type_id,amount,description,charge_date,period_month,period_year,payment_id,source,created_by) VALUES (?,?,?,?,?,?,?,?,?,'auto_collected',?)")
-                    ->execute([$p['unit_id'], $p['tenant_id'], $p['service_type_id'], $p['amount'], $chgDesc, $p['payment_date'], $p['period_month'], $p['period_year'], $id, $p['received_by']]);
+                    ->execute([$p['unit_id'], $p['tenant_id'], $p['service_type_id'], $p['amount'], $chgDesc, $p['payment_date'], $p['period_month'], $p['period_year'], $id, $cashUserId]);
             }
         }
         logActivity($pdo,'RESTORE_PAYMENT','Payments',"Restored voided payment #{$id} ({$p['invoice_no']}) ₱{$p['amount']}");

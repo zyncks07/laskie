@@ -25,8 +25,9 @@ if ($action === 'create_request') {
     $refPay  = (int)($_POST['reference_payment_id'] ?? 0) ?: null;
 
     if (!in_array($type, ['refund_fund', 'expense_fund', 'other'], true)) $type = 'other';
-    if (!money_is_pos($amount)) jsonErr('Amount must be greater than zero.');
-    if ($purpose === '')        jsonErr('Purpose is required.');
+    if (!money_is_pos($amount))          jsonErr('Amount must be greater than zero.');
+    if (money_gt($amount, '9999999.99')) jsonErr('Amount exceeds the maximum allowed (₱9,999,999.99).');
+    if ($purpose === '')                 jsonErr('Purpose is required.');
     if (mb_strlen($purpose) > 255) $purpose = mb_substr($purpose, 0, 255);
 
     $pdo->prepare("INSERT INTO vault_requests (requested_by, request_type, amount, purpose, reference_payment_id) VALUES (?,?,?,?,?)")
@@ -182,6 +183,7 @@ if ($action === 'mark_read') {
 }
 
 if ($action === 'mark_all_read') {
+    if (($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'POST') jsonErr('POST required.', 405);
     $pdo->prepare("UPDATE notifications SET is_read=1, read_at=NOW() WHERE user_id=? AND is_read=0")->execute([$myId]);
     jsonOk();
 }

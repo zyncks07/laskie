@@ -363,11 +363,14 @@ Most of the items above were addressed in dedicated bug-fix commits. If you're i
 - `6742e1c` — security: constant-time login (dummy-hash verify on missing user, `index.php`) + acting-admin fallback when restoring a payment whose collector was deleted (`api_payment.php` restore paths).
 - `f79811b` — concurrency hardening: `reject_request`/`cancel_request` wrapped in txn + `FOR UPDATE` (mirror `approve_request`); `process_refund` locks the cashier row before the cash gate; `notifyUser` truncates message to `VARCHAR(500)`.
 
-### Current state (branch `ui/magix-redesign`, May 2026)
-- **Audit:** all PHP entry points + helpers read line-by-line across 5 sessions; the latest sweep covered the new vault-request/refund code (commit `f79811b`). **No known open code bugs.** Two findings were settled as intentional/won't-fix and one batch as false positives — see memory `deferred-bug-findings`; don't re-flag `save_charge` (open to all roles, §13).
-- **DB schema:** live DB is current through **migration 009** (009 applied this session; 008's `refunded_by` nullability is in place). Fresh installs get the same via `install.sql` (mirrors all migrations).
-- **Magix redesign:** partially rolled out — `dashboard.php` + `index.php` (login) migrated to `--laskie-*` tokens; other pages still use the original `app.css` look (see §7's redesign-token-layer note). Cosmetic; ongoing.
-- **Git:** branch is **pushed** to `origin/ui/magix-redesign`; **no PR opened** (working directly on the branch by user preference; the working tree *is* the live deploy per §10). `master` is behind.
+**Bug-hunt session 5 (June 2026, branch `ui/magix-redesign`):**
+- *(see `git log -- api/requests_api.php` for hash)* — 3 fixes from vault-request feature re-audit: (1) vault request amount upper-bound added (`money_gt` cap at ₱9,999,999.99 — "1e10" previously overflowed `DECIMAL(12,2)` with no JSON error); (2) GET-based CSRF on `mark_all_read` closed (POST method guard — impact was cosmetic-only: badge clearing); (3) `unit_charges.created_by` NULL on restore when original cashier deleted — both restore paths now use the already-computed `$cashUserId` fallback (mirrors the cash_transactions fix from `6742e1c`). Unit 59/59 green. 16 false positives ruled out — see memory `bug-audit-coverage`.
+
+### Current state (branch `ui/magix-redesign`, June 2026)
+- **Audit:** all PHP entry points + helpers read line-by-line across 6 sessions; session 5 (2026-06-01) re-audited the vault-request feature (commits `4c49561` → `f79811b`) and found 3 low/medium bugs (all fixed, see above). **No known open code bugs.** See memory `bug-audit-coverage` + `deferred-bug-findings`; don't re-flag `save_charge` (open to all roles, §13).
+- **DB schema:** live DB is current through **migration 009** (`vault_requests` + `notifications`; migration 008's `refunded_by` nullability is in place). Fresh installs get the same via `install.sql`.
+- **Magix redesign:** partially rolled out — `dashboard.php` + `index.php` (login) migrated to `--laskie-*` tokens; other pages still use the original `app.css` look (see §7). Cosmetic; ongoing.
+- **Git:** branch is **pushed** to `origin/ui/magix-redesign`; **no PR opened** (working directly on the branch per §10; the working tree *is* the live deploy). `master` is behind.
 
 ---
 
