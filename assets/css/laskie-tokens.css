@@ -104,6 +104,16 @@
   --laskie-indigo:      var(--gray-700);
   --laskie-indigo-bg:   var(--gray-100);
   --laskie-indigo-ink:  var(--gray-800);
+
+  /* ── Browser integration ───────────────────────────────── */
+  /* color-scheme tells the browser to render native controls
+     (select dropdowns, scrollbars, checkboxes) in light style. */
+  color-scheme: light;
+  /* code elements — override Bootstrap's magenta #d63384 */
+  --bs-code-color:        var(--gray-700);
+  /* DataTables processing spinner + selected row — override blue */
+  --dt-row-selected:      10, 10, 10;
+  --dt-row-selected-text: 255, 255, 255;
 }
 
 /* ── Dark mode: flip ONLY the ramp primitives ──────────────── */
@@ -133,6 +143,10 @@
   --bs-secondary-color:     #a8a8a8;
   --bs-secondary-rgb:       168, 168, 168;
   --bs-tertiary-color:      #939393;
+  color-scheme: dark;
+  --bs-code-color:        var(--gray-400);
+  --dt-row-selected:      245, 245, 245;
+  --dt-row-selected-text: 0, 0, 0;
 }
 
 /* ── Body & global type ─────────────────────────────────── */
@@ -481,6 +495,15 @@ body {
 .form-control[type="file"]:hover::-webkit-file-upload-button {
   background: var(--gray-200);
 }
+/* Inline code — remove Bootstrap's magenta; add subtle pill */
+code {
+  color: var(--bs-code-color);
+  background: var(--gray-100);
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-size: .875em;
+}
+
 .form-label { color: var(--gray-700); font-weight: 600; }
 .form-text  { color: var(--gray-500); }
 .form-check-input:checked { background-color: var(--ink); border-color: var(--ink); }
@@ -584,7 +607,15 @@ hr, .section-divider { border-color: var(--gray-200); }
   border-right: 1px solid var(--gray-200);
   padding: 6px 0 0;
 }
-#sidebar::-webkit-scrollbar-thumb { background: var(--gray-300); }
+/* ── Scrollbars — global thin style (Webkit + Firefox) ──── */
+html {
+  scrollbar-width: thin;
+  scrollbar-color: var(--gray-300) transparent;
+}
+::-webkit-scrollbar               { width: 6px; height: 6px; }
+::-webkit-scrollbar-track         { background: transparent; }
+::-webkit-scrollbar-thumb         { background: var(--gray-300); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover   { background: var(--gray-400); }
 
 .sidebar-brand {
   padding: 12px 18px 14px;
