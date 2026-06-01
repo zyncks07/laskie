@@ -506,7 +506,7 @@ include '../includes/header.php';
       <?php endforeach; ?>
       </tbody>
       <tfoot>
-        <tr style="background:var(--gray-50);font-weight:700;border-top:2px solid var(--gray-200)">
+        <tr style="background:var(--gray-100);font-weight:700;border-top:2px solid var(--gray-200)">
           <td colspan="4" style="font-size:13px">TOTALS</td>
           <td class="text-end num fw-600"><?=money($totalDebit)?></td>
           <td class="text-end num fw-600"><?=money($totalCredit)?></td>
@@ -660,12 +660,12 @@ function processRefund() {
 }
 </script>
 <style>
-  .tr-payment td { background: var(--gray-50); }
-  .tr-payment:hover td { background: var(--gray-100) !important; }
-  .tr-refund td { background: var(--gray-50); }
-  .tr-refund:hover td { background: var(--gray-100) !important; }
-  .tr-svc-charge td { background: var(--gray-50); }
-  .tr-svc-charge:hover td { background: var(--gray-100) !important; }
+  .tr-payment td { background: var(--gray-100); }
+  .tr-payment:hover td { background: var(--gray-200) !important; }
+  .tr-refund td { background: var(--gray-100); }
+  .tr-refund:hover td { background: var(--gray-200) !important; }
+  .tr-svc-charge td { background: var(--gray-100); }
+  .tr-svc-charge:hover td { background: var(--gray-200) !important; }
   @media print {
     .card-footer, form, .page-header .btn, .no-print { display:none !important; }
   }

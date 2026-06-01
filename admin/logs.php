@@ -101,7 +101,7 @@ include '../includes/header.php';
     <!-- Unique IPs badge -->
     <button class="btn btn-sm btn-outline-secondary" data-bs-toggle="modal" data-bs-target="#ipModal">
       <i class="fa-solid fa-network-wired me-1"></i>
-      <span class="badge bg-primary me-1"><?= count($uniqueIps) ?></span> Unique IP<?= count($uniqueIps)!=1?'s':'' ?>
+      <span class="badge bg-secondary me-1"><?= count($uniqueIps) ?></span> Unique IP<?= count($uniqueIps)!=1?'s':'' ?>
     </button>
     <button class="btn btn-sm btn-outline-secondary no-print" onclick="window.print()"><i class="fa-solid fa-print me-1"></i>Print</button>
   </div>
@@ -191,12 +191,12 @@ $updates    = count(array_filter($logRows, fn($r)=>str_starts_with($r['action'],
 $deletes    = count(array_filter($logRows, fn($r)=>str_starts_with($r['action'],'DELETE_')));
 ?>
 <div class="d-flex flex-wrap gap-2 mb-3">
-  <span class="badge bg-secondary fs-sm">Total: <?=$total?></span>
-  <span class="badge bg-success">Logins OK: <?=$loginOk?></span>
-  <span class="badge bg-danger">Login Failed: <?=$loginFail?></span>
-  <span class="badge bg-primary">Creates: <?=$creates?></span>
-  <span class="badge bg-primary">Updates: <?=$updates?></span>
-  <span class="badge bg-warning text-dark">Deletes: <?=$deletes?></span>
+  <span class="muted-pill">Total: <?=$total?></span>
+  <span class="ok-pill">Logins OK: <?=$loginOk?></span>
+  <span class="attn-pill">Login Failed: <?=$loginFail?></span>
+  <span class="muted-pill">Creates: <?=$creates?></span>
+  <span class="muted-pill">Updates: <?=$updates?></span>
+  <span class="attn-pill">Deletes: <?=$deletes?></span>
 </div>
 
 <!-- ── Logs Table ───────────────────────────────────────────── -->
@@ -251,7 +251,7 @@ $deletes    = count(array_filter($logRows, fn($r)=>str_starts_with($r['action'],
           <div class="log-diff-table" style="display:none;margin-top:6px;overflow-x:auto;max-width:100%">
             <table style="font-size:11px;border-collapse:collapse;width:100%;min-width:320px">
               <thead><tr>
-                <th style="padding:3px 7px;background:var(--gray-50);border:1px solid var(--border)">Field</th>
+                <th style="padding:3px 7px;background:var(--gray-100);border:1px solid var(--border)">Field</th>
                 <th style="padding:3px 7px;background:var(--gray-100);border:1px solid var(--border);color:var(--gray-600)">Before</th>
                 <th style="padding:3px 7px;background:var(--gray-100);border:1px solid var(--border);color:var(--gray-600)">After</th>
               </tr></thead>

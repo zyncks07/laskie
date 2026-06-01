@@ -953,7 +953,7 @@ include '../includes/header.php';
       </div>
       <div class="modal-body">
         <!-- Add / Edit form -->
-        <div class="p-3 mb-3 rounded" style="background:var(--bg)">
+        <div class="p-3 mb-3 rounded" style="background:var(--gray-100)">
           <div id="recipFormTitle" class="fw-600 mb-2" style="font-size:13px">Add New Recipient</div>
           <div id="recipEditBanner" style="display:none" class="alert alert-warning py-2 px-3 mb-2 d-flex justify-content-between align-items-center">
             <span style="font-size:12px"><i class="fa-solid fa-pen me-1"></i>Editing: <strong id="recipEditName"></strong></span>

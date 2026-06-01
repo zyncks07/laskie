@@ -184,6 +184,10 @@ if ($err === 'session') $error = 'Your session has expired. Please log in again.
     border-color: #000;
     color: var(--paper);
   }
+  [data-theme="dark"] .btn.btn-primary:hover {
+    background: #fff;
+    border-color: #fff;
+  }
 
   .system-info { text-align: center; margin-top: 22px; }
   .system-info a {

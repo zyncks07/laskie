@@ -260,7 +260,7 @@ window.showLoading = function(msg = 'Processing...') {
         spin.setAttribute('role', 'status');
         const label = document.createElement('div');
         label.id = 'globalLoadingMsg';
-        label.style.cssText = 'margin-top:12px;font-size:13px;font-weight:600;color:#1b1740;';
+        label.style.cssText = 'margin-top:12px;font-size:13px;font-weight:600;color:var(--ink);';
         label.textContent = msg;
         wrap.appendChild(spin);
         wrap.appendChild(label);

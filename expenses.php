@@ -435,7 +435,7 @@ function loadExpenses() {
 
     if (exps.length > 0) {
       document.getElementById('expFoot').innerHTML =
-        '<tr style="background:var(--gray-50);font-weight:700;border-top:2px solid var(--gray-200)">' +
+        '<tr style="background:var(--gray-100);font-weight:700;border-top:2px solid var(--gray-200)">' +
         '<td colspan="' + (IS_ADMIN ? 5 : 4) + '">TOTAL (' + exps.length + ' records)</td>' +
         '<td class="text-end num fw-600">' + fmt(res.total) + '</td>' +
         '<td colspan="4"></td></tr>';

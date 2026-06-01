@@ -259,7 +259,7 @@ $cashSubLabel = 'End of ' . date('M Y', mktime(0, 0, 0, $selMonth, 1, $selYear))
       <?php endforeach; ?>
       </tbody>
       <tfoot>
-        <tr style="background:var(--gray-50);font-weight:700;border-top:2px solid var(--gray-200)">
+        <tr style="background:var(--gray-100);font-weight:700;border-top:2px solid var(--gray-200)">
           <td colspan="5">Total Collected</td>
           <td class="text-end num"><?= money(money_sum(array_column($myPayments,'amount'))) ?></td>
           <td></td>
@@ -299,7 +299,7 @@ $cashSubLabel = 'End of ' . date('M Y', mktime(0, 0, 0, $selMonth, 1, $selYear))
       <?php endforeach; ?>
       </tbody>
       <tfoot>
-        <tr style="background:var(--gray-50);font-weight:700;border-top:2px solid var(--gray-200)">
+        <tr style="background:var(--gray-100);font-weight:700;border-top:2px solid var(--gray-200)">
           <td>Total Remitted</td>
           <td class="text-end num"><?= money(money_sum(array_column($myRemits,'amount'))) ?></td>
           <td colspan="2"></td>
@@ -331,7 +331,7 @@ $cashSubLabel = 'End of ' . date('M Y', mktime(0, 0, 0, $selMonth, 1, $selYear))
           <?php endforeach; ?>
           </tbody>
           <tfoot>
-            <tr style="font-weight:700;background:var(--gray-50);border-top:2px solid var(--gray-200)">
+            <tr style="font-weight:700;background:var(--gray-100);border-top:2px solid var(--gray-200)">
               <td>Total</td>
               <td class="text-end num"><?= money((float)$tot['total_expenses']) ?></td>
               <td class="text-end"><?= count($myExpenses) ?></td>

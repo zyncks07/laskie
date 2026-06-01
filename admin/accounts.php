@@ -231,7 +231,7 @@ include '../includes/header.php';
         <input type="hidden" id="userId">
 
         <!-- Avatar section — only meaningful when editing an existing user. -->
-        <div id="avatarSection" class="d-flex align-items-center gap-3 mb-3 p-3" style="background:var(--gray-50);border-radius:var(--radius);display:none">
+        <div id="avatarSection" class="d-flex align-items-center gap-3 mb-3 p-3" style="background:var(--gray-100);border-radius:var(--radius);display:none">
           <div id="adminAvatarPreview" style="width:72px;height:72px;border-radius:50%;background:var(--gray-100);color:var(--ink);display:flex;align-items:center;justify-content:center;font-size:24px;font-weight:700;overflow:hidden;flex-shrink:0">—</div>
           <div style="flex:1">
             <div class="fw-600 mb-1" style="font-size:13px">Profile Picture</div>

@@ -168,7 +168,7 @@ include 'includes/header.php';
   </div>
 
   <!-- Period summary strip -->
-  <div class="d-flex gap-3 flex-wrap px-3 py-2 border-bottom" style="background:var(--gray-50);font-size:12.5px">
+  <div class="d-flex gap-3 flex-wrap px-3 py-2 border-bottom" style="background:var(--gray-100);font-size:12.5px">
     <span>Received: <strong id="pRec">&#8212;</strong></span>
     <span class="text-muted">|</span>
     <span>Remitted: <strong id="pRem">&#8212;</strong></span>
@@ -374,7 +374,7 @@ function loadAllBalances() {
     var totM   = parseFloat(t.total_remitted) || 0;
     var totE   = parseFloat(t.total_expenses) || 0;
     var totNet = parseFloat(t.net_on_hand)    || 0;
-    html += '<tr style="background:var(--gray-50);font-weight:700;border-top:2px solid var(--gray-200)">';
+    html += '<tr style="background:var(--gray-100);font-weight:700;border-top:2px solid var(--gray-200)">';
     html += '<td colspan="2">TOTAL</td>';
     html += '<td class="text-end">' + fmt(totR) + '</td>';
     html += '<td class="text-end">' + fmt(totM) + '</td>';
