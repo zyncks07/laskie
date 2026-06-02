@@ -43,6 +43,7 @@
 - `install.sql` — one-shot schema + seed data
 - **Composer** installed for the PHPUnit dev dependency. **No** npm, **no** build pipeline.
 - **Test runner**: PHPUnit 11. `vendor/bin/phpunit` runs the Unit suite (pure PHP, no DB needed). `vendor/bin/phpunit --testsuite Integration` runs DB-dependent tests against the live DB (rows tagged with `PHPUNIT_INTEGRATION_TEST` and cleaned in tearDown). See `tests/` directory.
+  - **Exception — `tests/Integration/PaymentReceiptTest.php`** runs against an **isolated `laskie_test` database** (never the live DB; it hard-aborts unless `SELECT DATABASE()` is `laskie_test`). One-time setup: `CREATE DATABASE laskie_test …; GRANT ALL ON laskie_test.* TO 'laskie_db_user'@'localhost';`. It rebuilds the schema from `install.sql` each run and **self-skips** if `laskie_test` is absent. Run it directly: `vendor/bin/phpunit tests/Integration/PaymentReceiptTest.php`.
 
 ---
 
