@@ -378,11 +378,15 @@ Most of the items above were addressed in dedicated bug-fix commits. If you're i
 
 **Role change (2026-06-03, branch `master`):** Vault → User cash returns opened to accountants. Removed the four `isAdmin()` gates on `add/edit/delete/get_user_return` in `admin/vault.php` and unhid the "Return to User" button + "Returns to Users" card + log Edit/Delete buttons for accountants (page already `requireRole(['admin','accountant'])`). No balance gate, no schema change; the admin-only request→approval flow is untouched. §9 matrix + §13 updated. Unit 59/59 green.
 
-### Current state (branch `ui/magix-redesign`, June 2026)
-- **Audit:** all PHP entry points + helpers read line-by-line across 6 sessions; session 5 (2026-06-01) re-audited the vault-request feature (commits `4c49561` → `f79811b`) and found 3 low/medium bugs (all fixed, see above). **No known open code bugs.** See memory `bug-audit-coverage` + `deferred-bug-findings`; don't re-flag `save_charge` (open to all roles, §13).
-- **DB schema:** live DB is current through **migration 009** (`vault_requests` + `notifications`; migration 008's `refunded_by` nullability is in place). Fresh installs get the same via `install.sql`.
+### Current state (branch `master`, June 2026)
+- **Audit:** all PHP entry points + helpers read line-by-line across 6 sessions; session 6 (2026-06-03) was a post-role-change sanity audit (permissions vs §9 + money invariants + the two new features + system-wide sweep) — **came back clean, no bugs, no changes.** **No known open code bugs.** See memory `bug-audit-coverage` + `deferred-bug-findings`; don't re-flag `save_charge` or the intentional vault user-return gate removal (both §13).
+- **DB schema:** live DB is current through **migration 010** (`payments.receipt_path` / `receipt_url`; through 009 = `vault_requests` + `notifications`; 008's `refunded_by` nullability in place). Fresh installs get the same via `install.sql`.
+- **Recent feature work (2026-06-03, on `master`):**
+  - Vault → User cash returns opened to accountants (removed `isAdmin()` gates in `admin/vault.php`; §9 matrix + §13 updated).
+  - Payment proof-of-payment attachments — `payments.receipt_path`/`receipt_url`, file+URL upload in the collection modal, 📎 links in the unit payment list + SoA. Mirrors the Expenses pattern (see §4 `payments` + the change log above).
 - **Monochrome redesign: ✅ COMPLETE** — all pages migrated; dark mode fully functional; mobile layout polished. See §7 for token rules.
-- **Git:** branch is **pushed** to `origin/ui/magix-redesign`; **no PR opened** (working directly on the branch per §10; the working tree *is* the live deploy). `master` is behind.
+- **Tests:** Unit 59/59 green; Integration 31 (27 pass + 4 skip = `PaymentReceiptTest`, which self-skips unless an isolated `laskie_test` DB exists — see §2). No PHPUNIT rows leak into live (tearDown verified clean).
+- **Git:** `master` is **pushed** to `origin/master` (HEAD `a4623e6`); the old `ui/magix-redesign` branch is merged in. Work goes directly on `master` per §10; the working tree *is* the live deploy.
 
 ---
 
