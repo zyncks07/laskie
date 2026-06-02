@@ -117,6 +117,10 @@ CREATE TABLE IF NOT EXISTS payments (
     due_date DATE,
     received_by INT,
     notes TEXT,
+    -- Optional proof-of-payment for electronic payments (bank-transfer
+    -- screenshot / PDF receipt). Mirrors expenses.receipt_path/receipt_url.
+    receipt_path VARCHAR(500) DEFAULT NULL,
+    receipt_url VARCHAR(1000) DEFAULT NULL,
     status ENUM('paid','refunded','partially_refunded','voided') NOT NULL DEFAULT 'paid',
     deleted_at TIMESTAMP NULL DEFAULT NULL,
     -- Client-generated UUID to make save_payment INSERT replay-safe.

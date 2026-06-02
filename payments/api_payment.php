@@ -25,13 +25,28 @@ if ($action === 'save_payment') {
     $periodMonth = (int)($_POST['period_month'] ?? date('n'));
     $periodYear  = (int)($_POST['period_year']  ?? date('Y'));
     $notes       = nullOrStr($_POST['notes'] ?? '');
+    $receiptUrl  = nullOrStr($_POST['receipt_url'] ?? '');
+    $receiptPath = null;
 
     if (!$unitId)             jsonErr('Rental unit is required.');
     if (!money_is_pos($amount)) jsonErr('Amount must be greater than zero.');
     if (!in_array($type, ['rent','service'])) jsonErr('Invalid payment type.');
 
+    // Editing an existing payment is admin-only. Guard BEFORE touching the
+    // filesystem so a non-admin edit attempt can't leave an orphaned upload
+    // (mirrors api/expenses_api.php save_expense ordering).
+    if ($id) requireAdmin();
+
+    // Optional proof-of-payment upload (bank-transfer screenshot / PDF receipt).
+    // Done once here — outside the INSERT retry loop below — so a retried insert
+    // never uploads twice. handleUpload is a no-op when no file was submitted.
+    if (!empty($_FILES['receipt_file']['name'])) {
+        $up = handleUpload('receipt_file', 'payments');
+        if ($up['error']) jsonErr($up['error']);
+        $receiptPath = $up['path'];
+    }
+
     if ($id) {
-        requireAdmin(); // Only admins may edit existing payments
         // Fetch full record for before/after audit trail + validation
         $chk = $pdo->prepare("SELECT * FROM payments WHERE id=?");
         $chk->execute([$id]);
@@ -68,8 +83,17 @@ if ($action === 'save_payment') {
             // create a mismatch with cash_transactions.user_id (which we do NOT
             // touch here). The edit itself is captured in system_logs via
             // logChange() a few lines below.
-            $pdo->prepare("UPDATE payments SET unit_id=?,tenant_id=?,payment_type=?,service_type_id=?,amount=?,payment_date=?,due_date=?,period_month=?,period_year=?,notes=? WHERE id=?")
-                ->execute([$unitId,$tenantId,$type,$serviceId,$amount,$payDate,$dueDate,$periodMonth,$periodYear,$notes,$id]);
+            // receipt_url always round-trips through the form (editPayment
+            // prefills it). receipt_path is only overwritten when a NEW file was
+            // uploaded — otherwise omit it so an edit doesn't wipe the existing
+            // receipt. Same two-branch shape as save_expense.
+            if ($receiptPath) {
+                $pdo->prepare("UPDATE payments SET unit_id=?,tenant_id=?,payment_type=?,service_type_id=?,amount=?,payment_date=?,due_date=?,period_month=?,period_year=?,notes=?,receipt_path=?,receipt_url=? WHERE id=?")
+                    ->execute([$unitId,$tenantId,$type,$serviceId,$amount,$payDate,$dueDate,$periodMonth,$periodYear,$notes,$receiptPath,$receiptUrl,$id]);
+            } else {
+                $pdo->prepare("UPDATE payments SET unit_id=?,tenant_id=?,payment_type=?,service_type_id=?,amount=?,payment_date=?,due_date=?,period_month=?,period_year=?,notes=?,receipt_url=? WHERE id=?")
+                    ->execute([$unitId,$tenantId,$type,$serviceId,$amount,$payDate,$dueDate,$periodMonth,$periodYear,$notes,$receiptUrl,$id]);
+            }
 
             // Only sync the 'received' cash row that mirrors this payment. Refunds
             // also store reference_payment_id, and we must not overwrite their
@@ -123,9 +147,9 @@ if ($action === 'save_payment') {
             $pdo->beginTransaction();
             try {
                 $invoiceNo = generateInvoiceNo($pdo);
-                $pdo->prepare("INSERT INTO payments (invoice_no,unit_id,tenant_id,payment_type,service_type_id,amount,period_month,period_year,payment_date,due_date,received_by,notes,idempotency_key)
-                               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)")
-                    ->execute([$invoiceNo,$unitId,$tenantId,$type,$serviceId,$amount,$periodMonth,$periodYear,$payDate,$dueDate,$_SESSION['user']['id'],$notes,$idempotencyKey]);
+                $pdo->prepare("INSERT INTO payments (invoice_no,unit_id,tenant_id,payment_type,service_type_id,amount,period_month,period_year,payment_date,due_date,received_by,notes,receipt_path,receipt_url,idempotency_key)
+                               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+                    ->execute([$invoiceNo,$unitId,$tenantId,$type,$serviceId,$amount,$periodMonth,$periodYear,$payDate,$dueDate,$_SESSION['user']['id'],$notes,$receiptPath,$receiptUrl,$idempotencyKey]);
                 $newId = (int)$pdo->lastInsertId();
 
                 $pdo->prepare("INSERT INTO cash_transactions (user_id,transaction_type,amount,reference_payment_id,notes,transaction_date) VALUES (?,?,?,?,?,?)")

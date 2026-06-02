@@ -179,6 +179,7 @@ if ($selUnit && $unitInfo) {
             'received_by'      => $p['received_by'] ?? 0,
             'pay_status'       => $payStatusMap[$p['id']] ?? 'paid',
             'already_refunded' => $refundedMap[$p['id']] ?? '0.00',
+            'receipt'          => $p['receipt_path'] ?: ($p['receipt_url'] ?? ''),
         ];
     }
 
@@ -463,6 +464,18 @@ include '../includes/header.php';
               <?=clean($row['invoice_no'])?>
             </a>
           <?php else: ?><span class="text-muted">—</span><?php endif; ?>
+          <?php
+            // Payment-proof link (collection-page upload / external URL). Only
+            // emit for safe schemes — app-served uploads or absolute http(s).
+            // no-print so it stays off the printed Statement of Account.
+            $rcpt = $row['receipt'] ?? '';
+            if ($rcpt !== '' && (str_starts_with($rcpt, '/uploads/') || preg_match('#^https?://#i', $rcpt))):
+          ?>
+            <a href="<?=clean($rcpt)?>" target="_blank" rel="noopener noreferrer"
+               class="no-print ms-1 text-muted" style="font-size:11.5px" title="View payment proof">
+              <i class="fa-solid fa-paperclip fa-xs"></i>
+            </a>
+          <?php endif; ?>
         </td>
         <td style="font-size:12px;color:var(--text-muted)"><?=clean($row['cashier']??'—')?></td>
         <td class="text-end num">

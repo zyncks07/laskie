@@ -177,6 +177,15 @@ include '../includes/header.php';
             <label class="form-label">Notes</label>
             <input type="text" class="form-control" id="payNotes" placeholder="e.g. Cash payment, reference number...">
           </div>
+          <div class="col-12">
+            <label class="form-label">Payment Proof <small class="text-muted">(optional)</small></label>
+            <input type="file" class="form-control form-control-sm" id="payReceiptFile" accept=".jpg,.jpeg,.png,.pdf">
+            <div class="form-text">Upload a bank-transfer screenshot or PDF receipt — or paste an external link below.</div>
+            <input type="url" class="form-control form-control-sm mt-1" id="payReceiptUrl" placeholder="https://drive.google.com/...">
+            <div id="payReceiptCurrent" class="form-text mt-1" style="display:none">
+              Current proof: <a href="#" target="_blank" rel="noopener noreferrer" id="payReceiptCurrentLink">view</a>
+            </div>
+          </div>
         </div>
         <div id="unitInfoBar" class="mt-3" style="display:none">
           <div class="alert alert-info py-2 mb-0" style="font-size:12.5px">
@@ -327,6 +336,16 @@ function esc(s) {
   return d.innerHTML;
 }
 
+// Strip dangerous URL schemes (javascript:/data:/vbscript:/file:) before using
+// a user-supplied receipt URL. Returns the raw sanitized URL — wrap with esc()
+// when injecting into an HTML attribute string (mirrors expenses.php).
+function safeUrl(u) {
+  if (!u) return '';
+  var s = String(u).trim();
+  if (/^\s*(javascript|data|vbscript|file):/i.test(s)) return '';
+  return s;
+}
+
 var payModal        = null;
 var unitDetailModal = null;
 var refundModal     = null;
@@ -463,6 +482,9 @@ function openPaymentModal() {
   document.getElementById('payDate').value        = new Date().toISOString().split('T')[0];
   document.getElementById('payDue').value         = '';
   document.getElementById('payNotes').value       = '';
+  document.getElementById('payReceiptFile').value = '';
+  document.getElementById('payReceiptUrl').value  = '';
+  document.getElementById('payReceiptCurrent').style.display = 'none';
   document.getElementById('payMsg').style.display       = 'none';
   document.getElementById('unitInfoBar').style.display  = 'none';
   document.getElementById('serviceRow').style.display   = 'none';
@@ -580,21 +602,30 @@ function savePayment(andPrint) {
   if (saveBtn)  saveBtn.disabled  = true;
   if (printBtn) printBtn.disabled = true;
 
-  var data = {
-    action:          'save_payment',
-    id:              document.getElementById('payId').value,
-    idempotency_key: document.getElementById('payIdempotencyKey').value,
-    unit_id:         document.getElementById('payUnit').value,
-    tenant_id:       document.getElementById('payTenant').value,
-    payment_type:    document.getElementById('payType').value,
-    service_type_id: document.getElementById('payService').value,
-    amount:          document.getElementById('payAmount').value,
-    payment_date:    document.getElementById('payDate').value,
-    due_date:        document.getElementById('payDue').value,
-    period_month:    document.getElementById('payPeriodMonth').value,
-    period_year:     document.getElementById('payPeriodYear').value,
-    notes:           document.getElementById('payNotes').value
-  };
+  // FormData (not a plain object) so the optional proof file rides along.
+  // apiPost passes a FormData through unchanged.
+  var receiptInput = document.getElementById('payReceiptFile');
+  if (receiptInput.files[0] && !validateFileSize(receiptInput)) {
+    if (saveBtn)  saveBtn.disabled  = false;
+    if (printBtn) printBtn.disabled = false;
+    return;
+  }
+  var data = new FormData();
+  data.append('action',          'save_payment');
+  data.append('id',              document.getElementById('payId').value);
+  data.append('idempotency_key', document.getElementById('payIdempotencyKey').value);
+  data.append('unit_id',         document.getElementById('payUnit').value);
+  data.append('tenant_id',       document.getElementById('payTenant').value);
+  data.append('payment_type',    document.getElementById('payType').value);
+  data.append('service_type_id', document.getElementById('payService').value);
+  data.append('amount',          document.getElementById('payAmount').value);
+  data.append('payment_date',    document.getElementById('payDate').value);
+  data.append('due_date',        document.getElementById('payDue').value);
+  data.append('period_month',    document.getElementById('payPeriodMonth').value);
+  data.append('period_year',     document.getElementById('payPeriodYear').value);
+  data.append('notes',           document.getElementById('payNotes').value);
+  data.append('receipt_url',     document.getElementById('payReceiptUrl').value);
+  if (receiptInput.files[0]) data.append('receipt_file', receiptInput.files[0]);
 
   apiPost('api_payment.php', data, function(err, res) {
     if (saveBtn)  saveBtn.disabled  = false;
@@ -750,6 +781,9 @@ function viewUnitPayments(unitId, unitName, month, year) {
             '<td class="text-center">' +
               '<a href="../payments/invoice_print.php?id=' + pid + '" target="_blank" rel="noopener noreferrer" class="btn-icon" title="Print Invoice">' +
                 '<i class="fa-solid fa-print fa-xs"></i></a> ' +
+              ((p.receipt_path || p.receipt_url)
+                ? '<a href="' + esc(safeUrl(p.receipt_path || p.receipt_url)) + '" target="_blank" rel="noopener noreferrer" class="btn-icon" title="View payment proof"><i class="fa-solid fa-paperclip fa-xs"></i></a> '
+                : '') +
               refBtn +
               editBtn +
               voidRestoreBtn +
@@ -835,6 +869,17 @@ function editPayment(id) {
     document.getElementById('payPeriodMonth').value = p.period_month;
     document.getElementById('payPeriodYear').value  = p.period_year;
     document.getElementById('payNotes').value       = p.notes || '';
+    document.getElementById('payReceiptFile').value = '';
+    document.getElementById('payReceiptUrl').value  = p.receipt_url || '';
+    var rcWrap = document.getElementById('payReceiptCurrent');
+    var rcLink = document.getElementById('payReceiptCurrentLink');
+    if (p.receipt_path || p.receipt_url) {
+      rcLink.href = safeUrl(p.receipt_path || p.receipt_url) || '#';
+      rcLink.textContent = p.receipt_path ? 'Uploaded file' : 'External link';
+      rcWrap.style.display = '';
+    } else {
+      rcWrap.style.display = 'none';
+    }
     document.getElementById('payMsg').style.display = 'none';
     document.getElementById('prorateHint').style.display = 'none';
 

@@ -124,6 +124,7 @@ Read [`install.sql`](install.sql) for the authoritative DDL. Highlights:
   - `payment_type` ∈ {`rent`, `service`}, `service_type_id` FK when `service`
   - `amount`, `period_month`, `period_year`, `payment_date`, `due_date`
   - `received_by` — user who collected
+  - `receipt_path` / `receipt_url` — optional proof-of-payment (bank-transfer screenshot / PDF receipt) uploaded on the collection page, or an external link. Mirrors `expenses.receipt_path/receipt_url`; added in `migrations/010_add_payment_receipt.sql`.
   - `status` ∈ {`paid`, `refunded`, `partially_refunded`, `voided`} — **never** delete; always status-flip
   - `deleted_at` — **soft delete**, restorable from `admin/transactions.php`
 - `expenses` — amount, expense_date, unit_id, category_id, recorded_by, receipt_path, **soft-delete via `deleted_at`**
@@ -371,6 +372,8 @@ Most of the items above were addressed in dedicated bug-fix commits. If you're i
 - `224ac2d` / `e992a1a` — all ~20 pages migrated to monochrome (O1–O5, S1–S10, H1–H7 tiers complete).
 - `050ed7e` — dark mode visual bug fixes: stat card hero text (`color:var(--paper)`), sidebar spacing compressed, `--gray-400/500` contrast bumped in dark mode, `--bs-secondary-color` overridden so `.text-muted` adapts, badge dark-mode overrides, dashboard stacked charts (vault-style), table `tfoot`/hover dark fixes, file input `::file-selector-button`, pagination blue→mono, modal padding/focus-ring, login dark mode toggle (`z-index` fixed).
 - `79bee18` — mobile fixes: chart height doubled to 440px across all pages (`app.css` + `dashboard.php` + vault `chart-wrap`), vault charts switched to `maintainAspectRatio:false`, notification panel `position:fixed` on mobile to prevent left-edge overflow.
+
+**Feature (2026-06-03, branch `master`):** payment proof-of-payment attachments. Added `payments.receipt_path` + `receipt_url` (`migrations/010_add_payment_receipt.sql`, applied to live DB + mirrored in `install.sql`). `save_payment` (`payments/api_payment.php`) handles a `receipt_file` upload (via `handleUpload`, before the retry loop) + `receipt_url`, edit-preserves an existing file. Collection modal (`payments/collection.php`) got file + URL inputs and a 📎 view link in the unit payment list; SoA (`payments/history.php`) shows a `no-print` proof link. Mirrors the Expenses pattern. Recording with a receipt is open to all roles (only editing is admin-only). Unit 59/59 green.
 
 **Role change (2026-06-03, branch `master`):** Vault → User cash returns opened to accountants. Removed the four `isAdmin()` gates on `add/edit/delete/get_user_return` in `admin/vault.php` and unhid the "Return to User" button + "Returns to Users" card + log Edit/Delete buttons for accountants (page already `requireRole(['admin','accountant'])`). No balance gate, no schema change; the admin-only request→approval flow is untouched. §9 matrix + §13 updated. Unit 59/59 green.
 
