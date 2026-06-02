@@ -2,8 +2,10 @@
 session_start();
 require_once '../config/db.php';
 require_once '../config/functions.php';
-// The Vault is accessible to both admins and accountants. Within-page
-// destructive operations (recipient management, etc.) still gate on isAdmin().
+// The Vault is accessible to both admins and accountants. Every write action
+// on this page (remittances, distributions, dividend returns, recipient
+// management, and vault→user returns) is open to both roles — the page-level
+// requireRole below is the access boundary; no action adds an extra isAdmin().
 requireRole(['admin', 'accountant']);
 
 $pageTitle = 'The Vault';
@@ -170,13 +172,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
     // ── Vault Returns to Users ───────────────────────────────────
-    // Admin-only flow: cash issued from the vault back to a user (admin,
-    // accountant, or staff) — fixes excessive remittances or funds a
-    // planned expense when the user has zero cash on hand by mistake.
-    // Stored as cash_transactions.transaction_type='vault_return': it
-    // INCREASES the user's cash_on_hand and DECREASES the vault balance.
+    // Available to admins AND accountants (the whole Vault page is gated to
+    // those two roles at the top via requireRole; this flow carries no extra
+    // isAdmin() check, matching every other write action on this page).
+    // Cash issued from the vault back to a user (admin, accountant, or staff)
+    // — fixes excessive remittances or funds a planned expense when the user
+    // has zero cash on hand by mistake. Stored as
+    // cash_transactions.transaction_type='vault_return': it INCREASES the
+    // user's cash_on_hand and DECREASES the vault balance.
     if ($action === 'add_user_return') {
-        if (!isAdmin()) jsonErr('Admin access required.', 403);
         $userId = (int)($_POST['user_id'] ?? 0);
         $amount = trim((string)($_POST['amount'] ?? '0'));
         $date   = trim($_POST['return_date'] ?? '');
@@ -203,7 +207,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
     if ($action === 'edit_user_return') {
-        if (!isAdmin()) jsonErr('Admin access required.', 403);
         $id     = (int)($_POST['id'] ?? 0);
         $userId = (int)($_POST['user_id'] ?? 0);
         $amount = trim((string)($_POST['amount'] ?? '0'));
@@ -230,7 +233,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
     if ($action === 'delete_user_return') {
-        if (!isAdmin()) jsonErr('Admin access required.', 403);
         $id = (int)($_POST['id'] ?? 0);
         if (!$id) jsonErr('Return ID required.');
         $chk = $pdo->prepare("SELECT amount FROM cash_transactions WHERE id=? AND transaction_type='vault_return'");
@@ -243,7 +245,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
     if ($action === 'get_user_return') {
-        if (!isAdmin()) jsonErr('Admin access required.', 403);
         $id = (int)($_POST['id'] ?? 0);
         $r  = $pdo->prepare("SELECT * FROM cash_transactions WHERE id=? AND transaction_type='vault_return'");
         $r->execute([$id]);
@@ -478,9 +479,7 @@ include '../includes/header.php';
     <button class="btn btn-primary btn-sm" onclick="openRemittanceModal()"><i class="fa-solid fa-arrow-down-to-line me-1"></i>Record Remittance</button>
     <button class="btn btn-primary btn-sm" onclick="openDistributionModal()"><i class="fa-solid fa-money-bill-transfer me-1"></i>Distribute Dividend</button>
     <button class="btn btn-primary btn-sm" onclick="openReturnModal()"><i class="fa-solid fa-rotate-left me-1"></i>Return to Vault</button>
-    <?php if (isAdmin()): ?>
     <button class="btn btn-primary btn-sm" onclick="openUserReturnModal()"><i class="fa-solid fa-hand-holding-dollar me-1"></i>Return to User</button>
-    <?php endif; ?>
     <button class="btn btn-outline-secondary btn-sm" onclick="openRecipientsModal()"><i class="fa-solid fa-users me-1"></i>Recipients</button>
   </div>
 </div>
@@ -626,14 +625,13 @@ include '../includes/header.php';
   </div>
 </div>
 
-<?php if (isAdmin()): ?>
-<!-- Vault Returns to Users (admin-only section — accountants don't see it
-     since both the UI and the backend gate the flow on isAdmin()) -->
+<!-- Vault Returns to Users (admins + accountants — same as every other write
+     action on this page) -->
 <div class="card mb-4">
   <div class="card-body">
     <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
       <div>
-        <h6 class="mb-0 fw-600"><i class="fa-solid fa-hand-holding-dollar me-2" style="color:var(--info)"></i>Returns to Users <span class="muted-pill" style="font-size:10px">admin only</span></h6>
+        <h6 class="mb-0 fw-600"><i class="fa-solid fa-hand-holding-dollar me-2" style="color:var(--info)"></i>Returns to Users</h6>
         <div class="text-muted" style="font-size:11.5px;margin-top:2px">Cash issued back from the vault to a user — corrects excess remittances or funds a planned expense.</div>
       </div>
       <button class="btn btn-sm btn-primary" onclick="openUserReturnModal()"><i class="fa-solid fa-plus me-1"></i>Issue Cash to User</button>
@@ -677,7 +675,6 @@ include '../includes/header.php';
     <?php endif; ?>
   </div>
 </div>
-<?php endif; /* isAdmin section close — Vault Returns to Users */ ?>
 
 <!-- Chart -->
 <div class="card mb-4">
@@ -897,7 +894,7 @@ include '../includes/header.php';
   </div>
 </div>
 
-<!-- Return Cash from Vault to User (admin only) -->
+<!-- Return Cash from Vault to User (admins + accountants) -->
 <div class="modal fade" id="userReturnModal" tabindex="-1">
   <div class="modal-dialog modal-dialog-centered">
     <div class="modal-content">
@@ -1182,10 +1179,6 @@ foreach ($returnRecords  as $ret)  { $retMap[$ret['id']] = $ret; }
 const DIST_DATA = <?= json_encode($distMap,  JSON_UNESCAPED_UNICODE) ?>;
 const RET_DATA  = <?= json_encode($retMap,   JSON_UNESCAPED_UNICODE) ?>;
 
-// Role flag for client-side UI gating (admin-only buttons in the logs table).
-// Backend still enforces every admin-only action via isAdmin() checks.
-const IS_ADMIN = <?= isAdmin() ? 'true' : 'false' ?>;
-
 // ── Charts (monochrome, theme-aware) ─────────────────────────
 const chartByUser  = <?= $chartJson ?>;
 const months       = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
@@ -1313,12 +1306,10 @@ function loadLogs() {
         badge    = `<span class="muted-pill" style="font-weight:600">Vault→User</span>`;
         person   = `<span>→ ${esc(r.recipient_name||'—')}</span>`;
         amtColor = 'var(--ink)';
-        // user_return Edit/Delete are admin-only — accountants see the row but
-        // not the action buttons (backend would 403 them anyway).
-        actions  = IS_ADMIN
-          ? `<button class="btn-icon" title="Edit" onclick="openEditUserReturn(${r.id})"><i class="fa-solid fa-pen fa-xs"></i></button>`
-          + `<button class="btn-icon danger" title="Delete" onclick="deleteUserReturn(${r.id})"><i class="fa-solid fa-trash fa-xs"></i></button>`
-          : '';
+        // user_return Edit/Delete are available to admins + accountants (this
+        // whole page is gated to those two roles), same as the other log rows.
+        actions  = `<button class="btn-icon" title="Edit" onclick="openEditUserReturn(${r.id})"><i class="fa-solid fa-pen fa-xs"></i></button>`
+                 + `<button class="btn-icon danger" title="Delete" onclick="deleteUserReturn(${r.id})"><i class="fa-solid fa-trash fa-xs"></i></button>`;
       }
       html += `<tr>
         <td style="white-space:nowrap;color:var(--text-secondary)">${esc(r.log_date)}</td>
@@ -1585,7 +1576,7 @@ function deleteReturn(id) {
   });
 }
 
-// ── Vault Returns to Users (admin issues cash from vault back to a user) ──
+// ── Vault Returns to Users (admin/accountant issues cash from vault to a user) ──
 function openUserReturnModal() {
   document.getElementById('userReturnTitle').textContent = 'Issue Cash from Vault to User';
   document.getElementById('userReturnId').value     = '';

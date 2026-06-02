@@ -264,7 +264,7 @@ Global helpers attached to `window`: `showToast`, `apiPost`, `confirmDelete`, `f
 | Manage Accounts, Tenants, Units, Categories, Settings | ✓ | ✗ | ✗ |
 | Audit Logs | ✓ | ✗ | ✗ |
 | The Vault (dividend recipients, distributions, returns) | ✓ | ✓ | ✗ |
-| Vault → User cash returns (admin-only sub-flow within Vault page) | ✓ | ✗ | ✗ |
+| Vault → User cash returns (issue/edit/delete cash from the Vault back to a user, within Vault page) | ✓ | ✓ | ✗ |
 | Request cash from the Vault (`cash.php` → `requests_api.php create_request`) | ✓ | ✓ | ✓ |
 | Approve/reject cash requests (`admin/requests.php`; approve auto-issues the `vault_return`) | ✓ | ✗ | ✗ |
 | Process a payment refund — admin picks the cashier; refund is hard-gated on that cashier's cash-on-hand | ✓ | ✗ | ✗ |
@@ -372,6 +372,8 @@ Most of the items above were addressed in dedicated bug-fix commits. If you're i
 - `050ed7e` — dark mode visual bug fixes: stat card hero text (`color:var(--paper)`), sidebar spacing compressed, `--gray-400/500` contrast bumped in dark mode, `--bs-secondary-color` overridden so `.text-muted` adapts, badge dark-mode overrides, dashboard stacked charts (vault-style), table `tfoot`/hover dark fixes, file input `::file-selector-button`, pagination blue→mono, modal padding/focus-ring, login dark mode toggle (`z-index` fixed).
 - `79bee18` — mobile fixes: chart height doubled to 440px across all pages (`app.css` + `dashboard.php` + vault `chart-wrap`), vault charts switched to `maintainAspectRatio:false`, notification panel `position:fixed` on mobile to prevent left-edge overflow.
 
+**Role change (2026-06-03, branch `master`):** Vault → User cash returns opened to accountants. Removed the four `isAdmin()` gates on `add/edit/delete/get_user_return` in `admin/vault.php` and unhid the "Return to User" button + "Returns to Users" card + log Edit/Delete buttons for accountants (page already `requireRole(['admin','accountant'])`). No balance gate, no schema change; the admin-only request→approval flow is untouched. §9 matrix + §13 updated. Unit 59/59 green.
+
 ### Current state (branch `ui/magix-redesign`, June 2026)
 - **Audit:** all PHP entry points + helpers read line-by-line across 6 sessions; session 5 (2026-06-01) re-audited the vault-request feature (commits `4c49561` → `f79811b`) and found 3 low/medium bugs (all fixed, see above). **No known open code bugs.** See memory `bug-audit-coverage` + `deferred-bug-findings`; don't re-flag `save_charge` (open to all roles, §13).
 - **DB schema:** live DB is current through **migration 009** (`vault_requests` + `notifications`; migration 008's `refunded_by` nullability is in place). Fresh installs get the same via `install.sql`.
@@ -412,6 +414,9 @@ These look like bugs but are **deliberate choices**. Do not "fix" them without a
 
 ### `admin/vault.php` — Accountants can delete vault remittances (no `isAdmin()` on `delete_remittance`)
 `delete_remittance` in `admin/vault.php` intentionally has **no `isAdmin()` guard**, so accountants can delete any `transaction_type='remitted'` cash transaction via the Vault page. The Vault workflow expects accountants to have full CRUD over remittances they record on behalf of staff. The role-matrix entry "Edit/Delete cash transactions (own or others) — admin only" refers specifically to `cash_api.php::delete_cash_tx` (the general-purpose endpoint); vault-context remittance management is a separate, deliberately accountant-accessible sub-flow. Do **not** add `requireAdmin()` to this action.
+
+### `admin/vault.php` — Accountants can issue/edit/delete Vault → User cash returns (no `isAdmin()` on `add/edit/delete/get_user_return`)
+The four `*_user_return` actions and their UI (the "Return to User" button, the "Returns to Users" card, and the user_return Edit/Delete buttons in the transaction log) intentionally carry **no `isAdmin()` guard** beyond the page-level `requireRole(['admin','accountant'])` (changed 2026-06-03, by user request). Accountants can issue cash from the Vault directly back to a user without going through the admin request→approval flow — the whole Vault page is symmetric for both roles. This reverses the admin-only gate originally added in commit `9e6514f`; do **not** re-add `isAdmin()` to these actions. Note the separate request/approval flow (`admin/requests.php` + `api/requests_api.php` `approve_request`/`reject_request`) stays **admin-only** — only direct issuance was opened up. There is deliberately **no vault-balance gate** on issuance (matches admin behavior; the vault balance can go negative by admin/accountant action).
 
 ### `payments/api_payment.php` — `save_charge` has no `requireAdmin()` (any logged-in user can create/edit pre-billed charges)
 The `save_charge` action intentionally has **no role guard** beyond `requireLogin()`, and the "Add Service Charge" button in `payments/collection.php` is shown to all roles. This is a **deliberate workflow choice** (confirmed 2026-05-30): staff/accountants pre-bill service charges during collection. Note the asymmetry — `delete_charge` and editing an already-PAID charge *are* admin-only (you can add/edit an unpaid charge but only an admin can delete one or touch a paid one). Do **not** add `requireAdmin()` to `save_charge`.
