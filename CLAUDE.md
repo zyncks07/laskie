@@ -376,6 +376,8 @@ Most of the items above were addressed in dedicated bug-fix commits. If you're i
 
 **Feature (2026-06-03, branch `master`):** payment proof-of-payment attachments. Added `payments.receipt_path` + `receipt_url` (`migrations/010_add_payment_receipt.sql`, applied to live DB + mirrored in `install.sql`). `save_payment` (`payments/api_payment.php`) handles a `receipt_file` upload (via `handleUpload`, before the retry loop) + `receipt_url`, edit-preserves an existing file. Collection modal (`payments/collection.php`) got file + URL inputs and a 📎 view link in the unit payment list; SoA (`payments/history.php`) shows a `no-print` proof link. Mirrors the Expenses pattern. Recording with a receipt is open to all roles (only editing is admin-only). Unit 59/59 green.
 
+**UX polish (2026-06-03, branch `master`, commit `c72e41b`):** collection payment-save now matches the expenses upload UX. `savePayment()` in `payments/collection.php` rewritten to mirror `saveExpense()`: the clicked button (`#payBtnSave` / `#payBtnSaveAndPrint`) disables + shows a spinner with `Uploading…`/`Processing…`/`Saving…` labels via the new `_setPaySaveBusy(busy,label,andPrint)` helper, and file uploads stream through `XMLHttpRequest` + `upload.onprogress` driving a new `#payUploadProgress` bar (identical markup/tokens to the expenses bar; `_resetPayProgress()` clears it). A `hidden.bs.modal` listener on `#paymentModal` resets buttons + bar on close (no stuck spinner on reopen). No-file saves still go through `apiPost`. Double-tap guard + server-side `idempotency_key` backstop unchanged. **Client-side only — no server/DB/PHP-logic changes.** Unit 59/59 green.
+
 **Role change (2026-06-03, branch `master`):** Vault → User cash returns opened to accountants. Removed the four `isAdmin()` gates on `add/edit/delete/get_user_return` in `admin/vault.php` and unhid the "Return to User" button + "Returns to Users" card + log Edit/Delete buttons for accountants (page already `requireRole(['admin','accountant'])`). No balance gate, no schema change; the admin-only request→approval flow is untouched. §9 matrix + §13 updated. Unit 59/59 green.
 
 ### Current state (branch `master`, June 2026)
@@ -384,9 +386,10 @@ Most of the items above were addressed in dedicated bug-fix commits. If you're i
 - **Recent feature work (2026-06-03, on `master`):**
   - Vault → User cash returns opened to accountants (removed `isAdmin()` gates in `admin/vault.php`; §9 matrix + §13 updated).
   - Payment proof-of-payment attachments — `payments.receipt_path`/`receipt_url`, file+URL upload in the collection modal, 📎 links in the unit payment list + SoA. Mirrors the Expenses pattern (see §4 `payments` + the change log above).
+  - Collection save-flow UX parity with Expenses (commit `c72e41b`): busy-state spinner + labels, XHR upload-progress bar, modal-close reset. Client-side only (see change log above).
 - **Monochrome redesign: ✅ COMPLETE** — all pages migrated; dark mode fully functional; mobile layout polished. See §7 for token rules.
 - **Tests:** Unit 59/59 green; Integration 31 (27 pass + 4 skip = `PaymentReceiptTest`, which self-skips unless an isolated `laskie_test` DB exists — see §2). No PHPUNIT rows leak into live (tearDown verified clean).
-- **Git:** `master` is **pushed** to `origin/master` (HEAD `a4623e6`); the old `ui/magix-redesign` branch is merged in. Work goes directly on `master` per §10; the working tree *is* the live deploy.
+- **Git:** `master` is **pushed** to `origin/master` (HEAD `c72e41b`); the old `ui/magix-redesign` branch is merged in. Work goes directly on `master` per §10; the working tree *is* the live deploy.
 
 ---
 
