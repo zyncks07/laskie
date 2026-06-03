@@ -194,6 +194,15 @@ include '../includes/header.php';
           </div>
         </div>
         <div id="payMsg" class="mt-3" style="display:none"></div>
+        <div id="payUploadProgress" style="display:none;margin-top:10px">
+          <div class="d-flex align-items-center justify-content-between mb-1">
+            <small style="color:var(--text-muted)"><i class="fa-solid fa-cloud-arrow-up me-1"></i>Uploading proof…</small>
+            <small id="payUploadPct" style="color:var(--text-muted);font-variant-numeric:tabular-nums">0%</small>
+          </div>
+          <div class="progress" style="height:5px;border-radius:3px">
+            <div class="progress-bar progress-bar-striped progress-bar-animated" id="payUploadBar" style="width:0%;background:var(--primary)"></div>
+          </div>
+        </div>
       </div>
       <div class="modal-footer">
         <button class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
@@ -359,6 +368,11 @@ document.addEventListener('DOMContentLoaded', function() {
   unitDetailModal = new bootstrap.Modal(document.getElementById('unitDetailModal'));
   refundModal     = new bootstrap.Modal(document.getElementById('refundModal'));
   chargeModal     = new bootstrap.Modal(document.getElementById('chargeModal'));
+  // Reset save buttons and progress bar whenever the payment modal closes (X, ESC, Cancel, or success)
+  document.getElementById('paymentModal').addEventListener('hidden.bs.modal', function() {
+    _setPaySaveBusy(false);
+    _resetPayProgress();
+  });
   loadSummary();
   document.getElementById('selMonth').addEventListener('change', loadSummary);
   document.getElementById('selYear').addEventListener('change', loadSummary);
@@ -592,24 +606,41 @@ function onServiceChange() {
   }
 }
 
+// Lock/unlock the submit buttons and reflect a busy state. When busy, both buttons
+// are disabled (double-tap belt — the idempotency_key is the server-side suspenders)
+// and the clicked one shows a spinner + label; when idle, both are restored.
+function _setPaySaveBusy(busy, label, andPrint) {
+  var saveBtn  = document.getElementById('payBtnSave');
+  var printBtn = document.getElementById('payBtnSaveAndPrint');
+  if (busy) {
+    if (saveBtn)  saveBtn.disabled  = true;
+    if (printBtn) printBtn.disabled = true;
+    var spin = '<span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>' + (label || 'Saving…');
+    var target = andPrint ? printBtn : saveBtn;
+    if (target) target.innerHTML = spin;
+  } else {
+    if (saveBtn)  { saveBtn.disabled  = false; saveBtn.innerHTML  = '<i class="fa-solid fa-save me-1"></i>Save Payment'; }
+    if (printBtn) { printBtn.disabled = false; printBtn.innerHTML = '<i class="fa-solid fa-print me-1"></i>Save &amp; Print Invoice'; }
+  }
+}
+
+function _resetPayProgress() {
+  document.getElementById('payUploadProgress').style.display = 'none';
+  document.getElementById('payUploadBar').style.width = '0%';
+  document.getElementById('payUploadPct').textContent = '0%';
+}
+
 function savePayment(andPrint) {
-  var saveBtn   = document.getElementById('payBtnSave');
-  var printBtn  = document.getElementById('payBtnSaveAndPrint');
   // Client-side belt: hard-lock both submit buttons until the response returns,
   // so a double-click can't fire a second request even before the network round-trip.
-  // The idempotency_key is the server-side suspenders that catch retries from beyond JS.
-  if (saveBtn && saveBtn.disabled)  return;
-  if (saveBtn)  saveBtn.disabled  = true;
-  if (printBtn) printBtn.disabled = true;
+  var saveBtn = document.getElementById('payBtnSave');
+  if (saveBtn && saveBtn.disabled) return;
 
   // FormData (not a plain object) so the optional proof file rides along.
-  // apiPost passes a FormData through unchanged.
   var receiptInput = document.getElementById('payReceiptFile');
-  if (receiptInput.files[0] && !validateFileSize(receiptInput)) {
-    if (saveBtn)  saveBtn.disabled  = false;
-    if (printBtn) printBtn.disabled = false;
-    return;
-  }
+  if (receiptInput.files[0] && !validateFileSize(receiptInput)) return;
+  var file = receiptInput.files[0];
+
   var data = new FormData();
   data.append('action',          'save_payment');
   data.append('id',              document.getElementById('payId').value);
@@ -625,16 +656,20 @@ function savePayment(andPrint) {
   data.append('period_year',     document.getElementById('payPeriodYear').value);
   data.append('notes',           document.getElementById('payNotes').value);
   data.append('receipt_url',     document.getElementById('payReceiptUrl').value);
-  if (receiptInput.files[0]) data.append('receipt_file', receiptInput.files[0]);
+  if (file) data.append('receipt_file', file);
 
-  apiPost('api_payment.php', data, function(err, res) {
-    if (saveBtn)  saveBtn.disabled  = false;
-    if (printBtn) printBtn.disabled = false;
-    if (err || !res || !res.success) {
+  // Lock the buttons immediately — prevents double-tap regardless of upload size
+  _setPaySaveBusy(true, file ? 'Uploading…' : 'Saving…', andPrint);
+  document.getElementById('payMsg').style.display = 'none';
+
+  function onDone(res) {
+    if (!res || !res.success) {
+      _setPaySaveBusy(false);
+      _resetPayProgress();
       var el = document.getElementById('payMsg');
       el.style.display = '';
       el.className = 'alert alert-danger';
-      el.textContent = (res && res.error) ? res.error : (err || 'Save failed.');
+      el.textContent = (res && res.error) ? res.error : 'Save failed.';
       return;
     }
     showToast(res.msg, 'success');
@@ -648,7 +683,49 @@ function savePayment(andPrint) {
     if (andPrint && res.id) {
       window.open('../payments/invoice_print.php?id=' + res.id, '_blank');
     }
-  });
+  }
+
+  function onFail() {
+    _setPaySaveBusy(false);
+    _resetPayProgress();
+    showToast('Network error. Please try again.', 'error');
+  }
+
+  if (file) {
+    // XHR gives us upload.onprogress; fetch does not
+    var bar = document.getElementById('payUploadBar');
+    var pct = document.getElementById('payUploadPct');
+    document.getElementById('payUploadProgress').style.display = '';
+
+    var xhr = new XMLHttpRequest();
+    xhr.open('POST', 'api_payment.php', true);
+    xhr.withCredentials = true;
+    var hdr = window.csrfHeaders();
+    Object.keys(hdr).forEach(function(k) { xhr.setRequestHeader(k, hdr[k]); });
+
+    xhr.upload.onprogress = function(e) {
+      if (!e.lengthComputable) return;
+      var p = Math.round(e.loaded / e.total * 100);
+      bar.style.width = p + '%';
+      pct.textContent = p + '%';
+      if (p >= 100) {
+        pct.textContent = 'Processing…';
+        _setPaySaveBusy(true, 'Processing…', andPrint);
+      }
+    };
+
+    xhr.onload = function() {
+      _resetPayProgress();
+      try { onDone(JSON.parse(xhr.responseText)); } catch(e) { onFail(); }
+    };
+    xhr.onerror = onFail;
+    xhr.send(data);
+  } else {
+    apiPost('api_payment.php', data, function(err, res) {
+      if (err) return onFail();
+      onDone(res);
+    });
+  }
 }
 
 function saveAndPrint() { savePayment(true); }
