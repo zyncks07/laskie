@@ -156,6 +156,7 @@ if ($selUnit && $unitInfo) {
                 'type'        => 'charge',
                 'debit'       => $charge,
                 'credit'      => '0.00',
+                'encoded'     => null, // computed rent charge — no recorded row
             ];
             $iter->modify('+1 month');
         }
@@ -180,6 +181,7 @@ if ($selUnit && $unitInfo) {
             'pay_status'       => $payStatusMap[$p['id']] ?? 'paid',
             'already_refunded' => $refundedMap[$p['id']] ?? '0.00',
             'receipt'          => $p['receipt_path'] ?: ($p['receipt_url'] ?? ''),
+            'encoded'          => $p['created_at'] ?? null,
         ];
     }
 
@@ -194,6 +196,7 @@ if ($selUnit && $unitInfo) {
             'invoice_no'  => '',
             'cashier'     => $r['refunded_by_name'] ?? '',
             'id'          => null,
+            'encoded'     => $r['refunded_at'] ?? null,
         ];
     }
 
@@ -216,6 +219,7 @@ if ($selUnit && $unitInfo) {
             'id'          => (int)$c['id'],
             'is_unpaid'   => $unpaid,
             'source'      => $c['source'],
+            'encoded'     => $c['created_at'] ?? null,
         ];
     }
 }
@@ -408,6 +412,7 @@ include '../includes/header.php';
       <thead>
         <tr>
           <th>Date</th>
+          <th>Encode Date</th>
           <th>Description</th>
           <th>Invoice / Ref</th>
           <th>Cashier</th>
@@ -419,7 +424,7 @@ include '../includes/header.php';
       </thead>
       <tbody>
       <?php if (empty($ledger)): ?>
-        <tr><td colspan="8" class="text-center py-4 text-muted">No records for the selected period and unit.</td></tr>
+        <tr><td colspan="9" class="text-center py-4 text-muted">No records for the selected period and unit.</td></tr>
       <?php endif; ?>
       <?php foreach($ledger as $row): ?>
       <?php
@@ -430,6 +435,7 @@ include '../includes/header.php';
       ?>
       <tr class="<?=$trClass?>">
         <td data-order="<?=$row['date']?>" style="white-space:nowrap;font-size:12.5px"><?=fmtDate($row['date'],'M j, Y')?></td>
+        <td data-order="<?=clean($row['encoded'] ?? '')?>" style="white-space:nowrap;font-size:12px;color:var(--text-muted)"><?=fmtDateTime($row['encoded'] ?? null)?></td>
         <td class="cell-trunc-lg" style="font-size:12.5px">
           <?php if($row['type']==='charge'): ?>
             <i class="fa-solid fa-file-invoice fa-xs me-1 text-muted"></i><?=clean($row['description'])?>
@@ -520,7 +526,7 @@ include '../includes/header.php';
       </tbody>
       <tfoot>
         <tr style="background:var(--gray-100);font-weight:700;border-top:2px solid var(--gray-200)">
-          <td colspan="4" style="font-size:13px">TOTALS</td>
+          <td colspan="5" style="font-size:13px">TOTALS</td>
           <td class="text-end num fw-600"><?=money($totalDebit)?></td>
           <td class="text-end num fw-600"><?=money($totalCredit)?></td>
           <td class="text-end num fw-600">

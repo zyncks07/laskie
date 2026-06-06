@@ -183,7 +183,7 @@ include 'includes/header.php';
   <div class="table-responsive">
     <table class="table">
       <thead><tr>
-        <th>Date</th><th>Type</th><th>Staff Member</th><th>Reference</th>
+        <th>Date</th><th>Encode Date</th><th>Type</th><th>Staff Member</th><th>Reference</th>
         <th class="text-end">Amount</th><th>Notes</th>
         <th class="text-center">Proof</th><th class="text-center no-print">Actions</th>
       </tr></thead>
@@ -400,11 +400,11 @@ function loadTransactions() {
   var dateFrom = document.getElementById('fDateFrom').value;
   var dateTo   = document.getElementById('fDateTo').value;
 
-  document.getElementById('txBody').innerHTML = '<tr><td colspan="8" class="text-center py-4"><span class="spinner-border spinner-border-sm text-primary me-2"></span>Loading...</td></tr>';
+  document.getElementById('txBody').innerHTML = '<tr><td colspan="9" class="text-center py-4"><span class="spinner-border spinner-border-sm text-primary me-2"></span>Loading...</td></tr>';
 
   apiPost('api/cash_api.php', {action:'list_transactions', user_id:userId, month:month, year:year, type:type, date_from:dateFrom, date_to:dateTo}, function(err, res) {
     if (!res || !res.success) {
-      document.getElementById('txBody').innerHTML = '<tr><td colspan="8" class="text-center text-danger py-3">Failed to load.</td></tr>';
+      document.getElementById('txBody').innerHTML = '<tr><td colspan="9" class="text-center text-danger py-3">Failed to load.</td></tr>';
       return;
     }
     document.getElementById('txBadge').textContent = res.count;
@@ -448,6 +448,7 @@ function loadTransactions() {
 
       html += '<tr>';
       html += '<td style="white-space:nowrap;font-size:12.5px">' + t.transaction_date + '</td>';
+      html += '<td style="white-space:nowrap;font-size:12px;color:var(--text-muted)">' + fmtDateTime(t.created_at) + '</td>';
       html += '<td><span class="badge ' + (typeBadge[tt] || 'badge-staff') + '"><i class="fa-solid ' + (typeIcon[tt] || 'fa-circle') + ' me-1 fa-xs"></i>' + (typeLabel[tt] || tt) + '</span></td>';
       html += '<td style="font-size:12.5px">' + (t.user_name ? esc(t.user_name) : '&#8212;') + '</td>';
       html += '<td>' + refHtml + '</td>';
@@ -458,7 +459,7 @@ function loadTransactions() {
       html += '</tr>';
     }
 
-    if (!html) html = '<tr><td colspan="8" class="text-center py-5 text-muted"><i class="fa-solid fa-inbox fa-2x d-block mb-2 mt-2"></i>No transactions found.</td></tr>';
+    if (!html) html = '<tr><td colspan="9" class="text-center py-5 text-muted"><i class="fa-solid fa-inbox fa-2x d-block mb-2 mt-2"></i>No transactions found.</td></tr>';
     document.getElementById('txBody').innerHTML = html;
   });
 }

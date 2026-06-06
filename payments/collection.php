@@ -810,7 +810,7 @@ function viewUnitPayments(unitId, unitName, month, year) {
       html +=
         '<div class="table-responsive"><table class="table" id="payDetailTable"><thead><tr>' +
         (IS_ADMIN ? '<th class="no-print" style="width:32px"><input type="checkbox" id="paySelectAll" onclick="toggleAllPayments(this)"></th>' : '') +
-        '<th>Date</th><th>Invoice</th><th>Type</th><th>Description</th>' +
+        '<th>Date</th><th>Encode Date</th><th>Invoice</th><th>Type</th><th>Description</th>' +
         '<th class="text-end">Amount</th><th>Cashier</th><th class="text-center">Actions</th>' +
         '</tr></thead><tbody>';
 
@@ -850,6 +850,7 @@ function viewUnitPayments(unitId, unitName, month, year) {
           '<tr' + (isVoided ? ' class="row-voided"' : '') + '>' +
             (IS_ADMIN ? '<td class="no-print"><input type="checkbox" class="pay-chk" value="' + pid + '" onclick="updatePayBulkBar()"></td>' : '') +
             '<td style="white-space:nowrap">' + esc(p.payment_date) + '</td>' +
+            '<td style="white-space:nowrap;font-size:12px;color:var(--text-muted)">' + fmtDateTime(p.created_at) + '</td>' +
             '<td class="mono" style="font-size:12px">' + (p.invoice_no ? esc(p.invoice_no) : '—') + '</td>' +
             '<td>' + typeLabel + '</td>' +
             '<td style="font-size:12.5px">' + (p.notes ? esc(p.notes) : '—') + '</td>' +
@@ -872,7 +873,7 @@ function viewUnitPayments(unitId, unitName, month, year) {
 
       html +=
         '</tbody><tfoot><tr style="background:var(--gray-100);font-weight:700">' +
-        '<td colspan="' + (IS_ADMIN ? 5 : 4) + '">Total Paid</td><td class="text-end num">' + fmt(totPaid) + '</td><td colspan="2"></td>' +
+        '<td colspan="' + (IS_ADMIN ? 6 : 5) + '">Total Paid</td><td class="text-end num">' + fmt(totPaid) + '</td><td colspan="2"></td>' +
         '</tr></tfoot></table></div>';
     }
 

@@ -43,7 +43,7 @@ if (!$typeFilter || $typeFilter === 'payment') {
                COALESCE(p.invoice_no, CONCAT('#', p.id)) AS reference,
                p.notes AS tx_notes,
                ru.unit_name, p.amount, p.status, p.deleted_at,
-               u.full_name AS recorded_by,
+               u.full_name AS recorded_by, p.created_at AS encode_at,
                p.period_month, p.period_year, p.unit_id
         FROM payments p
         LEFT JOIN rental_units ru ON p.unit_id = ru.id
@@ -64,7 +64,7 @@ if (!$showTrash && (!$typeFilter || $typeFilter === 'expense')) {
                e.description AS reference,
                e.notes AS tx_notes,
                COALESCE(ru.unit_name, 'General') AS unit_name, e.amount, 'active' AS status, NULL AS deleted_at,
-               u.full_name AS recorded_by,
+               u.full_name AS recorded_by, e.created_at AS encode_at,
                MONTH(e.expense_date) AS period_month, YEAR(e.expense_date) AS period_year, e.unit_id
         FROM expenses e
         LEFT JOIN rental_units ru ON e.unit_id = ru.id
@@ -86,7 +86,7 @@ if (!$showTrash && (!$typeFilter || $typeFilter === 'expense')) {
                e.description AS reference,
                e.notes AS tx_notes,
                COALESCE(ru.unit_name, 'General') AS unit_name, e.amount, 'deleted' AS status, e.deleted_at,
-               u.full_name AS recorded_by,
+               u.full_name AS recorded_by, e.created_at AS encode_at,
                MONTH(e.expense_date) AS period_month, YEAR(e.expense_date) AS period_year, e.unit_id
         FROM expenses e
         LEFT JOIN rental_units ru ON e.unit_id = ru.id
@@ -112,7 +112,7 @@ if (!$showTrash && ((!$typeFilter || $typeFilter === 'remittance') && !$unitFilt
                COALESCE(ct.notes, 'Manual Remittance') AS reference,
                ct.notes AS tx_notes,
                '—' AS unit_name, ct.amount, 'active' AS status, NULL AS deleted_at,
-               u.full_name AS recorded_by,
+               u.full_name AS recorded_by, ct.created_at AS encode_at,
                MONTH(ct.transaction_date) AS period_month, YEAR(ct.transaction_date) AS period_year, NULL AS unit_id
         FROM cash_transactions ct
         LEFT JOIN users u ON ct.user_id = u.id
@@ -136,7 +136,7 @@ if (!$showTrash && ((!$typeFilter || $typeFilter === 'vault_return') && !$unitFi
                COALESCE(ct.notes, 'Vault → User') AS reference,
                ct.notes AS tx_notes,
                '—' AS unit_name, ct.amount, 'active' AS status, NULL AS deleted_at,
-               u.full_name AS recorded_by,
+               u.full_name AS recorded_by, ct.created_at AS encode_at,
                MONTH(ct.transaction_date) AS period_month, YEAR(ct.transaction_date) AS period_year, NULL AS unit_id
         FROM cash_transactions ct
         LEFT JOIN users u ON ct.user_id = u.id
@@ -269,6 +269,7 @@ function statusBadge(string $type, string $status, ?string $deletedAt = null): s
     <table class="table" id="txTable">
       <thead><tr>
         <th>Date</th>
+        <th>Encode Date</th>
         <th>Type</th>
         <th>Reference</th>
         <th>Unit</th>
@@ -297,6 +298,7 @@ function statusBadge(string $type, string $status, ?string $deletedAt = null): s
       ?>
       <tr<?= $rowClass ?> data-type="<?= $tx['tx_type'] ?>">
         <td style="white-space:nowrap;font-size:12.5px"><?= clean($tx['tx_date']) ?></td>
+        <td style="white-space:nowrap;font-size:12px;color:var(--text-muted)"><?= fmtDateTime($tx['encode_at'] ?? null) ?></td>
         <td><?= typeBadge($tx['tx_type']) ?></td>
         <td class="cell-trunc-lg">
           <div class="fw-600" style="font-size:12.5px"><?= clean($tx['reference'] ?? '—') ?></div>
@@ -343,7 +345,7 @@ function statusBadge(string $type, string $status, ?string $deletedAt = null): s
       </tr>
       <?php endforeach; ?>
       <?php if (empty($transactions)): ?>
-      <tr><td colspan="8" class="text-center py-5 text-muted">
+      <tr><td colspan="9" class="text-center py-5 text-muted">
         <i class="fa-solid fa-inbox fa-2x d-block mb-2"></i>No transactions found for this period.
       </td></tr>
       <?php endif; ?>
@@ -358,7 +360,7 @@ $(document).ready(function() {
   $('#txTable').DataTable({
     pageLength: 50,
     order: [[0, 'desc']],
-    columnDefs: [{orderable: false, targets: 7}],
+    columnDefs: [{orderable: false, targets: 8}],
     dom: '<"d-flex justify-content-between align-items-center mb-2 flex-wrap gap-2"lf>rtip',
     language: {search: 'Search:', lengthMenu: 'Show _MENU_', info: '_START_–_END_ of _TOTAL_'}
   });

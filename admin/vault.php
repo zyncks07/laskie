@@ -394,7 +394,7 @@ $allUsers = $pdo->query("SELECT id, full_name FROM users WHERE status='active' O
 
 // Vault → User return records (cash issued from vault back to a user)
 $userReturns = $pdo->query("
-    SELECT ct.id, ct.user_id, ct.amount, ct.transaction_date AS return_date, ct.notes, u.full_name, u.role
+    SELECT ct.id, ct.user_id, ct.amount, ct.transaction_date AS return_date, ct.notes, ct.created_at, u.full_name, u.role
     FROM cash_transactions ct
     LEFT JOIN users u ON u.id = ct.user_id
     WHERE ct.transaction_type='vault_return'
@@ -425,7 +425,7 @@ $allRecipients = $pdo->query("SELECT id, name, is_active FROM dividend_recipient
 
 // All individual distribution records for the management table
 $distributions = $pdo->query("
-    SELECT dd.id, dd.recipient_id, dd.amount, dd.distribution_date, dd.notes,
+    SELECT dd.id, dd.recipient_id, dd.amount, dd.distribution_date, dd.notes, dd.created_at,
            dr.name AS recipient_name, u.full_name AS recorded_by
     FROM dividend_distributions dd
     LEFT JOIN dividend_recipients dr ON dr.id = dd.recipient_id
@@ -435,7 +435,7 @@ $distributions = $pdo->query("
 
 // All individual return records for the management table
 $returnRecords = $pdo->query("
-    SELECT dret.id, dret.recipient_id, dret.amount, dret.return_date, dret.notes,
+    SELECT dret.id, dret.recipient_id, dret.amount, dret.return_date, dret.notes, dret.created_at,
            dr.name AS recipient_name, u.full_name AS recorded_by
     FROM dividend_returns dret
     LEFT JOIN dividend_recipients dr ON dr.id = dret.recipient_id
@@ -547,7 +547,7 @@ include '../includes/header.php';
       <table class="table table-sm table-hover mb-0" id="distTable">
         <thead>
           <tr>
-            <th>Date</th><th>Recipient</th>
+            <th>Date</th><th>Encode Date</th><th>Recipient</th>
             <th class="text-end">Amount</th><th>Notes</th>
             <th class="text-center" style="width:70px">Actions</th>
           </tr>
@@ -556,6 +556,7 @@ include '../includes/header.php';
           <?php foreach ($distributions as $d): ?>
           <tr data-dist-id="<?= $d['id'] ?>">
             <td style="white-space:nowrap;color:var(--text-secondary)"><?= fmtDate($d['distribution_date']) ?></td>
+            <td style="white-space:nowrap;font-size:12px;color:var(--text-muted)"><?= fmtDateTime($d['created_at'] ?? null) ?></td>
             <td class="fw-600"><?= clean($d['recipient_name'] ?? '—') ?></td>
             <td class="text-end fw-600 text-success"><?= money((float)$d['amount']) ?></td>
             <td class="text-muted" style="font-size:12px"><?= $d['notes'] ? clean($d['notes']) : '—' ?></td>
@@ -568,7 +569,7 @@ include '../includes/header.php';
         </tbody>
         <tfoot>
           <tr style="border-top:2px solid var(--border)">
-            <td colspan="2" class="fw-700">Total</td>
+            <td colspan="3" class="fw-700">Total</td>
             <td class="text-end fw-700" id="distTotal"><?= money($totalDistrib) ?></td>
             <td colspan="2"></td>
           </tr>
@@ -593,7 +594,7 @@ include '../includes/header.php';
       <table class="table table-sm table-hover mb-0" id="retTable">
         <thead>
           <tr>
-            <th>Date</th><th>Returned By</th>
+            <th>Date</th><th>Encode Date</th><th>Returned By</th>
             <th class="text-end">Amount</th><th>Notes</th>
             <th class="text-center" style="width:70px">Actions</th>
           </tr>
@@ -602,6 +603,7 @@ include '../includes/header.php';
           <?php foreach ($returnRecords as $ret): ?>
           <tr data-ret-id="<?= $ret['id'] ?>">
             <td style="white-space:nowrap;color:var(--text-secondary)"><?= fmtDate($ret['return_date']) ?></td>
+            <td style="white-space:nowrap;font-size:12px;color:var(--text-muted)"><?= fmtDateTime($ret['created_at'] ?? null) ?></td>
             <td class="fw-600"><?= clean($ret['recipient_name'] ?? '—') ?></td>
             <td class="text-end fw-600" style="color:var(--warning)"><?= money((float)$ret['amount']) ?></td>
             <td class="text-muted" style="font-size:12px"><?= $ret['notes'] ? clean($ret['notes']) : '—' ?></td>
@@ -614,7 +616,7 @@ include '../includes/header.php';
         </tbody>
         <tfoot>
           <tr style="border-top:2px solid var(--border)">
-            <td colspan="2" class="fw-700">Total Returned</td>
+            <td colspan="3" class="fw-700">Total Returned</td>
             <td class="text-end fw-700" id="retTotal" style="color:var(--warning)"><?= money($totalReturned) ?></td>
             <td colspan="2"></td>
           </tr>
@@ -643,7 +645,7 @@ include '../includes/header.php';
       <table class="table table-sm table-hover mb-0" id="userRetTable">
         <thead>
           <tr>
-            <th>Date</th><th>Issued To</th><th>Role</th>
+            <th>Date</th><th>Encode Date</th><th>Issued To</th><th>Role</th>
             <th class="text-end">Amount</th><th>Notes</th>
             <th class="text-center" style="width:70px">Actions</th>
           </tr>
@@ -652,6 +654,7 @@ include '../includes/header.php';
           <?php foreach ($userReturns as $ur): ?>
           <tr data-user-ret-id="<?= $ur['id'] ?>">
             <td style="white-space:nowrap;color:var(--text-secondary)"><?= fmtDate($ur['return_date']) ?></td>
+            <td style="white-space:nowrap;font-size:12px;color:var(--text-muted)"><?= fmtDateTime($ur['created_at'] ?? null) ?></td>
             <td class="fw-600"><?= clean($ur['full_name'] ?? '—') ?></td>
             <td><span class="badge badge-<?= clean($ur['role'] ?? 'staff') ?>"><?= ucfirst(clean($ur['role'] ?? '—')) ?></span></td>
             <td class="text-end fw-600" style="color:var(--info)"><?= money((float)$ur['amount']) ?></td>
@@ -665,7 +668,7 @@ include '../includes/header.php';
         </tbody>
         <tfoot>
           <tr style="border-top:2px solid var(--border)">
-            <td colspan="3" class="fw-700">Total Issued to Users</td>
+            <td colspan="4" class="fw-700">Total Issued to Users</td>
             <td class="text-end fw-700" style="color:var(--info)"><?= money($totalUserReturned) ?></td>
             <td colspan="2"></td>
           </tr>

@@ -242,13 +242,14 @@ $cashSubLabel = 'End of ' . date('M Y', mktime(0, 0, 0, $selMonth, 1, $selYear))
   <div class="table-responsive">
     <table class="table" id="collectionsTable">
       <thead><tr>
-        <th>Date</th><th>Invoice</th><th>Unit</th><th>Tenant</th>
+        <th>Date</th><th>Encode Date</th><th>Invoice</th><th>Unit</th><th>Tenant</th>
         <th>Type</th><th class="text-end">Amount</th><th>Notes</th>
       </tr></thead>
       <tbody>
       <?php foreach($myPayments as $p): ?>
       <tr>
         <td style="font-size:12.5px;white-space:nowrap"><?= clean($p['payment_date']) ?></td>
+        <td style="font-size:12px;white-space:nowrap;color:var(--text-muted)"><?= fmtDateTime($p['created_at'] ?? null) ?></td>
         <td><a href="payments/invoice_print.php?id=<?=$p['id']?>" target="_blank" class="mono" style="font-size:11.5px"><?= clean($p['invoice_no']??'—') ?></a></td>
         <td style="font-size:12.5px"><?= clean($p['unit_name']??'—') ?></td>
         <td style="font-size:12.5px"><?= clean($p['tenant_name']??'—') ?></td>
@@ -260,7 +261,7 @@ $cashSubLabel = 'End of ' . date('M Y', mktime(0, 0, 0, $selMonth, 1, $selYear))
       </tbody>
       <tfoot>
         <tr style="background:var(--gray-100);font-weight:700;border-top:2px solid var(--gray-200)">
-          <td colspan="5">Total Collected</td>
+          <td colspan="6">Total Collected</td>
           <td class="text-end num"><?= money(money_sum(array_column($myPayments,'amount'))) ?></td>
           <td></td>
         </tr>
@@ -281,11 +282,12 @@ $cashSubLabel = 'End of ' . date('M Y', mktime(0, 0, 0, $selMonth, 1, $selYear))
   <?php else: ?>
   <div class="table-responsive">
     <table class="table" id="remittancesTable">
-      <thead><tr><th>Date</th><th class="text-end">Amount</th><th>Notes</th><th class="text-center">Proof</th></tr></thead>
+      <thead><tr><th>Date</th><th>Encode Date</th><th class="text-end">Amount</th><th>Notes</th><th class="text-center">Proof</th></tr></thead>
       <tbody>
       <?php foreach($myRemits as $r): ?>
       <tr>
         <td style="font-size:12.5px"><?= clean($r['transaction_date']) ?></td>
+        <td style="font-size:12px;white-space:nowrap;color:var(--text-muted)"><?= fmtDateTime($r['created_at'] ?? null) ?></td>
         <td class="text-end fw-600 num" data-order="<?= (float)$r['amount'] ?>"><?= money((float)$r['amount']) ?></td>
         <td class="cell-trunc-lg" style="font-size:12px;color:var(--text-muted)"><?= clean($r['notes']??'—') ?></td>
         <td class="text-center">
@@ -300,7 +302,7 @@ $cashSubLabel = 'End of ' . date('M Y', mktime(0, 0, 0, $selMonth, 1, $selYear))
       </tbody>
       <tfoot>
         <tr style="background:var(--gray-100);font-weight:700;border-top:2px solid var(--gray-200)">
-          <td>Total Remitted</td>
+          <td colspan="2">Total Remitted</td>
           <td class="text-end num"><?= money(money_sum(array_column($myRemits,'amount'))) ?></td>
           <td colspan="2"></td>
         </tr>
@@ -350,11 +352,12 @@ $cashSubLabel = 'End of ' . date('M Y', mktime(0, 0, 0, $selMonth, 1, $selYear))
       <?php else: ?>
       <div class="table-responsive">
         <table class="table" style="font-size:12.5px">
-          <thead><tr><th>Date</th><th>Description</th><th>Unit</th><th class="text-end">Amount</th></tr></thead>
+          <thead><tr><th>Date</th><th>Encode Date</th><th>Description</th><th>Unit</th><th class="text-end">Amount</th></tr></thead>
           <tbody>
           <?php foreach($myExpenses as $e): ?>
           <tr>
             <td style="white-space:nowrap"><?= clean($e['expense_date']) ?></td>
+            <td style="white-space:nowrap;color:var(--text-muted)"><?= fmtDateTime($e['created_at'] ?? null) ?></td>
             <td class="cell-trunc-lg"><?= clean($e['description']) ?>
               <?php if($e['notes']): ?><br><small class="text-muted cell-trunc"><?= clean(substr($e['notes'],0,60)) ?></small><?php endif; ?>
             </td>
@@ -411,7 +414,7 @@ $(document).ready(function(){
       pageLength: 25,
       order: [[0,'desc']],
       columnDefs: [
-        { orderable: false, targets: [4] }  // Type badge — not useful to sort
+        { orderable: false, targets: [5] }  // Type badge — not useful to sort
       ],
       dom: '<"d-flex justify-content-between align-items-center mb-2 flex-wrap gap-2"lf>rtip',
       language: { search:'Filter:', lengthMenu:'Show _MENU_', info:'_START_–_END_ of _TOTAL_' }
@@ -423,7 +426,7 @@ $(document).ready(function(){
       pageLength: 25,
       order: [[0,'desc']],
       columnDefs: [
-        { orderable: false, targets: [3] }  // Proof icon column — nothing useful to sort by
+        { orderable: false, targets: [4] }  // Proof icon column — nothing useful to sort by
       ],
       dom: '<"d-flex justify-content-between align-items-center mb-2 flex-wrap gap-2"lf>rtip',
       language: { search:'Filter:', lengthMenu:'Show _MENU_', info:'_START_–_END_ of _TOTAL_' }

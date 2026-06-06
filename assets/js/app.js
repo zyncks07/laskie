@@ -156,6 +156,20 @@ window.fmtDate = function(dateStr) {
     return d.toLocaleDateString('en-PH', { year: 'numeric', month: 'short', day: 'numeric' });
 };
 
+// ─── Encode-date formatter (date + time-of-day) ──────────────
+// Renders a MySQL "YYYY-MM-DD HH:MM:SS" created_at as e.g. "Jun 5, 2026 3:42 PM".
+// The timestamp is naive Asia/Manila; parsed + formatted both in browser-local,
+// so the wall-clock numbers are preserved (no timezone shift).
+window.fmtDateTime = function(ts) {
+    if (!ts) return '—';
+    const d = new Date(String(ts).replace(' ', 'T'));
+    if (isNaN(d)) return '—';
+    return d.toLocaleString('en-PH', {
+        year: 'numeric', month: 'short', day: 'numeric',
+        hour: 'numeric', minute: '2-digit', hour12: true
+    });
+};
+
 // ─── Form serializer to plain object ─────────────────────────
 window.serializeForm = function(formId) {
     const form = document.getElementById(formId);

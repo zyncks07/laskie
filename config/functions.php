@@ -101,6 +101,16 @@ function fmtDate(?string $date, string $format = 'M j, Y'): string {
     return date($format, strtotime($date));
 }
 
+// Encode-date formatter: business date + time-of-day from a *_TIMESTAMP /
+// DATETIME column (e.g. created_at). Shows when a row was actually recorded.
+// 12-hour, no seconds — e.g. "Jun 5, 2026 3:42 PM". Returns — for null/empty.
+function fmtDateTime(?string $ts, string $format = 'M j, Y g:i A'): string {
+    if (!$ts) return '—';
+    $t = strtotime($ts);
+    if ($t === false) return '—';
+    return date($format, $t);
+}
+
 function monthName(int $m): string {
     return date('F', mktime(0,0,0,$m,1,2000));
 }

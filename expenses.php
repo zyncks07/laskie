@@ -152,13 +152,13 @@ include 'includes/header.php';
       <thead>
         <tr>
           <?php if(isAdmin()): ?><th class="no-print" style="width:32px"><input type="checkbox" id="expSelectAll" title="Select all"></th><?php endif; ?>
-          <th>Date</th><th>Description</th><th>Category</th><th>Unit</th>
+          <th>Date</th><th>Encode Date</th><th>Description</th><th>Category</th><th>Unit</th>
           <th class="text-end">Amount</th><th>Recorded By</th><th>Notes</th>
           <th class="text-center">Receipt</th><th class="text-center no-print">Actions</th>
         </tr>
       </thead>
       <tbody id="expBody">
-        <tr><td colspan="<?=isAdmin()?10:9?>" class="text-center py-4">
+        <tr><td colspan="<?=isAdmin()?11:10?>" class="text-center py-4">
           <span class="spinner-border spinner-border-sm text-primary me-2"></span>Loading...
         </td></tr>
       </tbody>
@@ -347,12 +347,12 @@ function loadExpenses() {
   var dateFrom = document.getElementById('fDateFrom').value;
   var dateTo   = document.getElementById('fDateTo').value;
 
-  document.getElementById('expBody').innerHTML = '<tr><td colspan="9" class="text-center py-4"><span class="spinner-border spinner-border-sm text-primary me-2"></span>Loading...</td></tr>';
+  document.getElementById('expBody').innerHTML = '<tr><td colspan="10" class="text-center py-4"><span class="spinner-border spinner-border-sm text-primary me-2"></span>Loading...</td></tr>';
   document.getElementById('expFoot').innerHTML = '';
 
   apiPost('api/expenses_api.php', {action:'list_expenses', month:month, year:year, unit_id:unit, category_id:category, recorded_by:recorder, date_from:dateFrom, date_to:dateTo}, function(err, res) {
     if (!res || !res.success) {
-      document.getElementById('expBody').innerHTML = '<tr><td colspan="9" class="text-center text-danger py-3">Failed to load expenses.</td></tr>';
+      document.getElementById('expBody').innerHTML = '<tr><td colspan="10" class="text-center text-danger py-3">Failed to load expenses.</td></tr>';
       return;
     }
     var exps = res.expenses;
@@ -406,6 +406,7 @@ function loadExpenses() {
       html += '<tr>';
       if (IS_ADMIN) html += '<td class="no-print"><input type="checkbox" class="exp-chk" value="' + parseInt(ex.id) + '" onclick="updateExpBulkBar()"></td>';
       html += '<td style="white-space:nowrap;font-size:12.5px">' + esc(ex.expense_date) + '</td>';
+      html += '<td style="white-space:nowrap;font-size:12px;color:var(--text-muted)">' + fmtDateTime(ex.created_at) + '</td>';
       html += '<td class="fw-600 cell-trunc-lg" style="font-size:12.5px">' + esc(ex.description) + '</td>';
       html += '<td>' + catBadge + '</td>';
       html += '<td>' + unitLabel + '</td>';
@@ -430,13 +431,13 @@ function loadExpenses() {
     if (saEl) saEl.checked = false;
     updateExpBulkBar();
 
-    if (!html) html = '<tr><td colspan="' + (IS_ADMIN ? 10 : 9) + '" class="text-center py-5 text-muted"><i class="fa-solid fa-inbox fa-2x d-block mb-2 mt-2"></i>No expense records found.</td></tr>';
+    if (!html) html = '<tr><td colspan="' + (IS_ADMIN ? 11 : 10) + '" class="text-center py-5 text-muted"><i class="fa-solid fa-inbox fa-2x d-block mb-2 mt-2"></i>No expense records found.</td></tr>';
     document.getElementById('expBody').innerHTML = html;
 
     if (exps.length > 0) {
       document.getElementById('expFoot').innerHTML =
         '<tr style="background:var(--gray-100);font-weight:700;border-top:2px solid var(--gray-200)">' +
-        '<td colspan="' + (IS_ADMIN ? 5 : 4) + '">TOTAL (' + exps.length + ' records)</td>' +
+        '<td colspan="' + (IS_ADMIN ? 6 : 5) + '">TOTAL (' + exps.length + ' records)</td>' +
         '<td class="text-end num fw-600">' + fmt(res.total) + '</td>' +
         '<td colspan="4"></td></tr>';
     }
