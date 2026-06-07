@@ -140,8 +140,33 @@ if ($action === 'list_transactions') {
     $totExp     = money_sum($exp);
     $totVaultIn = money_sum($vretFromVault);
     $totRef     = money_sum($ref);
-    // Cash on hand = received + vault_return - remitted - expenses - refunded
-    $cashOnHand = money_sub(money_sub(money_sub(money_add($totRec, $totVaultIn), $totRem), $totExp), $totRef);
+    // Period net = received + vault_return - remitted - expenses - refunded,
+    // scoped to the active date/type filter. This is the net CHANGE during the
+    // shown period, NOT cash on hand — within one month you can remit cash that
+    // was collected in earlier months, so this can legitimately go negative.
+    $periodNet = money_sub(money_sub(money_sub(money_add($totRec, $totVaultIn), $totRem), $totExp), $totRef);
+    // True cash on hand = the user's full lifetime running balance, ignoring the
+    // date/type filter. This is what the summary strip's "Net Cash on Hand" cell
+    // displays so it always reflects the real balance regardless of the filter.
+    if ($userId) {
+        $trueCashOnHand = getUserCashOnHand($pdo, $userId);
+    } else {
+        // "All Staff" selected — sum every user's lifetime balance (mirrors the
+        // unscoped period totals shown beside it).
+        $allBal = $pdo->query("
+            SELECT
+                COALESCE(SUM(CASE WHEN transaction_type='received'     THEN amount ELSE 0 END),0) AS received,
+                COALESCE(SUM(CASE WHEN transaction_type='vault_return' THEN amount ELSE 0 END),0) AS vault_return,
+                COALESCE(SUM(CASE WHEN transaction_type='remitted'     THEN amount ELSE 0 END),0) AS remitted,
+                COALESCE(SUM(CASE WHEN transaction_type='expense'      THEN amount ELSE 0 END),0) AS expenses,
+                COALESCE(SUM(CASE WHEN transaction_type='refunded'     THEN amount ELSE 0 END),0) AS refunded
+            FROM cash_transactions
+        ")->fetch();
+        $trueCashOnHand = money_sub(
+            money_sub(money_sub(money_add($allBal['received'], $allBal['vault_return']), $allBal['remitted']), $allBal['expenses']),
+            $allBal['refunded']
+        );
+    }
     jsonOk([
         'transactions'        => $txns,
         'total_received'      => $totRec,
@@ -149,7 +174,8 @@ if ($action === 'list_transactions') {
         'total_expenses'      => $totExp,
         'total_vault_returns' => $totVaultIn,
         'total_refunded'      => $totRef,
-        'cash_on_hand'        => $cashOnHand,
+        'cash_on_hand'        => $periodNet,       // period net (legacy field)
+        'true_cash_on_hand'   => $trueCashOnHand,  // lifetime running balance
         'count'               => count($txns),
     ]);
 }

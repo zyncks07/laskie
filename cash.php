@@ -413,8 +413,11 @@ function loadTransactions() {
     document.getElementById('pExp').textContent  = fmt(res.total_expenses);
     document.getElementById('pVret').textContent = fmt(res.total_vault_returns || 0);
 
+    // "Net Cash on Hand" shows the TRUE lifetime balance (unaffected by the
+    // period/type filter), not the period net — so it never reads negative just
+    // because this month's remittances exceed this month's collections.
     var netEl = document.getElementById('pNet');
-    netEl.textContent = fmt(res.cash_on_hand);
+    netEl.textContent = fmt(res.true_cash_on_hand != null ? res.true_cash_on_hand : res.cash_on_hand);
 
     var typeBadge = {received:'badge-received', remitted:'badge-remitted', expense:'badge-expense', vault_return:'badge-vault-return'};
     var typeIcon  = {received:'fa-arrow-down',  remitted:'fa-arrow-up',    expense:'fa-minus-circle', vault_return:'fa-hand-holding-dollar'};
