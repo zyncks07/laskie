@@ -50,11 +50,6 @@ for ($m = 1; $m <= 12; $m++) {
     $monthlyExp[$m] = (string)$expStmt->fetchColumn();
 }
 
-// ─── Expense by category ─────────────────────────────────────
-$catExp = $pdo->prepare("SELECT ec.name, COALESCE(SUM(e.amount),0) as total FROM expense_categories ec LEFT JOIN expenses e ON e.category_id=ec.id AND e.expense_date >= ? AND e.expense_date < ? AND e.deleted_at IS NULL GROUP BY ec.id ORDER BY total DESC");
-$catExp->execute([$yrStart, $yrEnd]);
-$catExpData = $catExp->fetchAll();
-
 // ─── Totals ───────────────────────────────────────────────────
 // Sum in cents-based helpers to avoid float drift across many units.
 $totalRev = money_sum(array_values($unitRevenue));
@@ -389,10 +384,29 @@ include 'includes/header.php';
   </div>
   <div class="col-lg-4">
     <div class="card db-card h-100">
-      <div class="card-header">
-        <span class="card-header-title"><i class="fa-solid fa-chart-pie me-1"></i>Expenses by Category</span>
+      <div class="card-header" style="display:flex;align-items:center;gap:8px">
+        <span class="card-header-title me-auto"><i class="fa-solid fa-chart-pie me-1"></i>Expenses by Category</span>
+        <select id="catChartPeriod" class="form-select form-select-sm" style="width:auto;max-width:185px;font-size:11.5px">
+          <?php foreach ($years as $ychk): $isCY = ($ychk === $curYear); ?>
+          <optgroup label="<?= $ychk ?>">
+            <?php if ($isCY): ?>
+            <option value="month_<?= $curYear ?>_<?= $curMonth ?>"<?= $chartInitPeriod === "month_{$curYear}_{$curMonth}" ? ' selected' : '' ?>><?= $mnNames[$curMonth] ?> <?= $curYear ?> — MTD</option>
+            <?php endif; ?>
+            <option value="year_<?= $ychk ?>"<?= $chartInitPeriod === "year_{$ychk}" ? ' selected' : '' ?>>Full Year <?= $ychk ?></option>
+            <?php foreach ($chartMonthsByYear[$ychk] ?? [] as $cm):
+              if ($isCY && (int)$cm === $curMonth) continue; ?>
+            <option value="month_<?= $ychk ?>_<?= $cm ?>"<?= $chartInitPeriod === "month_{$ychk}_{$cm}" ? ' selected' : '' ?>><?= $mnNames[(int)$cm] ?> <?= $ychk ?></option>
+            <?php endforeach; ?>
+          </optgroup>
+          <?php endforeach; ?>
+        </select>
       </div>
-      <div class="card-body db-chart"><canvas id="catChart"></canvas></div>
+      <div class="card-body db-chart" style="position:relative">
+        <div id="catChartSpinner" style="display:none;position:absolute;inset:0;background:var(--paper);z-index:10;align-items:center;justify-content:center;border-radius:0 0 var(--laskie-radius-card) var(--laskie-radius-card)">
+          <div class="spinner-border spinner-border-sm" style="color:var(--ink)" role="status"><span class="visually-hidden">Loading…</span></div>
+        </div>
+        <canvas id="catChart"></canvas>
+      </div>
     </div>
   </div>
 </div>
@@ -437,10 +451,29 @@ include 'includes/header.php';
   </div>
   <div class="col-lg-4">
     <div class="card db-card h-100">
-      <div class="card-header">
-        <span class="card-header-title"><i class="fa-solid fa-chart-pie me-1"></i>Expenses by Category</span>
+      <div class="card-header" style="display:flex;align-items:center;gap:8px">
+        <span class="card-header-title me-auto"><i class="fa-solid fa-chart-pie me-1"></i>Expenses by Category</span>
+        <select id="catChartPeriod" class="form-select form-select-sm" style="width:auto;max-width:185px;font-size:11.5px">
+          <?php foreach ($years as $ychk): $isCY = ($ychk === $curYear); ?>
+          <optgroup label="<?= $ychk ?>">
+            <?php if ($isCY): ?>
+            <option value="month_<?= $curYear ?>_<?= $curMonth ?>"<?= $chartInitPeriod === "month_{$curYear}_{$curMonth}" ? ' selected' : '' ?>><?= $mnNames[$curMonth] ?> <?= $curYear ?> — MTD</option>
+            <?php endif; ?>
+            <option value="year_<?= $ychk ?>"<?= $chartInitPeriod === "year_{$ychk}" ? ' selected' : '' ?>>Full Year <?= $ychk ?></option>
+            <?php foreach ($chartMonthsByYear[$ychk] ?? [] as $cm):
+              if ($isCY && (int)$cm === $curMonth) continue; ?>
+            <option value="month_<?= $ychk ?>_<?= $cm ?>"<?= $chartInitPeriod === "month_{$ychk}_{$cm}" ? ' selected' : '' ?>><?= $mnNames[(int)$cm] ?> <?= $ychk ?></option>
+            <?php endforeach; ?>
+          </optgroup>
+          <?php endforeach; ?>
+        </select>
       </div>
-      <div class="card-body db-chart"><canvas id="catChart"></canvas></div>
+      <div class="card-body db-chart" style="position:relative">
+        <div id="catChartSpinner" style="display:none;position:absolute;inset:0;background:var(--paper);z-index:10;align-items:center;justify-content:center;border-radius:0 0 var(--laskie-radius-card) var(--laskie-radius-card)">
+          <div class="spinner-border spinner-border-sm" style="color:var(--ink)" role="status"><span class="visually-hidden">Loading…</span></div>
+        </div>
+        <canvas id="catChart"></canvas>
+      </div>
     </div>
   </div>
 </div>
@@ -557,14 +590,14 @@ include 'includes/header.php';
 
 <script>
 var CHART_DATA = {
-  catLabels:   <?= json_encode(array_column($catExpData, 'name')) ?>,
-  catTotals:   <?= json_encode(array_map(fn($r) => (float)$r['total'], $catExpData)) ?>,
   monthLabels: <?= json_encode(['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']) ?>,
   monthRev:    <?= json_encode(array_values($monthlyRev)) ?>,
   monthNet:    <?= json_encode(array_map(fn($m) => (float)money_sub($monthlyRev[$m], $monthlyExp[$m]), range(1,12))) ?>
 };
 var UNIT_CHART_API  = '<?= pageUrl('api/unit_chart_api.php') ?>';
 var UNIT_CHART_INIT = '<?= $chartInitPeriod ?>';
+var CAT_CHART_API   = '<?= pageUrl('api/cat_chart_api.php') ?>';
+var CAT_CHART_INIT  = '<?= $chartInitPeriod ?>';
 // -1 when viewing a past/future year (no bar gets highlighted); 0–11 otherwise
 var MONTHLY_HIGHLIGHT_IDX = <?= ($selectedYear === $curYear) ? ($curMonth - 1) : -1 ?>;
 </script>
@@ -688,31 +721,48 @@ function _renderUnitChart(data) {
 // ── Page init ────────────────────────────────────────────────
 var _catChartInst = null, _monthlyChartInst = null;
 
-function buildCatChart() {
+// ── Category chart — AJAX-driven, mirrors loadUnitChart() ─────
+var _catChartData = null;
+
+function loadCatChart(period) {
+  period = period || (document.getElementById('catChartPeriod') ? document.getElementById('catChartPeriod').value : null);
+  if (!period) return;
+  var parts = period.split('_');
+  var qs = parts[0] === 'year'
+    ? 'period_type=year&year=' + parts[1]
+    : 'period_type=month&year=' + parts[1] + '&month=' + parts[2];
+  var spinner = document.getElementById('catChartSpinner');
+  if (spinner) spinner.style.display = 'flex';
+  fetch(CAT_CHART_API + '?' + qs)
+    .then(function(r) { return r.json(); })
+    .then(function(res) {
+      if (spinner) spinner.style.display = 'none';
+      if (res.success) { _catChartData = res; _renderCatChart(res); }
+      else showToast(res.error || 'Chart load failed.', 'danger');
+    })
+    .catch(function() {
+      if (spinner) spinner.style.display = 'none';
+      showToast('Chart load failed.', 'danger');
+    });
+}
+
+function _renderCatChart(data) {
   var el = document.getElementById('catChart');
   if (!el) return;
   if (_catChartInst) { _catChartInst.destroy(); _catChartInst = null; }
   var T = window.chartTheme();
-  var d = CHART_DATA;
   // grayscale ramp spread across slices (cycles if categories exceed ramp)
   var ramp = [T.ink, T.series[2], T.series[1], T.series[3], T.series[4], T.tick, T.grid];
-  var catFiltered = { labels: [], data: [], colors: [] };
-  d.catLabels.forEach(function(label, i) {
-    if (d.catTotals[i] > 0) {
-      catFiltered.labels.push(label);
-      catFiltered.data.push(d.catTotals[i]);
-      catFiltered.colors.push(ramp[catFiltered.labels.length % ramp.length]);
-    }
-  });
+  var colors = (data.labels || []).map(function(_, i) { return ramp[i % ramp.length]; });
   _catChartInst = new Chart(el, {
     type: 'doughnut',
-    data: { labels: catFiltered.labels,
-      datasets: [{ data: catFiltered.data, backgroundColor: catFiltered.colors, hoverOffset: 8, borderWidth: 2, borderColor: T.paper }] },
+    data: { labels: data.labels,
+      datasets: [{ data: data.totals, backgroundColor: colors, hoverOffset: 8, borderWidth: 2, borderColor: T.paper }] },
     options: {
       responsive: true, maintainAspectRatio: false, cutout: '62%',
       plugins: {
         legend: { position: 'bottom', labels: _monoLegend(T) },
-        tooltip: _monoTooltip(T, { callbacks: { label: function(c) { return _phpFmt(c.parsed); } } })
+        tooltip: _monoTooltip(T, { callbacks: { label: function(c) { return ' ' + c.label + ': ' + _phpFmt(c.parsed); } } })
       }
     }
   });
@@ -768,14 +818,19 @@ document.addEventListener('DOMContentLoaded', function() {
     ucSel.addEventListener('change', function() { loadUnitChart(this.value); });
     loadUnitChart(UNIT_CHART_INIT);
   }
-  buildCatChart();
+  // Period dropdown wires up loadCatChart on change
+  var ccSel = document.getElementById('catChartPeriod');
+  if (ccSel) {
+    ccSel.addEventListener('change', function() { loadCatChart(this.value); });
+    loadCatChart(CAT_CHART_INIT);
+  }
   buildMonthlyChart();
 
   // Re-theme every chart when the user toggles dark mode (§3.4)
   window.addEventListener('laskie:themechange', function() {
-    buildCatChart();
     buildMonthlyChart();
     if (_unitChartData) _renderUnitChart(_unitChartData);
+    if (_catChartData)  _renderCatChart(_catChartData);
   });
 
   // ── DataTables wiring for the three dashboard tables ──────────────

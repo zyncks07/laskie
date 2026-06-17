@@ -242,8 +242,17 @@ include 'includes/header.php';
         <div id="remitMsg" style="display:none"></div>
       </div>
       <div class="modal-footer">
+        <div id="remitUploadProgress" style="display:none;width:100%;margin-bottom:8px">
+          <div class="d-flex align-items-center justify-content-between mb-1">
+            <small style="color:var(--text-muted)"><i class="fa-solid fa-cloud-arrow-up me-1"></i>Uploading proof…</small>
+            <small id="remitUploadPct" style="color:var(--text-muted);font-variant-numeric:tabular-nums">0%</small>
+          </div>
+          <div class="progress" style="height:5px;border-radius:3px">
+            <div class="progress-bar progress-bar-striped progress-bar-animated" id="remitUploadBar" style="width:0%;background:var(--primary)"></div>
+          </div>
+        </div>
         <button class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
-        <button class="btn btn-primary btn-sm" onclick="saveRemittance()">
+        <button class="btn btn-primary btn-sm" id="remitSaveBtn" onclick="saveRemittance()">
           <i class="fa-solid fa-paper-plane me-1"></i>Record Remittance
         </button>
       </div>
@@ -492,7 +501,25 @@ function openRemitModal() {
   remitModal.show();
 }
 
+function _setRemitSaveBusy(busy, label) {
+  var btn = document.getElementById('remitSaveBtn');
+  if (!btn) return;
+  btn.disabled = busy;
+  btn.innerHTML = busy
+    ? '<span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>' + (label || 'Saving…')
+    : '<i class="fa-solid fa-paper-plane me-1"></i>Record Remittance';
+}
+
+function _resetRemitProgress() {
+  document.getElementById('remitUploadProgress').style.display = 'none';
+  document.getElementById('remitUploadBar').style.width = '0%';
+  document.getElementById('remitUploadPct').textContent = '0%';
+}
+
 function saveRemittance() {
+  var saveBtn = document.getElementById('remitSaveBtn');
+  if (saveBtn && saveBtn.disabled) return;
+
   var fd = new FormData();
   fd.append('action',           'save_remittance');
   fd.append('id',               document.getElementById('remitId').value || '');
@@ -504,19 +531,64 @@ function saveRemittance() {
   var file = document.getElementById('remitFile').files[0];
   if (file) fd.append('doc_file', file);
 
-  fetch('api/cash_api.php', {method:'POST', body:fd, credentials:'same-origin', headers: window.csrfHeaders()})
-    .then(function(r) { return r.json(); })
-    .then(function(res) {
-      var el = document.getElementById('remitMsg');
-      el.style.display = '';
-      if (!res.success) {
-        el.className = 'alert alert-danger'; el.textContent = res.error;
-        return;
+  // Lock the button immediately — prevents double-tap regardless of upload size
+  _setRemitSaveBusy(true, file ? 'Uploading…' : 'Saving…');
+  document.getElementById('remitMsg').style.display = 'none';
+
+  function onDone(res) {
+    var el = document.getElementById('remitMsg');
+    el.style.display = '';
+    if (!res.success) {
+      _setRemitSaveBusy(false);
+      _resetRemitProgress();
+      el.className = 'alert alert-danger'; el.textContent = res.error;
+      return;
+    }
+    el.className = 'alert alert-success'; el.textContent = res.msg;
+    setTimeout(function() { remitModal.hide(); location.reload(); }, 1000);
+  }
+
+  function onFail() {
+    _setRemitSaveBusy(false);
+    _resetRemitProgress();
+    showToast('Network error. Please try again.', 'error');
+  }
+
+  if (file) {
+    // XHR gives us upload.onprogress; fetch does not
+    var bar = document.getElementById('remitUploadBar');
+    var pct = document.getElementById('remitUploadPct');
+    document.getElementById('remitUploadProgress').style.display = '';
+
+    var xhr = new XMLHttpRequest();
+    xhr.open('POST', 'api/cash_api.php', true);
+    xhr.withCredentials = true;
+    var hdr = window.csrfHeaders();
+    Object.keys(hdr).forEach(function(k) { xhr.setRequestHeader(k, hdr[k]); });
+
+    xhr.upload.onprogress = function(e) {
+      if (!e.lengthComputable) return;
+      var p = Math.round(e.loaded / e.total * 100);
+      bar.style.width = p + '%';
+      pct.textContent = p + '%';
+      if (p >= 100) {
+        pct.textContent = 'Processing…';
+        _setRemitSaveBusy(true, 'Processing…');
       }
-      el.className = 'alert alert-success'; el.textContent = res.msg;
-      setTimeout(function() { remitModal.hide(); location.reload(); }, 1000);
-    })
-    .catch(function() { showToast('Network error.', 'error'); });
+    };
+
+    xhr.onload = function() {
+      _resetRemitProgress();
+      try { onDone(JSON.parse(xhr.responseText)); } catch(e) { onFail(); }
+    };
+    xhr.onerror = onFail;
+    xhr.send(fd);
+  } else {
+    fetch('api/cash_api.php', {method:'POST', body:fd, credentials:'same-origin', headers: window.csrfHeaders()})
+      .then(function(r) { return r.json(); })
+      .then(onDone)
+      .catch(onFail);
+  }
 }
 
 function deleteTx(id) {

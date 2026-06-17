@@ -240,7 +240,9 @@ include 'includes/header.php';
           </div>
         </div>
         <div id="expMsg" class="mt-3" style="display:none"></div>
-        <div id="expUploadProgress" style="display:none;margin-top:10px">
+      </div>
+      <div class="modal-footer">
+        <div id="expUploadProgress" style="display:none;width:100%;margin-bottom:8px">
           <div class="d-flex align-items-center justify-content-between mb-1">
             <small style="color:var(--text-muted)"><i class="fa-solid fa-cloud-arrow-up me-1"></i>Uploading receipt…</small>
             <small id="expUploadPct" style="color:var(--text-muted);font-variant-numeric:tabular-nums">0%</small>
@@ -249,8 +251,6 @@ include 'includes/header.php';
             <div class="progress-bar progress-bar-striped progress-bar-animated" id="expUploadBar" style="width:0%;background:var(--primary)"></div>
           </div>
         </div>
-      </div>
-      <div class="modal-footer">
         <button class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
         <button class="btn btn-primary btn-sm" id="expSaveBtn" onclick="saveExpense()">
           <i class="fa-solid fa-save me-1"></i>Save Expense

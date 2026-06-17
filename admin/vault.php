@@ -366,15 +366,18 @@ $totalUserReturned = (string)$pdo->query("SELECT COALESCE(SUM(amount),0) FROM ca
 // vault_return ⇒ cash leaves the vault back to a user, so it subtracts from the balance.
 $vaultBalance      = money_sub(money_add(money_sub($totalRemitted, $totalDistrib), $totalReturned), $totalUserReturned);
 
-// Chart: monthly remittances per user for selected year. MONTH() in the
+// Chart: monthly remittances per user for selected year, net of any
+// vault_return ("Return to User") issued that same month — a return
+// reduces how much actually left the user's hands. MONTH() in the
 // SELECT / GROUP BY is just a projection — the WHERE uses a sargable range
-// so idx_cash_user_date can be used.
+// so idx_cash_user_date can be used. Net can go negative (e.g. a return
+// issued before any remittance that month).
 [$yrStart, $yrEnd] = yearRange($selectedYear);
 $cr = $pdo->prepare("
-    SELECT MONTH(ct.transaction_date) AS mo, ct.user_id AS uid,
-           u.full_name, SUM(ct.amount) AS total
+    SELECT MONTH(ct.transaction_date) AS mo, ct.user_id AS uid, u.full_name,
+           SUM(CASE WHEN ct.transaction_type='remitted' THEN ct.amount ELSE -ct.amount END) AS total
     FROM cash_transactions ct LEFT JOIN users u ON u.id=ct.user_id
-    WHERE ct.transaction_type='remitted'
+    WHERE ct.transaction_type IN ('remitted','vault_return')
       AND ct.transaction_date >= ? AND ct.transaction_date < ?
     GROUP BY mo, uid, u.full_name ORDER BY uid, mo
 ");
@@ -683,7 +686,7 @@ include '../includes/header.php';
 <div class="card mb-4">
   <div class="card-body">
     <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
-      <h6 class="mb-0 fw-600"><i class="fa-solid fa-chart-bar me-2 text-primary-custom"></i>Monthly Remittances — <?= $selectedYear ?></h6>
+      <h6 class="mb-0 fw-600"><i class="fa-solid fa-chart-bar me-2 text-primary-custom"></i>Monthly Remittances (Net) — <?= $selectedYear ?></h6>
       <form method="GET" class="d-flex align-items-center gap-2">
         <input type="hidden" name="div_year" value="<?= $divYear ?>">
         <span class="text-muted small">Year:</span>
@@ -1221,12 +1224,12 @@ function buildVaultCharts() {
         plugins: {
           legend: { position: 'top', labels: { usePointStyle: true, pointStyle: 'rect', padding: 16, color: T.tick, font: { family: 'DM Sans' } } },
           tooltip: Object.assign(_monoTip(T), { callbacks: {
-            label: c => ` ${c.dataset.label}: ₱${parseFloat(c.raw||0).toLocaleString('en-PH',{minimumFractionDigits:2})}` } })
+            label: c => { var v = parseFloat(c.raw||0); return ` ${c.dataset.label}: ${v<0?'-₱':'₱'}${Math.abs(v).toLocaleString('en-PH',{minimumFractionDigits:2})}`; } } })
         },
         scales: {
           x: { stacked: true, grid: { display: false }, border: { display: false }, ticks: { color: T.tick, font: { family: 'DM Sans' } } },
           y: { stacked: true, grid: { color: T.grid }, border: { display: false },
-               ticks: { color: T.tick, font: { family: 'DM Sans' }, callback: v => '₱' + (v/1000>=1 ? (v/1000).toFixed(0)+'k' : v) } }
+               ticks: { color: T.tick, font: { family: 'DM Sans' }, callback: v => { var av = Math.abs(v); return (v<0?'-₱':'₱') + (av/1000>=1 ? (av/1000).toFixed(0)+'k' : av); } } }
         }
       }
     });
