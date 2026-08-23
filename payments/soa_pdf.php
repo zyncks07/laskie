@@ -12,6 +12,14 @@ $unitId   = (int)($_GET['unit_id']   ?? 0);
 $dateFrom = $_GET['date_from'] ?? date('Y-01-01');
 $dateTo   = $_GET['date_to']   ?? date('Y-m-d');
 
+// Clamp absurd spans: the ledger is built month-by-month in PHP (a query per
+// month per occupant), so a 1000-year range would pin a worker. Cap at ~10 yrs.
+$fromTs = strtotime((string)$dateFrom);
+$toTs   = strtotime((string)$dateTo);
+if ($fromTs && $toTs && ($toTs - $fromTs) > 3652 * 86400) {
+    $dateFrom = date('Y-m-d', $toTs - 3652 * 86400);
+}
+
 if (!$unitId) die('<p style="font-family:sans-serif;padding:2rem;color:red;">Unit ID required.</p>');
 
 // ── Fetch Unit ────────────────────────────────────────────────
@@ -80,10 +88,12 @@ if ($payments) {
 $pdfServiceCharges = [];
 $sq = $pdo->prepare("
     SELECT uc.*, st.name as service_name, u.full_name as billed_by_name,
+           vu.full_name as voided_by_name,
            (uc.payment_id IS NULL OR p.id IS NULL) AS is_outstanding
     FROM unit_charges uc
     LEFT JOIN service_types st ON uc.service_type_id = st.id
-    LEFT JOIN users u ON uc.created_by = u.id
+    LEFT JOIN users u  ON uc.created_by = u.id
+    LEFT JOIN users vu ON uc.voided_by  = vu.id
     LEFT JOIN payments p ON p.id = uc.payment_id
                         AND p.deleted_at IS NULL
                         AND p.status != 'voided'
@@ -96,35 +106,27 @@ $pdfServiceCharges = $sq->fetchAll();
 // ── Build Ledger ──────────────────────────────────────────────
 $ledger   = [];
 $baseRate = (float)$unit['monthly_rate'];
-$rate = $baseRate;
 $dueDay   = (int)$unit['due_day'];
-$multiOccupant = count($occupants) > 1;
+// Rate shown in the "Rental Unit" header block: the one in effect at the end of
+// the statement period (history-aware, so a past-dated SoA prints its own rate).
+$rate     = getRateForMonth($pdo, $unitId, $baseRate, (int)date('n', strtotime($dateTo)), (int)date('Y', strtotime($dateTo)));
 
-foreach ($occupants as $occupant) {
-    $contractStart = $occupant['contract_start'] ?? null;
-    $contractEnd   = $occupant['contract_end']   ?? null;
-
-    $chargeFrom = $dateFrom;
-    if ($contractStart && $contractStart > $chargeFrom) $chargeFrom = $contractStart;
-    $chargeTo = $dateTo;
-    if ($contractEnd && $contractEnd < $chargeTo) $chargeTo = $contractEnd;
-
-    $iter  = new DateTime($chargeFrom);
-    $iter->modify('first day of this month');
-    $endDt = new DateTime($chargeTo);
-
-    while ($iter <= $endDt) {
-        $m    = (int)$iter->format('n');
-        $y    = (int)$iter->format('Y');
-        $rate = getRateForMonth($pdo, $unitId, $baseRate, $m, $y);
-        if ($rate <= 0) { $iter->modify('+1 month'); continue; }
-        $charge  = prorateFirstMonth($rate, $dueDay, $contractStart, $m, $y);
-        $dateStr = chargeDate($dueDay, $contractStart, $m, $y);
-        $desc    = 'Rent — ' . $iter->format('F Y');
-        if (money_lt($charge, $rate)) $desc .= ' (prorated)';
-        if ($multiOccupant)           $desc .= ' [' . $occupant['full_name'] . ']';
-        $ledger[] = ['date'=>$dateStr,'description'=>$desc,'type'=>'charge','debit'=>$charge,'credit'=>'0.00'];
-        $iter->modify('+1 month');
+// Rent charges (and any admin waivers against them) come from the same shared
+// generator the on-screen SoA uses, so both statements always agree.
+$rentVoidMap = getRentVoidMap($pdo, $unitId, $dateFrom, $dateTo);
+foreach (buildRentChargeRows($pdo, $unitId, $occupants, $dueDay, $baseRate, $dateFrom, $dateTo, $rentVoidMap) as $rc) {
+    $ledger[] = ['date'=>$rc['date'],'description'=>$rc['description'],'type'=>'charge','debit'=>$rc['gross'],'credit'=>'0.00'];
+    foreach ($rc['waivers'] as $w) {
+        $ledger[] = [
+            'date'        => $rc['date'],
+            'description' => 'Rent Waived — ' . date('F Y', mktime(0,0,0,$rc['period_month'],1,$rc['period_year']))
+                             . ' (' . $w['reason'] . ')',
+            'type'        => 'rent_waiver',
+            'debit'       => '0.00',
+            'credit'      => from_cents(to_cents($w['amount'])),
+            'invoice_no'  => '',
+            'cashier'     => $w['voided_by_name'] ?? '',
+        ];
     }
 }
 foreach ($payments as $p) {
@@ -145,9 +147,11 @@ foreach ($pdfRefunds as $r) {
     ];
 }
 foreach ($pdfServiceCharges as $c) {
-    $period = date('F Y', mktime(0,0,0,(int)$c['period_month'],1,(int)$c['period_year']));
-    $desc   = ($c['service_name'] ?? $c['description']) . ' — ' . $period;
-    if (!empty($c['is_outstanding'])) $desc .= ' (Unpaid)';
+    $period   = date('F Y', mktime(0,0,0,(int)$c['period_month'],1,(int)$c['period_year']));
+    $desc     = ($c['service_name'] ?? $c['description']) . ' — ' . $period;
+    $isVoided = !empty($c['voided_at']);
+    if (!empty($c['is_outstanding']) && !$isVoided) $desc .= ' (Unpaid)';
+    if ($isVoided)                                  $desc .= ' (Voided)';
     $ledger[] = [
         'date'        => $c['charge_date'],
         'description' => $desc,
@@ -157,13 +161,25 @@ foreach ($pdfServiceCharges as $c) {
         'invoice_no'  => '',
         'cashier'     => $c['billed_by_name'] ?? '',
     ];
+    if ($isVoided) {
+        $ledger[] = [
+            'date'        => $c['charge_date'],
+            'description' => 'Charge Voided — ' . ($c['service_name'] ?? $c['description'])
+                             . ' (' . ($c['void_reason'] ?? '') . ')',
+            'type'        => 'service_waiver',
+            'debit'       => '0.00',
+            'credit'      => $c['amount'],
+            'invoice_no'  => '',
+            'cashier'     => $c['voided_by_name'] ?? '',
+        ];
+    }
 }
 
 usort($ledger, function($a,$b){
     $c = strcmp($a['date'],$b['date']);
     if ($c !== 0) return $c;
-    $order = ['charge'=>0,'service_charge'=>1,'payment'=>2,'refund'=>3];
-    return ($order[$a['type']]??2) - ($order[$b['type']]??2);
+    $order = ['charge'=>0,'rent_waiver'=>1,'service_charge'=>2,'service_waiver'=>3,'payment'=>4,'refund'=>5];
+    return ($order[$a['type']]??4) - ($order[$b['type']]??4);
 });
 // Running balance — cents math, no float drift.
 $runBal = '0.00';
@@ -174,6 +190,10 @@ foreach ($ledger as &$row) {
 unset($row);
 
 $totalChargesDebit = money_sum(array_map(fn($r) => in_array($r['type'],['charge','service_charge']) ? $r['debit'] : '0.00', $ledger));
+// Waivers are credits in the ledger but nobody paid them — keep the two apart
+// so "Total Paid" on the statement stays the amount actually collected.
+$totalWaived       = money_sum(array_map(fn($r) => in_array($r['type'],['rent_waiver','service_waiver']) ? $r['credit'] : '0.00', $ledger));
+$totalPaidOnly     = money_sum(array_column($payments, 'amount'));
 $totalRefunded     = money_sum(array_column($pdfRefunds, 'amount'));
 $totalDebit        = money_sum(array_column($ledger,'debit'));
 $totalCredit       = money_sum(array_column($ledger,'credit'));
@@ -246,6 +266,7 @@ table.ledger tr.charge-row td{color:#555555;}
 table.ledger tr.pay-row td{background:#f4f4f4;}
 table.ledger tr.refund-row td{background:#f4f4f4;color:var(--muted);}
 table.ledger tr.svc-charge-row td{background:#f4f4f4;}
+table.ledger tr.waiver-row td{background:#f4f4f4;color:var(--muted);font-style:italic;}
 table.ledger tfoot td{padding:10px 8px;font-weight:700;border-top:2px solid var(--border);background:#f4f4f4;font-size:12px;}
 
 /* Balance box */
@@ -370,6 +391,7 @@ table.ledger tfoot td{padding:10px 8px;font-weight:700;border-top:2px solid var(
               'charge'         => 'charge-row',
               'service_charge' => 'svc-charge-row',
               'refund'         => 'refund-row',
+              'rent_waiver', 'service_waiver' => 'waiver-row',
               default          => 'pay-row',
           };
         ?>
@@ -419,8 +441,14 @@ table.ledger tfoot td{padding:10px 8px;font-weight:700;border-top:2px solid var(
         </div>
         <div class="bal-item">
           <span class="bal-label">Total Paid</span>
-          <span class="bal-value" style="color:var(--success)"><?=money($totalCredit)?></span>
+          <span class="bal-value" style="color:var(--success)"><?=money($totalPaidOnly)?></span>
         </div>
+        <?php if (money_is_pos($totalWaived)): ?>
+        <div class="bal-item">
+          <span class="bal-label">Total Waived</span>
+          <span class="bal-value" style="color:var(--muted)"><?=money($totalWaived)?></span>
+        </div>
+        <?php endif; ?>
         <?php if (money_is_pos($totalRefunded)): ?>
         <div class="bal-item">
           <span class="bal-label">Total Refunded</span>

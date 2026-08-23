@@ -337,6 +337,15 @@ function generateInvoiceNo(PDO $pdo): string {
 //   IMAGE_COMPRESSION_QUALITY  — JPEG/WebP quality 0–100 (default 78)
 if (!defined('IMAGE_COMPRESSION_MAX_DIM')) define('IMAGE_COMPRESSION_MAX_DIM', 1600);
 if (!defined('IMAGE_COMPRESSION_QUALITY')) define('IMAGE_COMPRESSION_QUALITY', 62);
+// Decompression-bomb guard: getimagesize() reports declared dimensions cheaply,
+// but GD allocates ~4 bytes/pixel for the source AND the destination canvas
+// (~2× peak) before we ever scale down. A tiny crafted file can declare huge
+// dimensions and blow past memory_limit. 40 MP ≈ 320 MB peak — under the 384 MB
+// cap — and still admits very large scans/screenshots. Receipts are far smaller.
+if (!defined('IMAGE_MAX_PIXELS')) define('IMAGE_MAX_PIXELS', 40_000_000);
+// Max concurrent headless-chromium PDF renders (see renderHtmlToPdf). Each is a
+// ~200 MB process; this caps the fleet so a burst of exports can't OOM the host.
+if (!defined('PDF_MAX_CONCURRENCY')) define('PDF_MAX_CONCURRENCY', 2);
 
 function compressImage(string $absPath, array $opts = []): array {
     $maxDim    = (int)($opts['max_dimension'] ?? IMAGE_COMPRESSION_MAX_DIM);
@@ -355,6 +364,9 @@ function compressImage(string $absPath, array $opts = []): array {
     $h        = (int)$info[1];
     $origSize = (int)(filesize($absPath) ?: 0);
     $orig['original_size'] = $origSize;
+
+    // Reject decompression bombs before GD allocates the full-size source bitmap.
+    if ($w * $h > IMAGE_MAX_PIXELS) return ['reason' => 'too-large'] + $orig;
 
     // Skip formats we can't safely re-encode in place
     if ($mime === 'image/gif')  return ['reason' => 'gif-skipped'] + $orig;  // may be animated
@@ -609,6 +621,234 @@ function chargeDate(int $dueDay, ?string $contractStart, int $month, int $year):
     return sprintf('%04d-%02d-%02d', $year, $month, min($dueDay, $daysInMonth));
 }
 
+// ─── Rent Charge Waivers (admin write-offs) ──────────────────
+// Rent charges are VIRTUAL — recomputed on every render from contract x due_day
+// x rate history — so a waived month has no row to flag. rent_charge_voids is
+// that row. Only waivers with restored_at IS NULL are in effect, and several may
+// target one period (partial waivers accumulate). Waivers move receivables only:
+// rent charges are never revenue here, so nothing below touches cash or P&L.
+
+// Net rent actually paid for one unit/period (payments minus their refunds).
+// Mirrors the canonical net-of-refunds pattern from CLAUDE.md §5 invariant 6.
+function getRentPaidForPeriod(PDO $pdo, int $unitId, int $month, int $year): string {
+    $q = $pdo->prepare(
+        "SELECT COALESCE(SUM(p.amount - COALESCE(r.refsum,0)), 0)
+         FROM payments p
+         LEFT JOIN (SELECT payment_id, SUM(amount) AS refsum FROM refunds GROUP BY payment_id) r
+                ON r.payment_id = p.id
+         WHERE p.unit_id=? AND p.payment_type='rent'
+           AND p.period_month=? AND p.period_year=?
+           AND p.deleted_at IS NULL AND p.status != 'voided'"
+    );
+    $q->execute([$unitId, $month, $year]);
+    return from_cents(to_cents($q->fetchColumn()));
+}
+
+// Net rent paid per period for one unit, keyed "Y-n". Batched sibling of
+// getRentPaidForPeriod() for pages that need every period at once (the SoA).
+function getRentPaidByPeriod(PDO $pdo, int $unitId): array {
+    $q = $pdo->prepare(
+        "SELECT p.period_year, p.period_month,
+                COALESCE(SUM(p.amount - COALESCE(r.refsum,0)), 0) AS paid
+         FROM payments p
+         LEFT JOIN (SELECT payment_id, SUM(amount) AS refsum FROM refunds GROUP BY payment_id) r
+                ON r.payment_id = p.id
+         WHERE p.unit_id=? AND p.payment_type='rent'
+           AND p.deleted_at IS NULL AND p.status != 'voided'
+         GROUP BY p.period_year, p.period_month"
+    );
+    $q->execute([$unitId]);
+    $out = [];
+    foreach ($q->fetchAll() as $r) {
+        $out[(int)$r['period_year'] . '-' . (int)$r['period_month']] = from_cents(to_cents($r['paid']));
+    }
+    return $out;
+}
+
+// How much of a rent charge may still be waived. Pure cents math so it can be
+// unit-tested without a DB — this is the cap rule the void API enforces.
+function waivableRent($gross, $netPaid, $alreadyVoided): string {
+    return money_max('0.00', money_sub(money_sub($gross, $netPaid), $alreadyVoided));
+}
+
+// Recomputes the gross (pre-waiver) rent charge for one unit/period server-side.
+// Never trust a client-posted amount — the void API re-derives it through here.
+// Returns ['gross'=>string, 'tenant_id'=>?int, 'tenant_name'=>?string].
+// Parity note: like the SoA ledger, only the FIRST month is prorated; a contract
+// ending mid-month still bills in full, so the cap matches what the SoA shows.
+function getGrossRentCharge(PDO $pdo, int $unitId, int $month, int $year, ?int $tenantId = null): array {
+    $uq = $pdo->prepare("SELECT monthly_rate, due_day FROM rental_units WHERE id=?");
+    $uq->execute([$unitId]);
+    $unit = $uq->fetch();
+    if (!$unit) return ['gross' => '0.00', 'tenant_id' => null, 'tenant_name' => null];
+
+    $periodStart = sprintf('%04d-%02d-01', $year, $month);
+    $periodEnd   = date('Y-m-t', strtotime($periodStart));
+
+    if ($tenantId) {
+        $tq = $pdo->prepare("SELECT id, full_name, contract_start, contract_end FROM tenants WHERE id=? AND unit_id=?");
+        $tq->execute([$tenantId, $unitId]);
+    } else {
+        // Same occupant selection as the SoA: any tenant whose contract overlaps
+        // the period, preferring the active one.
+        $tq = $pdo->prepare(
+            "SELECT id, full_name, contract_start, contract_end FROM tenants
+             WHERE unit_id=? AND status IN ('active','former','inactive')
+               AND (contract_start IS NULL OR contract_start <= ?)
+               AND (contract_end   IS NULL OR contract_end   >= ?)
+             ORDER BY status='active' DESC, COALESCE(contract_start,'1970-01-01') DESC
+             LIMIT 1"
+        );
+        $tq->execute([$unitId, $periodEnd, $periodStart]);
+    }
+    $tenant = $tq->fetch();
+    if (!$tenant) return ['gross' => '0.00', 'tenant_id' => null, 'tenant_name' => null];
+
+    // Period outside the contract → no charge was ever generated for it.
+    if (!empty($tenant['contract_start']) && $tenant['contract_start'] > $periodEnd)
+        return ['gross' => '0.00', 'tenant_id' => (int)$tenant['id'], 'tenant_name' => $tenant['full_name']];
+    if (!empty($tenant['contract_end']) && $tenant['contract_end'] < $periodStart)
+        return ['gross' => '0.00', 'tenant_id' => (int)$tenant['id'], 'tenant_name' => $tenant['full_name']];
+
+    $rate  = getRateForMonth($pdo, $unitId, (float)$unit['monthly_rate'], $month, $year);
+    $gross = $rate > 0
+        ? prorateFirstMonth($rate, (int)$unit['due_day'], $tenant['contract_start'] ?? null, $month, $year)
+        : '0.00';
+    return ['gross' => $gross, 'tenant_id' => (int)$tenant['id'], 'tenant_name' => $tenant['full_name']];
+}
+
+// Active waivers for one unit over a date range, keyed "Y-n" (e.g. "2026-2").
+// Each key holds a list of waiver rows (id, amount, reason, tenant_id, voided_at,
+// voided_by_name). Used by the SoA ledger and the void UI.
+function getRentVoidMap(PDO $pdo, int $unitId, string $dateFrom, string $dateTo): array {
+    $fromTs = strtotime($dateFrom);
+    $toTs   = strtotime($dateTo);
+    if ($fromTs === false || $toTs === false) return [];
+    $fromKey = (int)date('Y', $fromTs) * 100 + (int)date('n', $fromTs);
+    $toKey   = (int)date('Y', $toTs)   * 100 + (int)date('n', $toTs);
+
+    // unit_id equality already selects via idx_rcv_unit_period; the period
+    // arithmetic only filters the handful of waiver rows that survive it.
+    $q = $pdo->prepare(
+        "SELECT rcv.*, u.full_name AS voided_by_name
+         FROM rent_charge_voids rcv
+         LEFT JOIN users u ON rcv.voided_by = u.id
+         WHERE rcv.unit_id = ? AND rcv.restored_at IS NULL
+           AND (rcv.period_year * 100 + rcv.period_month) BETWEEN ? AND ?
+         ORDER BY rcv.period_year, rcv.period_month, rcv.voided_at, rcv.id"
+    );
+    $q->execute([$unitId, $fromKey, $toKey]);
+    $map = [];
+    foreach ($q->fetchAll() as $row) {
+        $map[(int)$row['period_year'] . '-' . (int)$row['period_month']][] = $row;
+    }
+    return $map;
+}
+
+// Total active waiver per unit for ONE period, keyed by unit_id. Batched on
+// purpose: the dashboard grid and the collection monthly_summary both loop over
+// every unit, and a per-unit query there would be an N+1.
+function getRentVoidTotals(PDO $pdo, int $month, int $year): array {
+    $q = $pdo->prepare(
+        "SELECT unit_id, COALESCE(SUM(amount),0) AS total
+         FROM rent_charge_voids
+         WHERE period_month=? AND period_year=? AND restored_at IS NULL
+         GROUP BY unit_id"
+    );
+    $q->execute([$month, $year]);
+    $out = [];
+    foreach ($q->fetchAll() as $r) $out[(int)$r['unit_id']] = from_cents(to_cents($r['total']));
+    return $out;
+}
+
+// Total active waiver for one unit/period (single-row convenience wrapper).
+function getRentVoidedForPeriod(PDO $pdo, int $unitId, int $month, int $year): string {
+    $q = $pdo->prepare(
+        "SELECT COALESCE(SUM(amount),0) FROM rent_charge_voids
+         WHERE unit_id=? AND period_month=? AND period_year=? AND restored_at IS NULL"
+    );
+    $q->execute([$unitId, $month, $year]);
+    return from_cents(to_cents($q->fetchColumn()));
+}
+
+// Generates the virtual monthly rent charges for a unit over a date range —
+// the single source of truth shared by payments/history.php and
+// payments/soa_pdf.php (which used to duplicate this loop verbatim).
+//
+// $occupants: tenant rows whose contract overlaps [$dateFrom,$dateTo], in the
+// order the SoA fetches them. $voidMap: output of getRentVoidMap().
+//
+// Each returned row:
+//   date, period_month, period_year, tenant_id, tenant_name, description,
+//   gross (full charge), voided (sum of active waivers), net (gross − voided),
+//   waivers (the waiver rows attached to this charge)
+function buildRentChargeRows(PDO $pdo, int $unitId, array $occupants, int $dueDay,
+                             float $baseRate, string $dateFrom, string $dateTo,
+                             array $voidMap = []): array {
+    $rows          = [];
+    $multiOccupant = count($occupants) > 1;
+
+    foreach ($occupants as $occupant) {
+        $contractStart = $occupant['contract_start'] ?? null;
+        $contractEnd   = $occupant['contract_end']   ?? null;
+
+        $chargeFrom = $dateFrom;
+        if ($contractStart && $contractStart > $chargeFrom) $chargeFrom = $contractStart;
+        $chargeTo = $dateTo;
+        if ($contractEnd && $contractEnd < $chargeTo) $chargeTo = $contractEnd;
+        if ($chargeFrom > $chargeTo) continue;
+
+        $iter = new DateTime($chargeFrom);
+        $iter->modify('first day of this month');
+        $endDt = new DateTime($chargeTo);
+
+        while ($iter <= $endDt) {
+            $m    = (int)$iter->format('n');
+            $y    = (int)$iter->format('Y');
+            $rate = getRateForMonth($pdo, $unitId, $baseRate, $m, $y);
+            if ($rate <= 0) { $iter->modify('+1 month'); continue; }
+            $gross = prorateFirstMonth($rate, $dueDay, $contractStart, $m, $y);
+            $desc  = 'Rent — ' . $iter->format('F Y');
+            if (money_lt($gross, $rate)) $desc .= ' (prorated)';
+            if ($multiOccupant)          $desc .= ' [' . $occupant['full_name'] . ']';
+            $rows[] = [
+                'date'         => chargeDate($dueDay, $contractStart, $m, $y),
+                'period_month' => $m,
+                'period_year'  => $y,
+                'tenant_id'    => isset($occupant['id']) ? (int)$occupant['id'] : null,
+                'tenant_name'  => $occupant['full_name'] ?? null,
+                'description'  => $desc,
+                'gross'        => $gross,
+                'voided'       => '0.00',
+                'net'          => $gross,
+                'waivers'      => [],
+            ];
+            $iter->modify('+1 month');
+        }
+    }
+
+    // Attach waivers: prefer the charge whose occupant the waiver names, else the
+    // first charge in that period (the normal single-occupant case). A waiver for
+    // a period that generated no charge has nothing to offset and is skipped.
+    foreach ($voidMap as $periodKey => $waivers) {
+        [$wy, $wm] = array_map('intval', explode('-', $periodKey));
+        foreach ($waivers as $w) {
+            $target = null;
+            foreach ($rows as $i => $r) {
+                if ($r['period_year'] !== $wy || $r['period_month'] !== $wm) continue;
+                if ($target === null) $target = $i;
+                if ($w['tenant_id'] !== null && (int)$w['tenant_id'] === (int)$r['tenant_id']) { $target = $i; break; }
+            }
+            if ($target === null) continue;
+            $rows[$target]['waivers'][] = $w;
+            $rows[$target]['voided']    = money_add($rows[$target]['voided'], $w['amount']);
+            $rows[$target]['net']       = money_max('0.00', money_sub($rows[$target]['gross'], $rows[$target]['voided']));
+        }
+    }
+
+    return $rows;
+}
+
 // ─── Payment Status Calculator ───────────────────────────────
 function getUnitPaymentStatus(PDO $pdo, int $unitId, int $month, int $year): string {
     $unit = $pdo->prepare("SELECT ru.monthly_rate, ru.due_day, t.contract_start
@@ -626,6 +866,8 @@ function getUnitPaymentStatus(PDO $pdo, int $unitId, int $month, int $year): str
     $paid->execute([$unitId, $month, $year]);
     $totalPaid = $paid->fetchColumn();
     $expected  = prorateFirstMonth($rate, (int)$u['due_day'], $u['contract_start'] ?? null, $month, $year);
+    // An admin waiver reduces what is owed for the period (see rent_charge_voids).
+    $expected  = money_max('0.00', money_sub($expected, getRentVoidedForPeriod($pdo, $unitId, $month, $year)));
 
     if (money_is_zero($totalPaid) && money_is_pos($expected)) {
         $daysInMonth = (int)date('t', mktime(0,0,0,$month,1,$year));
@@ -750,27 +992,57 @@ function renderHtmlToPdf(string $html): string {
         );
     }
 
-    $tmpHtml = tempnam(sys_get_temp_dir(), 'laskie_pdf_') . '.html';
+    // Concurrency cap: hold one of PDF_MAX_CONCURRENCY flock slots for the whole
+    // render so a burst of exports can't fork a browser per request and OOM the
+    // box. If all slots are busy, wait briefly then refuse cheaply — the caller
+    // translates the exception to a clean 5xx, which beats worker/RAM exhaustion.
+    $slotFh   = null;
+    $deadline = microtime(true) + 8.0;
+    do {
+        for ($i = 0; $i < PDF_MAX_CONCURRENCY; $i++) {
+            $fh = fopen(sys_get_temp_dir() . "/laskie_pdf_slot_$i.lock", 'c');
+            if ($fh && flock($fh, LOCK_EX | LOCK_NB)) { $slotFh = $fh; break 2; }
+            if ($fh) fclose($fh);
+        }
+        usleep(200_000);
+    } while (microtime(true) < $deadline);
+    if ($slotFh === null) {
+        throw new RuntimeException('Server is busy generating PDFs. Please try again in a moment.');
+    }
+
+    // 64-bit random temp names created O_EXCL (fopen 'x') so a local user can't
+    // pre-create/symlink a predictable /tmp path to hijack the write or read the
+    // rendered statement (CWE-377). tempnam()+'.html' did not get this guarantee.
+    $tmpHtml = sys_get_temp_dir() . '/laskie_pdf_' . bin2hex(random_bytes(8)) . '.html';
     $tmpPdf  = sys_get_temp_dir() . '/laskie_pdf_' . bin2hex(random_bytes(8)) . '.pdf';
-    if (file_put_contents($tmpHtml, $html) === false) {
-        throw new RuntimeException('Could not write temporary HTML file for PDF rendering.');
-    }
 
-    $cmd = sprintf(
-        '%s --headless --disable-gpu --no-sandbox --disable-dev-shm-usage'
-        . ' --print-to-pdf=%s --print-to-pdf-no-header %s 2>/dev/null',
-        escapeshellarg($chromium),
-        escapeshellarg($tmpPdf),
-        escapeshellarg('file://' . $tmpHtml)
-    );
-    exec($cmd, $cmdOut, $exitCode);
-    @unlink($tmpHtml);
+    try {
+        $hf = @fopen($tmpHtml, 'x');
+        if ($hf === false || fwrite($hf, $html) === false) {
+            if ($hf !== false) fclose($hf);
+            throw new RuntimeException('Could not write temporary HTML file for PDF rendering.');
+        }
+        fclose($hf);
 
-    if ($exitCode !== 0 || !file_exists($tmpPdf) || filesize($tmpPdf) === 0) {
-        @unlink($tmpPdf);
-        throw new RuntimeException("PDF generation failed (chromium exit code $exitCode). Check that the chromium binary is runnable by the web user.");
+        $cmd = sprintf(
+            '%s --headless --disable-gpu --no-sandbox --disable-dev-shm-usage'
+            . ' --print-to-pdf=%s --print-to-pdf-no-header %s 2>/dev/null',
+            escapeshellarg($chromium),
+            escapeshellarg($tmpPdf),
+            escapeshellarg('file://' . $tmpHtml)
+        );
+        exec($cmd, $cmdOut, $exitCode);
+
+        if ($exitCode !== 0 || !file_exists($tmpPdf) || filesize($tmpPdf) === 0) {
+            @unlink($tmpPdf);
+            throw new RuntimeException("PDF generation failed (chromium exit code $exitCode). Check that the chromium binary is runnable by the web user.");
+        }
+        return $tmpPdf;
+    } finally {
+        @unlink($tmpHtml);              // remove the input HTML on every path
+        flock($slotFh, LOCK_UN);        // release the concurrency slot
+        fclose($slotFh);
     }
-    return $tmpPdf;
 }
 
 // Returns the absolute file:// URL of the assets/vendor/ directory.

@@ -19,6 +19,7 @@
         <testsuite name="Integration">
             <directory>tests/Integration</directory>
             <exclude>tests/Integration/IntegrationTestCase.php</exclude>
+            <exclude>tests/Integration/IsolatedDbTestCase.php</exclude>
         </testsuite>
     </testsuites>
     <source>

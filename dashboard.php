@@ -137,6 +137,9 @@ if ($selectedYear === $curYear) {
     ");
     $usStmt->execute([$curMonth, $curYear]);
     $unitStatusData = $usStmt->fetchAll();
+    // Admin rent waivers for the current month, keyed by unit_id. Batched here
+    // so the status loop below stays free of per-unit queries.
+    $curRentVoids = getRentVoidTotals($pdo, $curMonth, $curYear);
 
     $today = (int)date('j');
 }
@@ -300,8 +303,12 @@ include 'includes/header.php';
           <?php else:
               $rate         = getRateForMonth($pdo, (int)$u['id'], (float)$u['monthly_rate'], $curMonth, $curYear);
               $expected     = prorateFirstMonth($rate, (int)$u['due_day'], $u['contract_start'] ?? null, $curMonth, $curYear);
+              // A waived month owes nothing, so it must not show as due/late.
+              $expected     = money_max('0.00', money_sub($expected, $curRentVoids[(int)$u['id']] ?? '0.00'));
               $curPaid      = $u['cur_paid'];
-              $curMonthPaid = money_is_pos($expected) && money_gte($curPaid, $expected);
+              $curWaived    = $curRentVoids[(int)$u['id']] ?? '0.00';
+              // Nothing expected (fully waived, or no rate set) counts as settled.
+              $curMonthPaid = !money_is_pos($expected) || money_gte($curPaid, $expected);
               // 10-day grace period — clamped to month-end so units with
               // due_day=30 in February (or any short month) still trigger.
               $daysInCurMo  = (int)date('t', mktime(0,0,0,$curMonth,1,$curYear));
@@ -316,6 +323,9 @@ include 'includes/header.php';
               <td data-order="<?= $sortKey ?>">
                 <?php if ($curMonthPaid): ?>
                   <span class="ok-pill"><i class="fa-solid fa-check"></i>Paid</span>
+                  <?php if (money_is_pos($curWaived)): ?>
+                  <div class="stat-sub mt-1"><i class="fa-solid fa-file-circle-xmark me-1"></i><?= money($curWaived) ?> waived</div>
+                  <?php endif; ?>
                 <?php else: ?>
                   <span class="attn-pill"><i class="fa-solid fa-xmark"></i><?= money($amountDue) ?></span>
                   <?php if ($isLate): ?>

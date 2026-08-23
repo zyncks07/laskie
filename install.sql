@@ -187,6 +187,9 @@ CREATE TABLE IF NOT EXISTS unit_charges (
     period_year SMALLINT UNSIGNED NOT NULL,
     payment_id INT DEFAULT NULL,
     source ENUM('pre_billed','auto_collected') NOT NULL DEFAULT 'auto_collected',
+    voided_at DATETIME DEFAULT NULL,
+    voided_by INT DEFAULT NULL,
+    void_reason VARCHAR(255) DEFAULT NULL,
     created_by INT DEFAULT NULL,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     KEY unit_id         (unit_id),
@@ -195,11 +198,38 @@ CREATE TABLE IF NOT EXISTS unit_charges (
     KEY payment_id      (payment_id),
     KEY created_by      (created_by),
     INDEX idx_uc_unit_period (unit_id, period_year, period_month),
+    INDEX idx_uc_voided (voided_at),
     FOREIGN KEY (unit_id)         REFERENCES rental_units(id)  ON DELETE CASCADE,
     FOREIGN KEY (tenant_id)       REFERENCES tenants(id)       ON DELETE SET NULL,
     FOREIGN KEY (service_type_id) REFERENCES service_types(id) ON DELETE SET NULL,
     FOREIGN KEY (payment_id)      REFERENCES payments(id)      ON DELETE SET NULL,
+    FOREIGN KEY (voided_by)       REFERENCES users(id)         ON DELETE SET NULL,
     FOREIGN KEY (created_by)      REFERENCES users(id)         ON DELETE SET NULL
+);
+
+-- Rent Charge Waivers (admin write-offs of the virtual monthly rent charge)
+-- Rent charges are computed at render time (contract x due_day x rate history),
+-- so a waiver needs its own row. Several rows may target one period (partial
+-- waivers accumulate); only rows with restored_at IS NULL are in effect.
+CREATE TABLE IF NOT EXISTS rent_charge_voids (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    unit_id INT NOT NULL,
+    tenant_id INT DEFAULT NULL,
+    period_month TINYINT UNSIGNED NOT NULL,
+    period_year SMALLINT UNSIGNED NOT NULL,
+    amount DECIMAL(12,2) NOT NULL,
+    reason VARCHAR(255) NOT NULL,
+    voided_by INT DEFAULT NULL,
+    voided_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    restored_at DATETIME DEFAULT NULL,
+    restored_by INT DEFAULT NULL,
+    INDEX idx_rcv_unit_period (unit_id, period_year, period_month, restored_at),
+    INDEX idx_rcv_period      (period_year, period_month, restored_at),
+    KEY tenant_id (tenant_id),
+    FOREIGN KEY (unit_id)     REFERENCES rental_units(id) ON DELETE CASCADE,
+    FOREIGN KEY (tenant_id)   REFERENCES tenants(id)      ON DELETE SET NULL,
+    FOREIGN KEY (voided_by)   REFERENCES users(id)        ON DELETE SET NULL,
+    FOREIGN KEY (restored_by) REFERENCES users(id)        ON DELETE SET NULL
 );
 
 -- Cash on Hand Transactions

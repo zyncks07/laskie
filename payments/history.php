@@ -105,10 +105,12 @@ $serviceCharges = [];
 if ($selUnit) {
     $sq = $pdo->prepare("
         SELECT uc.*, st.name as service_name, u.full_name as billed_by_name,
+               vu.full_name as voided_by_name,
                (uc.payment_id IS NULL OR p.id IS NULL) AS is_outstanding
         FROM unit_charges uc
         LEFT JOIN service_types st ON uc.service_type_id = st.id
-        LEFT JOIN users u ON uc.created_by = u.id
+        LEFT JOIN users u  ON uc.created_by = u.id
+        LEFT JOIN users vu ON uc.voided_by  = vu.id
         LEFT JOIN payments p ON p.id = uc.payment_id
                             AND p.deleted_at IS NULL
                             AND p.status != 'voided'
@@ -119,46 +121,63 @@ if ($selUnit) {
     $serviceCharges = $sq->fetchAll();
 }
 
+// ── Waived (voided) rent charges for this unit + range ────────
+// Rent charges are virtual, so an admin write-off lives in rent_charge_voids
+// and is rendered as an offsetting credit line, never by hiding the charge.
+$rentVoidMap  = $selUnit ? getRentVoidMap($pdo, $selUnit, $dateFrom, $dateTo) : [];
+$rentPaidMap  = $selUnit ? getRentPaidByPeriod($pdo, $selUnit) : [];
+
 // ── Build Ledger (charges + payments merged, sorted by date) ──
-$ledger = [];
+$ledger   = [];
+$waivable = []; // rows the bulk "Void Charges" modal may offer (admin only)
 if ($selUnit && $unitInfo) {
     $baseRate = (float)$unitInfo['monthly_rate'];
+    $dueDay   = (int)$unitInfo['due_day'];
 
-    // Generate charge rows for every occupant whose period overlaps the range
-    $dueDay = (int)$unitInfo['due_day'];
-    $multiOccupant = count($occupants) > 1;
-    foreach ($occupants as $occupant) {
-        $contractStart = $occupant['contract_start'] ?? null;
-        $contractEnd   = $occupant['contract_end']   ?? null;
+    // Shared generator — payments/soa_pdf.php renders from the same helper.
+    $rentRows = buildRentChargeRows($pdo, $selUnit, $occupants, $dueDay, $baseRate, $dateFrom, $dateTo, $rentVoidMap);
 
-        $chargeFrom = $dateFrom;
-        if ($contractStart && $contractStart > $chargeFrom) $chargeFrom = $contractStart;
-        $chargeTo = $dateTo;
-        if ($contractEnd && $contractEnd < $chargeTo) $chargeTo = $contractEnd;
-
-        $iter  = new DateTime($chargeFrom);
-        $iter->modify('first day of this month');
-        $endDt = new DateTime($chargeTo);
-
-        while ($iter <= $endDt) {
-            $m    = (int)$iter->format('n');
-            $y    = (int)$iter->format('Y');
-            $rate = getRateForMonth($pdo, $selUnit, $baseRate, $m, $y);
-            if ($rate <= 0) { $iter->modify('+1 month'); continue; }
-            $charge  = prorateFirstMonth($rate, $dueDay, $contractStart, $m, $y);
-            $dateStr = chargeDate($dueDay, $contractStart, $m, $y);
-            $desc    = 'Rent — ' . $iter->format('F Y');
-            if (money_lt($charge, $rate)) $desc .= ' (prorated)';
-            if ($multiOccupant)           $desc .= ' [' . $occupant['full_name'] . ']';
-            $ledger[] = [
-                'date'        => $dateStr,
-                'description' => $desc,
-                'type'        => 'charge',
-                'debit'       => $charge,
-                'credit'      => '0.00',
-                'encoded'     => null, // computed rent charge — no recorded row
+    foreach ($rentRows as $rc) {
+        $periodKey = $rc['period_year'] . '-' . $rc['period_month'];
+        $paid      = $rentPaidMap[$periodKey] ?? '0.00';
+        $canWaive  = waivableRent($rc['gross'], $paid, $rc['voided']);
+        $ledger[]  = [
+            'date'         => $rc['date'],
+            'description'  => $rc['description'],
+            'type'         => 'charge',
+            'debit'        => $rc['gross'],
+            'credit'       => '0.00',
+            'encoded'      => null, // computed rent charge — no recorded row
+            'period_month' => $rc['period_month'],
+            'period_year'  => $rc['period_year'],
+            'tenant_id'    => $rc['tenant_id'],
+            'waivable'     => $canWaive,
+        ];
+        if (money_is_pos($canWaive)) {
+            $waivable[] = [
+                'type'   => 'rent',
+                'month'  => $rc['period_month'],
+                'year'   => $rc['period_year'],
+                'tenant' => $rc['tenant_id'],
+                'label'  => $rc['description'],
+                'amount' => $canWaive,
             ];
-            $iter->modify('+1 month');
+        }
+        // One credit row per waiver, stamped on the charge date so it nets
+        // against its charge in the running balance.
+        foreach ($rc['waivers'] as $w) {
+            $ledger[] = [
+                'date'        => $rc['date'],
+                'description' => 'Rent Waived — ' . date('F Y', mktime(0,0,0,$rc['period_month'],1,$rc['period_year']))
+                                 . ' (' . $w['reason'] . ')',
+                'type'        => 'rent_waiver',
+                'debit'       => '0.00',
+                'credit'      => from_cents(to_cents($w['amount'])),
+                'invoice_no'  => '',
+                'cashier'     => $w['voided_by_name'] ?? '',
+                'id'          => (int)$w['id'],
+                'encoded'     => $w['voided_at'] ?? null,
+            ];
         }
     }
 
@@ -206,8 +225,11 @@ if ($selUnit && $unitInfo) {
         $desc     = ($c['service_name'] ?? $c['description']) . ' — ' . $period;
         // is_outstanding accounts for both NULL payment_id AND voided/deleted
         // linked payments, so the badge stays accurate after a void/restore.
-        $unpaid   = !empty($c['is_outstanding']);
-        if ($unpaid) $desc .= ' (Unpaid)';
+        // A waived charge is settled, not outstanding.
+        $isVoided = !empty($c['voided_at']);
+        $unpaid   = !empty($c['is_outstanding']) && !$isVoided;
+        if ($unpaid)   $desc .= ' (Unpaid)';
+        if ($isVoided) $desc .= ' (Voided)';
         $ledger[] = [
             'date'        => $c['charge_date'],
             'description' => $desc,
@@ -218,9 +240,31 @@ if ($selUnit && $unitInfo) {
             'cashier'     => $c['billed_by_name'] ?? '',
             'id'          => (int)$c['id'],
             'is_unpaid'   => $unpaid,
+            'is_voided'   => $isVoided,
             'source'      => $c['source'],
             'encoded'     => $c['created_at'] ?? null,
         ];
+        if ($isVoided) {
+            $ledger[] = [
+                'date'        => $c['charge_date'],
+                'description' => 'Charge Voided — ' . ($c['service_name'] ?? $c['description'])
+                                 . ' (' . ($c['void_reason'] ?? '') . ')',
+                'type'        => 'service_waiver',
+                'debit'       => '0.00',
+                'credit'      => $c['amount'],
+                'invoice_no'  => '',
+                'cashier'     => $c['voided_by_name'] ?? '',
+                'id'          => (int)$c['id'],
+                'encoded'     => $c['voided_at'] ?? null,
+            ];
+        } elseif ($unpaid) {
+            $waivable[] = [
+                'type'   => 'service',
+                'id'     => (int)$c['id'],
+                'label'  => $desc,
+                'amount' => from_cents(to_cents($c['amount'])),
+            ];
+        }
     }
 }
 
@@ -228,8 +272,8 @@ if ($selUnit && $unitInfo) {
 usort($ledger, function($a,$b){
     $cmp = strcmp($a['date'],$b['date']);
     if ($cmp !== 0) return $cmp;
-    $order = ['charge'=>0,'service_charge'=>1,'payment'=>2,'refund'=>3];
-    return ($order[$a['type']]??2) - ($order[$b['type']]??2);
+    $order = ['charge'=>0,'rent_waiver'=>1,'service_charge'=>2,'service_waiver'=>3,'payment'=>4,'refund'=>5];
+    return ($order[$a['type']]??4) - ($order[$b['type']]??4);
 });
 
 // Running balance — cents math, no float drift.
@@ -241,6 +285,7 @@ foreach ($ledger as &$row) {
 unset($row);
 
 $totalChargesDebit = money_sum(array_map(fn($r) => in_array($r['type'],['charge','service_charge']) ? $r['debit'] : '0.00', $ledger));
+$totalWaived       = money_sum(array_map(fn($r) => in_array($r['type'],['rent_waiver','service_waiver']) ? $r['credit'] : '0.00', $ledger));
 $totalDebit        = money_sum(array_column($ledger, 'debit'));
 $totalCredit       = money_sum(array_column($ledger, 'credit'));
 $finalBal          = money_sub($totalDebit, $totalCredit);
@@ -264,6 +309,11 @@ include '../includes/header.php';
     <button class="btn btn-sm btn-outline-secondary no-print" onclick="window.print()">
       <i class="fa-solid fa-print me-1"></i>Print
     </button>
+    <?php if (isAdmin() && !empty($waivable)): ?>
+    <button class="btn btn-sm btn-outline-danger no-print" onclick="openBulkVoidModal()">
+      <i class="fa-solid fa-file-circle-xmark me-1"></i>Void Charges
+    </button>
+    <?php endif; ?>
     <?php endif; ?>
   </div>
 </div>
@@ -355,11 +405,24 @@ include '../includes/header.php';
       <div class="stat-icon green"><i class="fa-solid fa-money-bill-wave"></i></div>
       <div class="stat-body">
         <div class="stat-label">Total Paid</div>
-        <div class="stat-value" style="font-size:17px"><?=money($totalCredit)?></div>
+        <!-- payments only: waivers are credits in the ledger but nobody paid them -->
+        <div class="stat-value" style="font-size:17px"><?=money($totalPaid)?></div>
         <div class="stat-sub"><?=count($payments)?> payment<?=count($payments)!=1?'s':''?></div>
       </div>
     </div>
   </div>
+  <?php if (money_is_pos($totalWaived)): ?>
+  <div class="col-6 col-md-3">
+    <div class="stat-card">
+      <div class="stat-icon"><i class="fa-solid fa-file-circle-xmark"></i></div>
+      <div class="stat-body">
+        <div class="stat-label">Total Waived</div>
+        <div class="stat-value num" style="font-size:17px"><?=money($totalWaived)?></div>
+        <div class="stat-sub">written off by admin</div>
+      </div>
+    </div>
+  </div>
+  <?php endif; ?>
   <?php if (money_is_pos($totalRefunded)): ?>
   <div class="col-6 col-md-3">
     <div class="stat-card">
@@ -385,7 +448,7 @@ include '../includes/header.php';
       </div>
     </div>
   </div>
-  <?php if (!money_is_pos($totalRefunded)): ?>
+  <?php if (!money_is_pos($totalRefunded) && !money_is_pos($totalWaived)): ?>
   <div class="col-6 col-md-3">
     <div class="stat-card">
       <div class="stat-icon"><i class="fa-solid fa-calendar"></i></div>
@@ -430,6 +493,7 @@ include '../includes/header.php';
       <?php
         $isRefund  = $row['type'] === 'refund';
         $isSvcChg  = $row['type'] === 'service_charge';
+        $isWaiver  = $row['type'] === 'rent_waiver' || $row['type'] === 'service_waiver';
         $isUnpaid  = $isSvcChg && !empty($row['is_unpaid']);
         $trClass   = $row['type']==='payment' ? 'tr-payment' : ($isRefund ? 'tr-refund' : ($isSvcChg ? 'tr-svc-charge' : ''));
       ?>
@@ -439,11 +503,19 @@ include '../includes/header.php';
         <td class="cell-trunc-lg" style="font-size:12.5px">
           <?php if($row['type']==='charge'): ?>
             <i class="fa-solid fa-file-invoice fa-xs me-1 text-muted"></i><?=clean($row['description'])?>
+          <?php elseif($isWaiver): ?>
+            <i class="fa-solid fa-file-circle-xmark fa-xs me-1 text-muted"></i>
+            <span class="row-voided"><?=clean($row['description'])?></span>
+            &nbsp;<span class="muted-pill" style="font-size:10px">Waived</span>
           <?php elseif($isSvcChg): ?>
             <i class="fa-solid fa-receipt fa-xs me-1 text-muted"></i>
-            <?php if($isUnpaid): ?>
+            <?php if(!empty($row['is_voided'])): ?>
+            <span class="row-voided"><?=clean($row['description'])?></span>
+            <?php elseif($isUnpaid): ?>
             <strong><?=clean($row['description'])?></strong>
             &nbsp;<span class="attn-pill" style="font-size:10px">Outstanding</span>
+            <?php else: ?>
+            <?=clean($row['description'])?>
             <?php endif; ?>
           <?php elseif($isRefund): ?>
             <i class="fa-solid fa-rotate-left fa-xs me-1 text-muted"></i>
@@ -514,10 +586,20 @@ include '../includes/header.php';
               onclick="openRefundModal(<?=(int)$row['id']?>,'<?=$invEsc?>',<?=number_format((float)$row['credit'],2,'.','')?>,<?=$alrRef?>,<?=$maxRef?>,<?=(int)($row['received_by'] ?? 0)?>)">
               <i class="fa-solid fa-rotate-left fa-xs" style="color:var(--danger)"></i>
             </button>
-          <?php elseif($isSvcChg && $isUnpaid): ?>
-            <button class="btn-icon danger" title="Delete Charge"
-              onclick="deleteCharge(<?=(int)$row['id']?>)">
-              <i class="fa-solid fa-trash fa-xs"></i>
+          <?php elseif($isSvcChg && $isUnpaid && isAdmin()): ?>
+            <button class="btn-icon danger" title="Void Charge"
+              onclick="openVoidServiceModal(<?=(int)$row['id']?>,'<?=htmlspecialchars($row['description'], ENT_QUOTES)?>',<?=number_format((float)$row['debit'],2,'.','')?>)">
+              <i class="fa-solid fa-file-circle-xmark fa-xs"></i>
+            </button>
+          <?php elseif($row['type']==='charge' && isAdmin() && money_is_pos($row['waivable'] ?? '0.00')): ?>
+            <button class="btn-icon danger" title="Void Rent Charge"
+              onclick="openVoidRentModal(<?=(int)$row['period_month']?>,<?=(int)$row['period_year']?>,<?=(int)($row['tenant_id'] ?? 0)?>,<?=$row['waivable']?>,'<?=htmlspecialchars($row['description'], ENT_QUOTES)?>')">
+              <i class="fa-solid fa-file-circle-xmark fa-xs"></i>
+            </button>
+          <?php elseif($isWaiver && isAdmin()): ?>
+            <button class="btn-icon" title="Restore this charge"
+              onclick="restoreWaiver('<?=$row['type']==='rent_waiver'?'rent':'service'?>',<?=(int)$row['id']?>)">
+              <i class="fa-solid fa-rotate-left fa-xs"></i>
             </button>
           <?php endif; ?>
         </td>
@@ -601,6 +683,93 @@ include '../includes/header.php';
   </div>
 </div>
 
+<!-- Void Charge Modal (single rent period or one service charge) -->
+<div class="modal fade" id="voidChargeModal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="fa-solid fa-file-circle-xmark me-2 text-danger"></i>Void Charge</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="voidType">
+        <input type="hidden" id="voidMonth">
+        <input type="hidden" id="voidYear">
+        <input type="hidden" id="voidTenant">
+        <input type="hidden" id="voidChargeId">
+        <div class="alert alert-info py-2 mb-3" id="voidChargeInfo" style="font-size:13px"></div>
+        <div class="mb-3">
+          <label class="form-label">Amount to Waive (₱) *</label>
+          <input type="number" step="0.01" min="0.01" class="form-control" id="voidAmount">
+          <div class="form-text" id="voidMaxHint"></div>
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Reason *</label>
+          <textarea class="form-control" id="voidReason" rows="2"
+                    placeholder="e.g. Advance rent applied, arrears written off on move-out..."></textarea>
+        </div>
+        <div class="alert alert-warning py-2 mb-0" style="font-size:12px">
+          <i class="fa-solid fa-circle-info me-1"></i>A waiver cancels what is still owed. No cash moves and no
+          income changes — collected payments are untouched. It is logged and can be restored.
+        </div>
+        <div id="voidMsg" style="display:none"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
+        <button class="btn btn-danger btn-sm" onclick="submitVoid()">
+          <i class="fa-solid fa-file-circle-xmark me-1"></i>Void Charge
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Bulk Void Modal — every waivable charge in the current unit + date range -->
+<div class="modal fade" id="bulkVoidModal" tabindex="-1">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="fa-solid fa-file-circle-xmark me-2 text-danger"></i>Void Charges</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="alert alert-warning py-2 mb-3" style="font-size:12.5px">
+          <i class="fa-solid fa-circle-info me-1"></i>Writes off what is still owed on the charges you tick —
+          for advance rent applied at move-out, or a departing tenant's arrears. No cash moves, no income
+          changes; every waiver is logged and can be restored from this ledger.
+        </div>
+        <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
+          <div class="d-flex gap-1">
+            <button class="btn btn-outline-secondary btn-sm" onclick="toggleAllWaivable(true)">Select all</button>
+            <button class="btn btn-outline-secondary btn-sm" onclick="toggleAllWaivable(false)">Clear</button>
+          </div>
+          <div style="font-size:13px">Total to waive: <strong class="num" id="bulkVoidTotal">₱0.00</strong></div>
+        </div>
+        <div id="bulkVoidList" class="mb-3"></div>
+        <div class="mb-2">
+          <label class="form-label">Reason *</label>
+          <textarea class="form-control" id="bulkVoidReason" rows="2"
+                    placeholder="e.g. 2 months advance rent applied on move-out"></textarea>
+        </div>
+        <div id="bulkVoidMsg" style="display:none"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
+        <button class="btn btn-danger btn-sm" onclick="submitBulkVoid()">
+          <i class="fa-solid fa-file-circle-xmark me-1"></i>Void Selected
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  // Charges the admin may still waive in the current unit + date range,
+  // computed server-side (the API re-validates every one of them on submit).
+  window.LASKIE_UNIT_ID  = <?= (int)$selUnit ?>;
+  window.LASKIE_WAIVABLE = <?= json_encode(isAdmin() ? $waivable : [], JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT) ?>;
+</script>
+
 <?php $extraJs = <<<'JS'
 <script>
 function esc(s) {
@@ -623,6 +792,10 @@ $(document).ready(function(){
   if (refundModalEl) {
     window.refundModal = new bootstrap.Modal(refundModalEl);
   }
+  var voidModalEl = document.getElementById('voidChargeModal');
+  if (voidModalEl) window.voidChargeModal = new bootstrap.Modal(voidModalEl);
+  var bulkVoidEl = document.getElementById('bulkVoidModal');
+  if (bulkVoidEl) window.bulkVoidModal = new bootstrap.Modal(bulkVoidEl);
 });
 
 function openRefundModal(paymentId, invoiceNo, amount, alreadyRefunded, maxRefund, cashierId) {
@@ -631,23 +804,144 @@ function openRefundModal(paymentId, invoiceNo, amount, alreadyRefunded, maxRefun
   var cashierSel = document.getElementById('refCashier');
   if (cashierId && cashierSel.querySelector('option[value="' + cashierId + '"]')) cashierSel.value = cashierId;
   document.getElementById('refPaymentInfo').innerHTML =
-    '<strong>' + esc(invoiceNo) + '</strong> &nbsp;·&nbsp; Original: <strong>₱' + fmt(amount) + '</strong>' +
-    (alreadyRefunded > 0 ? ' &nbsp;·&nbsp; Already refunded: <strong>₱' + fmt(alreadyRefunded) + '</strong>' : '');
+    '<strong>' + esc(invoiceNo) + '</strong> &nbsp;·&nbsp; Original: <strong>' + fmt(amount) + '</strong>' +
+    (alreadyRefunded > 0 ? ' &nbsp;·&nbsp; Already refunded: <strong>' + fmt(alreadyRefunded) + '</strong>' : '');
   document.getElementById('refAmount').value = maxRefund;
   document.getElementById('refAmount').max   = maxRefund;
-  document.getElementById('refMaxHint').textContent = 'Max refundable: ₱' + fmt(maxRefund);
+  document.getElementById('refMaxHint').textContent = 'Max refundable: ' + fmt(maxRefund);
   document.getElementById('refReason').value = '';
   document.getElementById('refMsg').style.display = 'none';
   window.refundModal.show();
 }
 
-function deleteCharge(id) {
-  confirmDelete('Delete this outstanding service charge? This will remove it from the account.', function() {
-    apiPost('api_payment.php', {action: 'delete_charge', id: id}, function(err, res) {
-      if (err || !res || !res.success) { showToast((res&&res.error)||'Failed.','error'); return; }
+// ── Charge waivers (admin write-offs) ───────────────────────────────────────
+// A waiver cancels an unpaid charge; it never touches cash or income. Rent
+// charges are virtual so they are waived by (period, tenant); service charges
+// are real rows so they are waived by id.
+function openVoidRentModal(month, year, tenantId, maxAmount, label) {
+  document.getElementById('voidType').value     = 'rent';
+  document.getElementById('voidMonth').value    = month;
+  document.getElementById('voidYear').value     = year;
+  document.getElementById('voidTenant').value   = tenantId || 0;
+  document.getElementById('voidChargeId').value = '';
+  document.getElementById('voidChargeInfo').innerHTML = '<strong>' + esc(label) + '</strong>';
+  var amt = document.getElementById('voidAmount');
+  amt.value = maxAmount; amt.max = maxAmount; amt.readOnly = false;
+  document.getElementById('voidMaxHint').textContent =
+    'Max waivable: ' + fmt(maxAmount) + ' (the unpaid part of this month). Lower it to waive only part.';
+  document.getElementById('voidReason').value = '';
+  document.getElementById('voidMsg').style.display = 'none';
+  window.voidChargeModal.show();
+}
+
+function openVoidServiceModal(chargeId, label, amount) {
+  document.getElementById('voidType').value     = 'service';
+  document.getElementById('voidChargeId').value = chargeId;
+  document.getElementById('voidChargeInfo').innerHTML = '<strong>' + esc(label) + '</strong>';
+  var amt = document.getElementById('voidAmount');
+  amt.value = amount; amt.readOnly = true;   // service charges void whole, never partly
+  document.getElementById('voidMaxHint').textContent = 'Service charges are voided in full.';
+  document.getElementById('voidReason').value = '';
+  document.getElementById('voidMsg').style.display = 'none';
+  window.voidChargeModal.show();
+}
+
+function submitVoid() {
+  var type   = document.getElementById('voidType').value;
+  var reason = document.getElementById('voidReason').value.trim();
+  var amount = parseFloat(document.getElementById('voidAmount').value);
+  var msgEl  = document.getElementById('voidMsg');
+  var fail   = function(t) { msgEl.className = 'alert alert-danger mt-2'; msgEl.textContent = t; msgEl.style.display = ''; };
+
+  if (!reason) return fail('Reason is required.');
+  if (type === 'rent' && (!amount || amount <= 0)) return fail('Enter a valid amount.');
+
+  var data = type === 'rent'
+    ? {action: 'void_rent_charge', unit_id: window.LASKIE_UNIT_ID,
+       period_month: document.getElementById('voidMonth').value,
+       period_year:  document.getElementById('voidYear').value,
+       tenant_id:    document.getElementById('voidTenant').value,
+       amount: amount, reason: reason}
+    : {action: 'delete_charge', id: document.getElementById('voidChargeId').value, reason: reason};
+
+  apiPost('api_payment.php', data, function(err, res) {
+    if (err || !res || !res.success) return fail((res && res.error) ? res.error : (err || 'Failed.'));
+    showToast(res.msg, 'success');
+    window.voidChargeModal.hide();
+    window.location.reload();
+  });
+}
+
+function restoreWaiver(type, id) {
+  confirmDelete('Restore this charge? The tenant will owe it again.', function() {
+    var action = type === 'rent' ? 'restore_rent_charge' : 'restore_charge';
+    apiPost('api_payment.php', {action: action, id: id}, function(err, res) {
+      if (err || !res || !res.success) { showToast((res && res.error) || 'Failed.', 'error'); return; }
       showToast(res.msg, 'success');
       window.location.reload();
     });
+  });
+}
+
+function openBulkVoidModal() {
+  var items = window.LASKIE_WAIVABLE || [];
+  var html  = '<table class="table table-sm mb-0" style="font-size:12.5px"><thead><tr>' +
+              '<th style="width:36px"></th><th>Charge</th><th class="text-end">Amount</th>' +
+              '</tr></thead><tbody>';
+  items.forEach(function(it, i) {
+    html += '<tr>' +
+      '<td><input type="checkbox" class="form-check-input waivable-chk" data-idx="' + i + '" ' +
+        'data-amount="' + (parseFloat(it.amount) || 0) + '" onchange="updateBulkVoidTotal()"></td>' +
+      '<td>' + esc(it.label) + '</td>' +
+      '<td class="text-end num fw-600">' + fmt(it.amount) + '</td>' +
+    '</tr>';
+  });
+  html += '</tbody></table>';
+  document.getElementById('bulkVoidList').innerHTML = items.length
+    ? html
+    : '<div class="empty-state"><p>Nothing left to void in this date range.</p></div>';
+  document.getElementById('bulkVoidReason').value = '';
+  document.getElementById('bulkVoidMsg').style.display = 'none';
+  updateBulkVoidTotal();
+  window.bulkVoidModal.show();
+}
+
+function toggleAllWaivable(on) {
+  document.querySelectorAll('.waivable-chk').forEach(function(c) { c.checked = !!on; });
+  updateBulkVoidTotal();
+}
+
+function updateBulkVoidTotal() {
+  var total = 0;
+  document.querySelectorAll('.waivable-chk:checked').forEach(function(c) {
+    total += parseFloat(c.dataset.amount) || 0;
+  });
+  document.getElementById('bulkVoidTotal').textContent = fmt(total);
+}
+
+function submitBulkVoid() {
+  var reason = document.getElementById('bulkVoidReason').value.trim();
+  var msgEl  = document.getElementById('bulkVoidMsg');
+  var fail   = function(t) { msgEl.className = 'alert alert-danger mt-2'; msgEl.textContent = t; msgEl.style.display = ''; };
+  var picked = [];
+
+  document.querySelectorAll('.waivable-chk:checked').forEach(function(c) {
+    var it = (window.LASKIE_WAIVABLE || [])[parseInt(c.dataset.idx)];
+    if (!it) return;
+    picked.push(it.type === 'rent'
+      ? {type: 'rent', period_month: it.month, period_year: it.year, tenant_id: it.tenant || 0}
+      : {type: 'service', id: it.id});
+  });
+
+  if (!picked.length) return fail('Select at least one charge.');
+  if (!reason)        return fail('Reason is required.');
+
+  apiPost('api_payment.php', {action: 'bulk_void_charges', unit_id: window.LASKIE_UNIT_ID,
+                              reason: reason, items: JSON.stringify(picked)}, function(err, res) {
+    if (err || !res || !res.success) return fail((res && res.error) ? res.error : (err || 'Failed.'));
+    showToast(res.msg, 'success');
+    window.bulkVoidModal.hide();
+    window.location.reload();
   });
 }
 

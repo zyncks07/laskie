@@ -776,8 +776,8 @@ function viewUnitPayments(unitId, unitName, month, year) {
             '<button class="btn btn-primary btn-sm py-0 px-2 me-1" style="font-size:11px" title="Collect payment" ' +
               'onclick="collectCharge(' + parseInt(c.id) + ',' + parseInt(unitId) + ',' + parseInt(c.service_type_id||0) + ',' + (parseFloat(c.amount)||0) + ',' + parseInt(c.period_month) + ',' + parseInt(c.period_year) + ')">' +
               '<i class="fa-solid fa-money-bill-wave fa-xs me-1"></i>Collect</button>' +
-            '<button class="btn-icon danger" title="Delete charge" onclick="deleteCharge(' + parseInt(c.id) + ')">' +
-              '<i class="fa-solid fa-trash fa-xs"></i></button>' +
+            '<button class="btn-icon danger" title="Void charge" onclick="deleteCharge(' + parseInt(c.id) + ')">' +
+              '<i class="fa-solid fa-file-circle-xmark fa-xs"></i></button>' +
           '</td>' +
         '</tr>';
       });
@@ -1127,9 +1127,15 @@ function collectCharge(chargeId, unitId, serviceTypeId, amount, month, year) {
   }, 300);
 }
 
+// Voiding (not deleting): the charge row stays for the audit trail and can be
+// restored from the Statement of Account. A reason is required.
 function deleteCharge(chargeId) {
-  confirmDelete('Delete this outstanding service charge?', function() {
-    apiPost('api_payment.php', {action: 'delete_charge', id: chargeId}, function(err, res) {
+  confirmDelete('Void this outstanding service charge? It stays on record and can be restored from the SoA.', function() {
+    var reason = window.prompt('Reason for voiding this charge:');
+    if (reason === null) return;
+    reason = reason.trim();
+    if (!reason) { showToast('Reason is required.', 'error'); return; }
+    apiPost('api_payment.php', {action: 'delete_charge', id: chargeId, reason: reason}, function(err, res) {
       if (err || !res || !res.success) { showToast((res&&res.error)||'Failed.','error'); return; }
       showToast(res.msg, 'success');
       loadSummary();
@@ -1155,7 +1161,7 @@ function openRefundModal(paymentId, invoiceNo, amount, alreadyRefunded, cashierI
     (alreadyRefunded > 0 ? ' &nbsp;·&nbsp; Already refunded: <strong>' + fmt(alreadyRefunded) + '</strong>' : '');
   document.getElementById('refAmount').value = maxRefund.toFixed(2);
   document.getElementById('refAmount').max   = maxRefund.toFixed(2);
-  document.getElementById('refMaxHint').textContent = 'Max refundable: ₱' + fmt(maxRefund);
+  document.getElementById('refMaxHint').textContent = 'Max refundable: ' + fmt(maxRefund);
   document.getElementById('refReason').value = '';
   document.getElementById('refMsg').style.display = 'none';
   refundModal.show();

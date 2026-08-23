@@ -12,6 +12,72 @@ header('Content-Type: application/json');
 // by config/functions.php when JSON_RESPONSE is defined.
 $action = $_POST['action'] ?? $_GET['action'] ?? '';
 
+// ── Charge Waivers (admin write-offs) ─────────────────────────
+// Waiving is NOT a refund: no cash moves and no income changes, because a rent
+// or service charge was never revenue — only collected payments are. A waiver
+// just cancels what the tenant still owes, with a reason and an audit row.
+//
+// Rent charges are virtual (recomputed per render), so waiving one INSERTs a
+// rent_charge_voids row. Service charges are real rows, so they soft-void in
+// place. Both are reversible from the SoA.
+
+/**
+ * Waive part or all of one virtual rent charge.
+ * Caller owns the transaction and must already hold the unit row lock.
+ * $amount null/'' means "the whole waivable remainder".
+ * Returns [ok(bool), message(string), amount(string)].
+ */
+function voidRentPeriod(PDO $pdo, int $unitId, int $month, int $year, ?int $tenantId, $amount, string $reason): array {
+    if ($month < 1 || $month > 12 || $year < 2000 || $year > 2100) return [false, 'Invalid period.', '0.00'];
+
+    $g     = getGrossRentCharge($pdo, $unitId, $month, $year, $tenantId);
+    $label = date('F Y', mktime(0, 0, 0, $month, 1, $year));
+    if (!money_is_pos($g['gross'])) return [false, "No rent charge exists for $label.", '0.00'];
+
+    $paid   = getRentPaidForPeriod($pdo, $unitId, $month, $year);
+    $voided = getRentVoidedForPeriod($pdo, $unitId, $month, $year);
+    $max    = waivableRent($g['gross'], $paid, $voided);
+    if (!money_is_pos($max)) {
+        return [false, "$label is already settled (paid or waived) — use Refund to reverse a payment.", '0.00'];
+    }
+
+    $amt = ($amount === null || $amount === '') ? $max : from_cents(to_cents($amount));
+    if (!money_is_pos($amt))  return [false, 'Waived amount must be greater than zero.', '0.00'];
+    if (money_gt($amt, $max)) return [false, "Maximum waivable amount for $label is " . money($max) . '.', '0.00'];
+
+    $pdo->prepare(
+        "INSERT INTO rent_charge_voids (unit_id,tenant_id,period_month,period_year,amount,reason,voided_by)
+         VALUES (?,?,?,?,?,?,?)"
+    )->execute([$unitId, $tenantId ?: $g['tenant_id'], $month, $year, $amt, $reason, $_SESSION['user']['id']]);
+
+    logActivity($pdo, 'VOID_RENT_CHARGE', 'Charges',
+        'Waived ' . money($amt) . " rent for unit #$unitId $label"
+        . ($g['tenant_name'] ? " ({$g['tenant_name']})" : '') . ": $reason");
+
+    return [true, "Rent for $label waived (" . money($amt) . ').', $amt];
+}
+
+/**
+ * Soft-void one unpaid service charge (unit_charges row).
+ * Caller owns the transaction. Returns [ok(bool), message(string), amount(string)].
+ */
+function voidServiceCharge(PDO $pdo, int $chargeId, string $reason): array {
+    $chk = $pdo->prepare("SELECT * FROM unit_charges WHERE id=? FOR UPDATE");
+    $chk->execute([$chargeId]);
+    $c = $chk->fetch();
+    if (!$c)                        return [false, 'Charge not found.', '0.00'];
+    if ($c['payment_id'] !== null)  return [false, 'Cannot void a paid charge. Refund the payment first.', '0.00'];
+    if (!empty($c['voided_at']))    return [false, 'That charge is already voided.', '0.00'];
+
+    $pdo->prepare("UPDATE unit_charges SET voided_at=NOW(), voided_by=?, void_reason=? WHERE id=? AND payment_id IS NULL")
+        ->execute([$_SESSION['user']['id'], $reason, $chargeId]);
+
+    logActivity($pdo, 'VOID_CHARGE', 'Charges',
+        "Voided service charge #{$chargeId}: {$c['description']} " . money($c['amount']) . " — $reason");
+
+    return [true, 'Service charge voided.', from_cents(to_cents($c['amount']))];
+}
+
 // ── Record Payment ────────────────────────────────────────────
 if ($action === 'save_payment') {
     $id          = (int)($_POST['id'] ?? 0);
@@ -450,7 +516,7 @@ if ($action === 'get_unit_payments') {
     $unit->execute([$unitId]);
     $unitData = $unit->fetch();
 
-    $cq = $pdo->prepare("SELECT uc.*, st.name as service_name FROM unit_charges uc LEFT JOIN service_types st ON uc.service_type_id=st.id WHERE uc.unit_id=? AND uc.period_month=? AND uc.period_year=? ORDER BY uc.charge_date ASC, uc.created_at ASC");
+    $cq = $pdo->prepare("SELECT uc.*, st.name as service_name FROM unit_charges uc LEFT JOIN service_types st ON uc.service_type_id=st.id WHERE uc.unit_id=? AND uc.period_month=? AND uc.period_year=? AND uc.voided_at IS NULL ORDER BY uc.charge_date ASC, uc.created_at ASC");
     $cq->execute([$unitId, $month, $year]);
     $charges = $cq->fetchAll();
 
@@ -478,7 +544,7 @@ if ($action === 'monthly_summary') {
             COALESCE(SUM(CASE WHEN p.payment_type='rent' THEN p.amount - COALESCE(r.refsum,0) ELSE 0 END), 0)    as rent_paid,
             COALESCE(SUM(CASE WHEN p.payment_type='service' THEN p.amount - COALESCE(r.refsum,0) ELSE 0 END), 0) as service_paid,
             COALESCE(SUM(p.amount - COALESCE(r.refsum,0)), 0) as total_paid,
-            COALESCE((SELECT SUM(uc.amount) FROM unit_charges uc WHERE uc.unit_id=ru.id AND uc.period_month=? AND uc.period_year=? AND uc.payment_id IS NULL), 0) as outstanding_charges,
+            COALESCE((SELECT SUM(uc.amount) FROM unit_charges uc WHERE uc.unit_id=ru.id AND uc.period_month=? AND uc.period_year=? AND uc.payment_id IS NULL AND uc.voided_at IS NULL), 0) as outstanding_charges,
             (SELECT u2.full_name FROM payments p2 LEFT JOIN users u2 ON p2.received_by=u2.id WHERE p2.unit_id=ru.id AND p2.period_month=? AND p2.period_year=? AND p2.deleted_at IS NULL AND p2.status != 'voided' ORDER BY p2.created_at DESC LIMIT 1) as last_cashier
         FROM rental_units ru
         LEFT JOIN tenants t  ON t.unit_id=ru.id AND t.status='active'
@@ -489,6 +555,10 @@ if ($action === 'monthly_summary') {
     ");
     $rows->execute([$month, $year, $month, $year, $month, $year]);
     $summary = $rows->fetchAll();
+
+    // Admin rent waivers for this period, keyed by unit_id — one query for the
+    // whole grid rather than one per unit inside the loop below.
+    $rentVoids = getRentVoidTotals($pdo, $month, $year);
 
     // Compute status + balance per unit (cents math — no float drift)
     foreach ($summary as &$row) {
@@ -503,12 +573,17 @@ if ($action === 'monthly_summary') {
         $rate                = getRateForMonth($pdo, (int)$row['id'], (float)$row['monthly_rate'], $month, $year);
         $row['monthly_rate'] = number_format($rate, 2, '.', ''); // reflect history-adjusted rate in the display column
         $expected     = prorateFirstMonth($rate, (int)$row['due_day'], $row['contract_start'] ?? null, $month, $year);
+        $waived       = $rentVoids[(int)$row['id']] ?? '0.00';
+        $expected     = money_max('0.00', money_sub($expected, $waived));
+        $row['rent_waived']     = $waived;
         $paid         = $row['rent_paid'];
         $unpaidRent   = money_max('0.00', money_sub($expected, $paid));
         $balance      = money_add($unpaidRent, $row['outstanding_charges']);
         $row['expected_charge'] = $expected;
         $row['balance'] = $balance;
-        if (!money_is_pos($paid)) {
+        // money_is_pos($expected) guard: a fully-waived month owes nothing, so it
+        // must not render as overdue just because no payment was collected.
+        if (!money_is_pos($paid) && money_is_pos($expected)) {
             $daysInMo  = (int)date('t', mktime(0,0,0,$month,1,$year));
             $dueTs     = mktime(0,0,0,$month,min((int)$row['due_day'],$daysInMo),$year);
             $row['pay_status'] = (time() > $dueTs) ? 'red' : 'amber';
@@ -664,19 +739,143 @@ if ($action === 'save_charge') {
     }
 }
 
-// ── Delete Service Charge (Unpaid only) ───────────────────────
-if ($action === 'delete_charge') {
+// ── Void Service Charge (Unpaid only) ─────────────────────────
+// Soft void, not a DELETE: the row stays for the audit trail and can be
+// restored (restore_charge). Action name kept so existing callers keep working.
+if ($action === 'delete_charge' || $action === 'void_charge') {
+    requireAdmin();
+    $chargeId = (int)($_POST['id'] ?? 0);
+    $reason   = trim($_POST['reason'] ?? '');
+    if (!$chargeId)     jsonErr('Charge ID required.');
+    if ($reason === '') jsonErr('Reason is required.');
+
+    $pdo->beginTransaction();
+    try {
+        [$ok, $msg] = voidServiceCharge($pdo, $chargeId, $reason);
+        if (!$ok) { $pdo->rollBack(); jsonErr($msg); }
+        $pdo->commit();
+    } catch (Throwable $e) {
+        if ($pdo->inTransaction()) $pdo->rollBack();
+        throw $e;
+    }
+    jsonOk(['msg' => $msg]);
+}
+
+// ── Void a Rent Charge ────────────────────────────────────────
+if ($action === 'void_rent_charge') {
+    requireAdmin();
+    $unitId   = (int)($_POST['unit_id'] ?? 0);
+    $month    = (int)($_POST['period_month'] ?? 0);
+    $year     = (int)($_POST['period_year']  ?? 0);
+    $tenantId = (int)($_POST['tenant_id'] ?? 0) ?: null;
+    $amount   = trim((string)($_POST['amount'] ?? ''));
+    $reason   = trim($_POST['reason'] ?? '');
+
+    if (!$unitId)       jsonErr('Rental unit is required.');
+    if ($reason === '') jsonErr('Reason is required.');
+
+    // Lock the unit row so two concurrent waivers can't both pass the cap check
+    // off the same snapshot and over-waive the period (same guard style as
+    // process_refund locking the cashier's user row).
+    $pdo->beginTransaction();
+    try {
+        $pdo->prepare("SELECT id FROM rental_units WHERE id=? FOR UPDATE")->execute([$unitId]);
+        [$ok, $msg] = voidRentPeriod($pdo, $unitId, $month, $year, $tenantId, $amount, $reason);
+        if (!$ok) { $pdo->rollBack(); jsonErr($msg); }
+        $pdo->commit();
+    } catch (Throwable $e) {
+        if ($pdo->inTransaction()) $pdo->rollBack();
+        throw $e;
+    }
+    jsonOk(['msg' => $msg]);
+}
+
+// ── Restore a Voided Rent Charge ──────────────────────────────
+if ($action === 'restore_rent_charge') {
+    requireAdmin();
+    $voidId = (int)($_POST['id'] ?? 0);
+    if (!$voidId) jsonErr('Waiver ID required.');
+
+    $chk = $pdo->prepare("SELECT * FROM rent_charge_voids WHERE id=?");
+    $chk->execute([$voidId]);
+    $v = $chk->fetch();
+    if (!$v)                        jsonErr('Waiver not found.');
+    if (!empty($v['restored_at']))  jsonErr('That waiver has already been restored.');
+
+    $pdo->prepare("UPDATE rent_charge_voids SET restored_at=NOW(), restored_by=? WHERE id=? AND restored_at IS NULL")
+        ->execute([$_SESSION['user']['id'], $voidId]);
+
+    $label = date('F Y', mktime(0, 0, 0, (int)$v['period_month'], 1, (int)$v['period_year']));
+    logActivity($pdo, 'RESTORE_RENT_CHARGE', 'Charges',
+        'Restored ' . money($v['amount']) . " waived rent for unit #{$v['unit_id']} $label (waiver #$voidId)");
+
+    jsonOk(['msg' => "Rent charge for $label restored."]);
+}
+
+// ── Restore a Voided Service Charge ───────────────────────────
+if ($action === 'restore_charge') {
     requireAdmin();
     $chargeId = (int)($_POST['id'] ?? 0);
     if (!$chargeId) jsonErr('Charge ID required.');
+
     $chk = $pdo->prepare("SELECT * FROM unit_charges WHERE id=?");
     $chk->execute([$chargeId]);
     $c = $chk->fetch();
-    if (!$c) jsonErr('Charge not found.');
-    if ($c['payment_id'] !== null) jsonErr('Cannot delete a paid charge. Use refund to reverse the payment.');
-    $pdo->prepare("DELETE FROM unit_charges WHERE id=?")->execute([$chargeId]);
-    logActivity($pdo,'DELETE_CHARGE','Charges',"Deleted service charge #{$chargeId}: {$c['description']} ₱{$c['amount']}");
-    jsonOk(['msg' => 'Service charge deleted.']);
+    if (!$c)                    jsonErr('Charge not found.');
+    if (empty($c['voided_at'])) jsonErr('That charge is not voided.');
+
+    $pdo->prepare("UPDATE unit_charges SET voided_at=NULL, voided_by=NULL, void_reason=NULL WHERE id=?")
+        ->execute([$chargeId]);
+    logActivity($pdo, 'RESTORE_CHARGE', 'Charges',
+        "Restored voided service charge #{$chargeId}: {$c['description']} " . money($c['amount']));
+
+    jsonOk(['msg' => 'Service charge restored.']);
+}
+
+// ── Bulk Void (SoA "Void Charges" modal) ──────────────────────
+// items: JSON list of {type:'rent',period_month,period_year,tenant_id?} and
+// {type:'service',id}. Every item is re-validated through the same helpers the
+// single-item actions use — the client's amounts are never trusted.
+if ($action === 'bulk_void_charges') {
+    requireAdmin();
+    $unitId = (int)($_POST['unit_id'] ?? 0);
+    $reason = trim($_POST['reason'] ?? '');
+    $items  = json_decode($_POST['items'] ?? '[]', true) ?: [];
+
+    if (!$unitId)       jsonErr('Rental unit is required.');
+    if ($reason === '') jsonErr('Reason is required.');
+    if (!$items)        jsonErr('Select at least one charge to void.');
+    if (count($items) > 200) jsonErr('Too many charges selected at once (max 200).');
+
+    $done = 0; $totalWaived = '0.00'; $skipped = [];
+    $pdo->beginTransaction();
+    try {
+        $pdo->prepare("SELECT id FROM rental_units WHERE id=? FOR UPDATE")->execute([$unitId]);
+        foreach ($items as $it) {
+            $type = $it['type'] ?? '';
+            if ($type === 'rent') {
+                [$ok, $msg, $amt] = voidRentPeriod(
+                    $pdo, $unitId, (int)($it['period_month'] ?? 0), (int)($it['period_year'] ?? 0),
+                    (int)($it['tenant_id'] ?? 0) ?: null, null, $reason
+                );
+            } elseif ($type === 'service') {
+                [$ok, $msg, $amt] = voidServiceCharge($pdo, (int)($it['id'] ?? 0), $reason);
+            } else {
+                $ok = false; $msg = 'Unknown charge type.'; $amt = '0.00';
+            }
+            if ($ok) { $done++; $totalWaived = money_add($totalWaived, $amt); }
+            else     { $skipped[] = $msg; }
+        }
+        $pdo->commit();
+    } catch (Throwable $e) {
+        if ($pdo->inTransaction()) $pdo->rollBack();
+        throw $e;
+    }
+
+    if (!$done) jsonErr($skipped ? implode(' ', array_slice($skipped, 0, 3)) : 'Nothing was voided.');
+    $msg = "$done charge" . ($done !== 1 ? 's' : '') . ' voided — ' . money($totalWaived) . ' waived.';
+    if ($skipped) $msg .= ' ' . count($skipped) . ' skipped.';
+    jsonOk(['msg' => $msg, 'voided' => $done, 'total' => $totalWaived, 'skipped' => $skipped]);
 }
 
 // ── Get Refunds for a Payment ─────────────────────────────────

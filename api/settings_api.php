@@ -339,6 +339,7 @@ switch ($action) {
         $tables = [
             'refunds',
             'cash_transactions',
+            'rent_charge_voids',
             'unit_charges',
             'unit_rate_history',
             'payments',

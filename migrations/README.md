@@ -35,3 +35,5 @@ done
 | 007 | `007_add_user_avatar.sql` | Add `users.avatar_path` for uploaded profile pictures |
 | 008 | `008_schema_fixes.sql` | `refunds.refunded_by` nullability + `ON DELETE SET NULL`; schema-consistency fixes |
 | 009 | `009_add_vault_requests_notifications.sql` | Add `vault_requests` + `notifications` for the vault-cash request/approval + in-app notification feature |
+| 010 | `010_add_payment_receipt.sql` | Add `payments.receipt_path` / `payments.receipt_url` for proof-of-payment attachments |
+| 011 | `011_add_charge_voids.sql` | Add `rent_charge_voids` + `unit_charges.voided_at/voided_by/void_reason` for admin charge waivers |
