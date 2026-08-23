@@ -20,6 +20,12 @@ Options -Indexes +FollowSymLinks
 
 <IfModule mod_rewrite.c>
     RewriteEngine On
+    # Block the Git metadata dir. The <FilesMatch "^\."> rule below only matches
+    # dot-prefixed *filenames* (e.g. /.env); a request to /.git/HEAD has the
+    # non-dot final segment "HEAD", so it slips past FilesMatch. Block the whole
+    # path here so the repo (full source + history) can't be reconstructed via
+    # git-dumper. Authoritative block lives in the vhost <DirectoryMatch>.
+    RewriteRule "(^|/)\.git"    - [F,L]
     # Block server-only directories. vendor/ ships PHPUnit + sebastian source
     # files; tests/ ships fixtures and bootstrap; migrations/ holds DDL we'd
     # rather not advertise; uploads/ is data, not code. .deploy_credentials
@@ -30,6 +36,13 @@ Options -Indexes +FollowSymLinks
     RewriteRule ^tests/         - [F,L]
     RewriteRule ^migrations/    - [F,L]
     RewriteRule ^scripts/       - [F,L]
+
+    # Gate uploaded files behind a login (audit finding W5-1). Every
+    # /uploads/<path> request is internally rewritten to file_gate.php, which
+    # calls requireLogin() before streaming the file. No [R] → the URL the
+    # browser sees is unchanged; data-stored /uploads/... paths keep working.
+    # file_gate.php is not under uploads/, so the rewrite can't loop.
+    RewriteRule ^uploads/(.+)$  file_gate.php?p=$1 [L,QSA]
 </IfModule>
 
 # Block dotfiles (no extension, leading dot) and the package manifests that
