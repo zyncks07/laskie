@@ -226,7 +226,12 @@ if ($action === 'save_payment') {
                     $stRow->execute([$serviceId]);
                     $stName  = $stRow->fetchColumn() ?: 'Service';
                     $chgDesc = $notes ?: $stName;
-                    $exist = $pdo->prepare("SELECT id FROM unit_charges WHERE unit_id=? AND service_type_id=? AND period_month=? AND period_year=? AND payment_id IS NULL AND source='pre_billed' LIMIT 1");
+                    // voided_at IS NULL: a waived charge is already settled and
+                    // carries an offsetting credit on the SoA. Linking a payment
+                    // to it would credit the tenant twice, so a fresh
+                    // auto_collected row is created instead. The same guard
+                    // applies to both restore paths below.
+                    $exist = $pdo->prepare("SELECT id FROM unit_charges WHERE unit_id=? AND service_type_id=? AND period_month=? AND period_year=? AND payment_id IS NULL AND voided_at IS NULL AND source='pre_billed' LIMIT 1");
                     $exist->execute([$unitId, $serviceId, $periodMonth, $periodYear]);
                     $existChargeId = $exist->fetchColumn();
                     if ($existChargeId) {
@@ -333,7 +338,7 @@ if ($action === 'restore_deleted_payment') {
                 ->execute([$cashUserId,'received',$p['amount'],$id,"Payment received: {$p['invoice_no']}",$p['payment_date']]);
         }
         if ($p['payment_type'] === 'service') {
-            $look = $pdo->prepare("SELECT id FROM unit_charges WHERE unit_id=? AND service_type_id=? AND period_month=? AND period_year=? AND payment_id IS NULL AND source='pre_billed' LIMIT 1");
+            $look = $pdo->prepare("SELECT id FROM unit_charges WHERE unit_id=? AND service_type_id=? AND period_month=? AND period_year=? AND payment_id IS NULL AND voided_at IS NULL AND source='pre_billed' LIMIT 1");
             $look->execute([$p['unit_id'], $p['service_type_id'], $p['period_month'], $p['period_year']]);
             $existChargeId = $look->fetchColumn();
             $alreadyLinked = $pdo->prepare("SELECT id FROM unit_charges WHERE payment_id=? LIMIT 1");
@@ -456,7 +461,7 @@ if ($action === 'restore_payment') {
         // existing pre_billed outstanding charge for the same period; if none,
         // recreate the auto_collected row that void_payment deleted.
         if ($p['payment_type'] === 'service') {
-            $look = $pdo->prepare("SELECT id FROM unit_charges WHERE unit_id=? AND service_type_id=? AND period_month=? AND period_year=? AND payment_id IS NULL AND source='pre_billed' LIMIT 1");
+            $look = $pdo->prepare("SELECT id FROM unit_charges WHERE unit_id=? AND service_type_id=? AND period_month=? AND period_year=? AND payment_id IS NULL AND voided_at IS NULL AND source='pre_billed' LIMIT 1");
             $look->execute([$p['unit_id'], $p['service_type_id'], $p['period_month'], $p['period_year']]);
             $existChargeId = $look->fetchColumn();
             if ($existChargeId) {

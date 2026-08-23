@@ -332,7 +332,7 @@ CSRF, idempotency, `.env` config, composite indexes, daily backup, SRI hashes,
 the files/helpers each one shipped. Still open:
 
 8. **Rewrite non-sargable date filters** — **done.** Every date *filter* in the app now uses a half-open range via `monthRange()` / `yearRange()`: `dashboard.php`, `api/expenses_api.php`, `api/cash_api.php`, `api/unit_chart_api.php`, `my_summary.php`, `admin/logs.php`, `admin/vault.php` (`get_logs` + charts) and `seed_spreadsheet.php`. The `YEAR()` / `MONTH()` calls that remain are **not** filters and are intentionally left alone — they are either `SELECT` projections (`MONTH(x) AS period_month` in `admin/transactions.php`, `MONTH(x) AS mo` in the vault chart, `MONTH(x) AS m` in `dashboard.php`) or `SELECT DISTINCT YEAR(...)` queries that only populate year dropdowns, which have no index to hit anyway. Verify with `grep -rn "YEAR(\|MONTH(" --include=*.php . | grep -v vendor` before re-opening this item.
-9. **PHPUnit tests for accounting math** — _suite shipped (69 unit + 45 integration; see `tests/`)._ Worth adding next: tests covering void/restore of `auto_collected` service payments (regression for the phantom-charge fix in §13).
+9. **PHPUnit tests for accounting math** — **done.** 69 unit + 56 integration (see `tests/`), including `ServiceChargeLifecycleTest` which pins the phantom-charge invariant: an `auto_collected` charge exists **iff** its payment is live, while a `pre_billed` charge always survives and merely detaches. It covers void/restore, soft-delete/restore, purge, and repeated cycles for both sources.
 
 > For a record of past bug-fix sprints, feature work, and audit sessions, read
 > `git log` and the project memory files (`bug_audit_coverage`,
