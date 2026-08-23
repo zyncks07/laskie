@@ -65,7 +65,7 @@
 │   ├── accounts.php       # User CRUD
 │   ├── tenants.php
 │   ├── units.php          # Units + unit_types + service_types + rate history
-│   ├── transactions.php   # Soft-deleted / voided payments — restore UI
+│   ├── transactions.php   # All transactions + trash; voided payments, charge waivers — restore UI
 │   ├── requests.php       # Review/approve vault cash requests (approve auto-issues vault_return)
 │   ├── vault.php          # Dividend recipients, distributions, returns
 │   ├── logs.php           # system_logs audit viewer
@@ -331,8 +331,8 @@ CSRF, idempotency, `.env` config, composite indexes, daily backup, SRI hashes,
 `BASE_URL`, vendor-update path) are **done** — see `git log` for the commits and
 the files/helpers each one shipped. Still open:
 
-8. **Rewrite non-sargable date filters** — _partially done._ `dashboard.php` (rev/exp aggregates), `api/expenses_api.php list_expenses`, `api/cash_api.php list_transactions`, and `api/unit_chart_api.php` all use `monthRange()` / `yearRange()` helpers now. Still using `YEAR()` / `MONTH()` predicates: `my_summary.php`, `admin/logs.php`, `admin/vault.php` (get_logs query + chart queries + year-list UNION), and a few `SELECT DISTINCT YEAR(...)` calls that exist only to populate year dropdowns (low impact). Convert the remaining filter predicates; leave the DISTINCT-year ones — they have no index to hit anyway.
-9. **PHPUnit tests for accounting math** — _suite shipped (59 unit + integration; see `tests/`)._ Worth adding next: tests covering void/restore of `auto_collected` service payments (regression for the phantom-charge fix in §13).
+8. **Rewrite non-sargable date filters** — **done.** Every date *filter* in the app now uses a half-open range via `monthRange()` / `yearRange()`: `dashboard.php`, `api/expenses_api.php`, `api/cash_api.php`, `api/unit_chart_api.php`, `my_summary.php`, `admin/logs.php`, `admin/vault.php` (`get_logs` + charts) and `seed_spreadsheet.php`. The `YEAR()` / `MONTH()` calls that remain are **not** filters and are intentionally left alone — they are either `SELECT` projections (`MONTH(x) AS period_month` in `admin/transactions.php`, `MONTH(x) AS mo` in the vault chart, `MONTH(x) AS m` in `dashboard.php`) or `SELECT DISTINCT YEAR(...)` queries that only populate year dropdowns, which have no index to hit anyway. Verify with `grep -rn "YEAR(\|MONTH(" --include=*.php . | grep -v vendor` before re-opening this item.
+9. **PHPUnit tests for accounting math** — _suite shipped (69 unit + 45 integration; see `tests/`)._ Worth adding next: tests covering void/restore of `auto_collected` service payments (regression for the phantom-charge fix in §13).
 
 > For a record of past bug-fix sprints, feature work, and audit sessions, read
 > `git log` and the project memory files (`bug_audit_coverage`,

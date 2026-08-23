@@ -147,8 +147,76 @@ if (!$showTrash && ((!$typeFilter || $typeFilter === 'vault_return') && !$unitFi
     $transactions = array_merge($transactions, $q->fetchAll());
 }
 
+// ── Charge waivers (admin write-offs) ─────────────────────────
+// Rent waivers live in rent_charge_voids; service-charge voids are soft-void
+// columns on unit_charges. Both are reversals, not money movements, so they are
+// listed for audit but kept out of the Total Amount figure below.
+// Filtered on voided_at (a DATETIME) with a half-open range so the index is
+// usable — same shape as the deleted_at filters above.
+$waiverTotal = '0.00';
+if (!$showTrash && (!$typeFilter || $typeFilter === 'waiver')) {
+    $vFrom = $fromDate . ' 00:00:00';
+    $vTo   = date('Y-m-d', strtotime($toDate . ' +1 day')) . ' 00:00:00';
+
+    $w   = ['rcv.restored_at IS NULL', 'rcv.voided_at >= ?', 'rcv.voided_at < ?'];
+    $par = [$vFrom, $vTo];
+    if ($unitFilter) { $w[] = 'rcv.unit_id=?';  $par[] = $unitFilter; }
+    if ($userFilter) { $w[] = 'rcv.voided_by=?'; $par[] = $userFilter; }
+    $q = $pdo->prepare("
+        SELECT rcv.id, DATE(rcv.voided_at) AS tx_date, 'rent_void' AS tx_type,
+               '' AS reference,
+               rcv.reason AS tx_notes,
+               COALESCE(ru.unit_name, '—') AS unit_name, rcv.amount, 'waived' AS status, NULL AS deleted_at,
+               u.full_name AS recorded_by, rcv.voided_at AS encode_at,
+               rcv.period_month, rcv.period_year, rcv.unit_id
+        FROM rent_charge_voids rcv
+        LEFT JOIN rental_units ru ON rcv.unit_id   = ru.id
+        LEFT JOIN users u         ON rcv.voided_by = u.id
+        WHERE " . implode(' AND ', $w) . "
+        ORDER BY rcv.voided_at DESC
+    ");
+    $q->execute($par);
+    foreach ($q->fetchAll() as $row) {
+        // Period label built here rather than in SQL — period_month/year are
+        // plain ints, not a date column MONTHNAME() could read.
+        $row['reference'] = 'Rent waived — '
+            . date('F Y', mktime(0, 0, 0, (int)$row['period_month'], 1, (int)$row['period_year']));
+        $transactions[] = $row;
+        $waiverTotal    = money_add($waiverTotal, $row['amount']);
+    }
+
+    $w   = ['uc.voided_at IS NOT NULL', 'uc.voided_at >= ?', 'uc.voided_at < ?'];
+    $par = [$vFrom, $vTo];
+    if ($unitFilter) { $w[] = 'uc.unit_id=?';  $par[] = $unitFilter; }
+    if ($userFilter) { $w[] = 'uc.voided_by=?'; $par[] = $userFilter; }
+    $q = $pdo->prepare("
+        SELECT uc.id, DATE(uc.voided_at) AS tx_date, 'charge_void' AS tx_type,
+               CONCAT('Charge voided — ', COALESCE(st.name, uc.description)) AS reference,
+               uc.void_reason AS tx_notes,
+               COALESCE(ru.unit_name, '—') AS unit_name, uc.amount, 'waived' AS status, NULL AS deleted_at,
+               u.full_name AS recorded_by, uc.voided_at AS encode_at,
+               uc.period_month, uc.period_year, uc.unit_id
+        FROM unit_charges uc
+        LEFT JOIN service_types st ON uc.service_type_id = st.id
+        LEFT JOIN rental_units ru  ON uc.unit_id         = ru.id
+        LEFT JOIN users u          ON uc.voided_by       = u.id
+        WHERE " . implode(' AND ', $w) . "
+        ORDER BY uc.voided_at DESC
+    ");
+    $q->execute($par);
+    foreach ($q->fetchAll() as $row) {
+        $transactions[] = $row;
+        $waiverTotal    = money_add($waiverTotal, $row['amount']);
+    }
+}
+
 usort($transactions, fn($a, $b) => strcmp($b['tx_date'], $a['tx_date']));
-$grandTotal = money_sum(array_column($transactions, 'amount'));
+// Waivers cancel a receivable rather than moving cash, so they are excluded
+// from the money total and reported on their own strip card instead.
+$grandTotal = money_sum(array_map(
+    fn($t) => in_array($t['tx_type'], ['rent_void', 'charge_void'], true) ? '0.00' : $t['amount'],
+    $transactions
+));
 
 logActivity($pdo, 'VIEW_TRANSACTIONS', 'Transactions', "Viewed transaction manager ({$fromDate} to {$toDate})");
 include '../includes/header.php';
@@ -160,12 +228,15 @@ function typeBadge(string $type): string {
         'expense'    => '<span class="attn-pill">Expense</span>',
         'remittance' => '<span class="muted-pill">Remittance</span>',
         'vault_return' => '<span class="ok-pill">Vault&rarr;User</span>',
+        'rent_void'    => '<span class="muted-pill">Rent Waived</span>',
+        'charge_void'  => '<span class="muted-pill">Charge Voided</span>',
         default      => '<span class="muted-pill">' . htmlspecialchars($type) . '</span>',
     };
 }
 
 function statusBadge(string $type, string $status, ?string $deletedAt = null): string {
     if ($deletedAt) return '<span class="attn-pill" style="font-size:10px">Deleted</span>';
+    if ($type === 'rent_void' || $type === 'charge_void') return '<span class="muted-pill" style="font-size:10px">Waived</span>';
     if ($type !== 'payment') return '<span class="ok-pill" style="font-size:10px">Active</span>';
     return match($status) {
         'paid'               => '<span class="ok-pill" style="font-size:10px">Paid</span>',
@@ -220,6 +291,7 @@ function statusBadge(string $type, string $status, ?string $deletedAt = null): s
           <option value="expense"    <?= $typeFilter==='expense'    ?'selected':'' ?>>Expenses</option>
           <option value="remittance"   <?= $typeFilter==='remittance'   ?'selected':'' ?>>Remittances</option>
           <option value="vault_return" <?= $typeFilter==='vault_return' ?'selected':'' ?>>Vault Returns to Users</option>
+          <option value="waiver"       <?= $typeFilter==='waiver'       ?'selected':'' ?>>Charge Waivers</option>
         </select>
       </div>
       <div class="col-6 col-md-auto">
@@ -261,6 +333,13 @@ function statusBadge(string $type, string $status, ?string $deletedAt = null): s
     <div class="section-label mb-1">Total Amount</div>
     <div class="fw-700 num" style="font-size:18px"><?= money($grandTotal) ?></div>
   </div>
+  <?php if (money_is_pos($waiverTotal ?? '0.00')): ?>
+  <div class="card py-2 px-3" style="min-width:150px">
+    <div class="section-label mb-1">Waived</div>
+    <div class="fw-700 num" style="font-size:18px"><?= money($waiverTotal) ?></div>
+    <div class="stat-sub">written off, no cash</div>
+  </div>
+  <?php endif; ?>
 </div>
 
 <!-- Transaction Table -->
@@ -283,7 +362,8 @@ function statusBadge(string $type, string $status, ?string $deletedAt = null): s
       <?php
         $isDeleted  = !empty($tx['deleted_at']);
         $isVoided   = $tx['tx_type'] === 'payment' && $tx['status'] === 'voided' && !$isDeleted;
-        $rowClass   = ($isVoided || $isDeleted) ? ' class="row-voided"' : '';
+        $isWaiver   = in_array($tx['tx_type'], ['rent_void', 'charge_void'], true);
+        $rowClass   = ($isVoided || $isDeleted || $isWaiver) ? ' class="row-voided"' : '';
         $amtClass   = $tx['tx_type'] === 'expense' ? 'delta-neg' : '';
         $refEsc     = clean($tx['reference'] ?? '');
 
@@ -293,6 +373,11 @@ function statusBadge(string $type, string $status, ?string $deletedAt = null): s
             'expense'      => '../expenses.php',
             'remittance'   => '../cash.php',
             'vault_return' => '../admin/vault.php',
+            // Land on the SoA covering the waived period — that is where the
+            // offsetting credit line and the Restore button live.
+            'rent_void', 'charge_void' => '../payments/history.php?unit_id=' . (int)$tx['unit_id']
+                . '&date_from=' . sprintf('%04d-%02d-01', (int)$tx['period_year'], (int)$tx['period_month'])
+                . '&date_to='   . date('Y-m-t', mktime(0, 0, 0, (int)$tx['period_month'], 1, (int)$tx['period_year'])),
             default        => '#',
         };
       ?>
@@ -326,7 +411,11 @@ function statusBadge(string $type, string $status, ?string $deletedAt = null): s
             <!-- Active mode: Navigate + Void/Restore + Delete -->
             <a href="<?= $navUrl ?>" target="_blank" class="btn-icon" title="Go to source page">
               <i class="fa-solid fa-arrow-up-right-from-square fa-xs"></i></a>
-            <?php if ($tx['tx_type'] === 'payment'): ?>
+            <?php if ($isWaiver): ?>
+              <button class="btn-icon" title="Restore this charge (the tenant owes it again)"
+                onclick="restoreWaiver('<?= $tx['tx_type'] ?>', <?= (int)$tx['id'] ?>)"
+                style="margin-left:2px"><i class="fa-solid fa-rotate-right fa-xs"></i></button>
+            <?php elseif ($tx['tx_type'] === 'payment'): ?>
               <?php if ($isVoided): ?>
               <button class="btn-icon" title="Restore Voided Payment"
                 onclick="restoreTx(<?= (int)$tx['id'] ?>)"
@@ -337,9 +426,11 @@ function statusBadge(string $type, string $status, ?string $deletedAt = null): s
                 style="margin-left:2px"><i class="fa-solid fa-ban fa-xs"></i></button>
               <?php endif; ?>
             <?php endif; ?>
+            <?php if (!$isWaiver): ?>
             <button class="btn-icon danger" title="Delete (move to trash)"
               onclick="deleteTx('<?= $tx['tx_type'] ?>', <?= (int)$tx['id'] ?>)"
               style="margin-left:2px"><i class="fa-solid fa-trash fa-xs"></i></button>
+            <?php endif; ?>
           <?php endif; ?>
         </td>
       </tr>
@@ -423,6 +514,19 @@ function restoreDeleted(txType, id) {
     if (!res || !res.success) { showToast((res && res.error) || 'Restore failed.', 'error'); return; }
     showToast(res.msg, 'success');
     setTimeout(function() { location.reload(); }, 700);
+  });
+}
+
+// Waivers are reversed, never deleted: restoring puts the charge back on the
+// tenant's account. Both endpoints live in the payments API.
+function restoreWaiver(txType, id) {
+  var action = txType === 'rent_void' ? 'restore_rent_charge' : 'restore_charge';
+  confirmDelete('Restore this charge? The tenant will owe it again.', function() {
+    apiPost('../payments/api_payment.php', {action: action, id: id}, function(err, res) {
+      if (!res || !res.success) { showToast((res && res.error) || 'Restore failed.', 'error'); return; }
+      showToast(res.msg, 'success');
+      setTimeout(function() { location.reload(); }, 700);
+    });
   });
 }
 

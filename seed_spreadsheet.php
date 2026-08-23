@@ -453,8 +453,11 @@ foreach ($expected as $pm => $exp) {
     $r = $pdo->prepare("SELECT COALESCE(SUM(amount),0) FROM payments WHERE period_month=? AND period_year=2026");
     $r->execute([$pm]); $sysRev = (float)$r->fetchColumn();
 
-    $e = $pdo->prepare("SELECT COALESCE(SUM(amount),0) FROM expenses WHERE MONTH(expense_date)=? AND YEAR(expense_date)=2026");
-    $e->execute([$pm]); $sysExp = (float)$e->fetchColumn();
+    // Half-open range instead of MONTH()/YEAR() so the expense_date index is
+    // usable — same convention as the rest of the codebase (see monthRange()).
+    [$mStart, $mEnd] = monthRange($pm, 2026);
+    $e = $pdo->prepare("SELECT COALESCE(SUM(amount),0) FROM expenses WHERE expense_date >= ? AND expense_date < ?");
+    $e->execute([$mStart, $mEnd]); $sysExp = (float)$e->fetchColumn();
 
     $revDiff = abs($sysRev - $exp['revenue']);
     $expDiff = abs($sysExp - $exp['expenses']);
