@@ -46,25 +46,25 @@ final class ChargeWaiverTest extends IsolatedDbTestCase
         $this->month = (int) date('n', strtotime('first day of last month'));
         $this->year  = (int) date('Y', strtotime('first day of last month'));
 
-        self::$pdo->exec(
+        self::$db->exec(
             "INSERT INTO rental_units (unit_name, monthly_rate, due_day, status)
              VALUES ('TEST-WAIVER-UNIT', " . self::RATE . ", 5, 'occupied')"
         );
-        $this->unitId = (int) self::$pdo->lastInsertId();
+        $this->unitId = (int) self::$db->lastInsertId();
 
         // Contract starts well before the period so the charge is never prorated.
         $start = date('Y-m-d', strtotime('-2 years'));
-        $ins = self::$pdo->prepare(
+        $ins = self::$db->prepare(
             "INSERT INTO tenants (full_name, unit_id, monthly_rate, contract_start, status)
              VALUES ('Waiver Test Tenant', ?, ?, ?, 'active')"
         );
         $ins->execute([$this->unitId, self::RATE, $start]);
-        $this->tenantId = (int) self::$pdo->lastInsertId();
+        $this->tenantId = (int) self::$db->lastInsertId();
     }
 
     protected function tearDown(): void
     {
-        if (self::$skip || !self::$pdo) return;
+        if (self::$skip || !self::$db) return;
         $this->truncate(self::MONEY_TABLES);
     }
 
@@ -102,7 +102,7 @@ final class ChargeWaiverTest extends IsolatedDbTestCase
 
     private function activeWaiverTotal(): string
     {
-        $q = self::$pdo->prepare(
+        $q = self::$db->prepare(
             "SELECT COALESCE(SUM(amount),0) FROM rent_charge_voids
              WHERE unit_id=? AND period_month=? AND period_year=? AND restored_at IS NULL"
         );
@@ -189,14 +189,14 @@ final class ChargeWaiverTest extends IsolatedDbTestCase
     public function restoring_a_waiver_makes_the_rent_owed_again(): void
     {
         $this->assertTrue($this->voidRent()['success'] ?? false);
-        $waiverId = (int) self::$pdo->query('SELECT id FROM rent_charge_voids ORDER BY id DESC LIMIT 1')->fetchColumn();
+        $waiverId = (int) self::$db->query('SELECT id FROM rent_charge_voids ORDER BY id DESC LIMIT 1')->fetchColumn();
 
         [$res] = $this->callApiAction(['action' => 'restore_rent_charge', 'id' => (string) $waiverId]);
         $this->assertTrue($res['success'] ?? false, 'restore failed: ' . ($res['error'] ?? '?'));
 
         // Soft restore: the row survives for the audit trail but stops counting.
         $this->assertSame('0.00', $this->activeWaiverTotal());
-        $this->assertSame(1, (int) self::$pdo->query('SELECT COUNT(*) FROM rent_charge_voids')->fetchColumn());
+        $this->assertSame(1, (int) self::$db->query('SELECT COUNT(*) FROM rent_charge_voids')->fetchColumn());
 
         // ...and the period is waivable again.
         $this->assertTrue($this->voidRent()['success'] ?? false);
@@ -207,7 +207,7 @@ final class ChargeWaiverTest extends IsolatedDbTestCase
     public function a_waiver_moves_no_cash(): void
     {
         $this->assertTrue($this->voidRent()['success'] ?? false);
-        $this->assertSame(0, (int) self::$pdo->query('SELECT COUNT(*) FROM cash_transactions')->fetchColumn(),
+        $this->assertSame(0, (int) self::$db->query('SELECT COUNT(*) FROM cash_transactions')->fetchColumn(),
             'waiving a charge must never create a cash row');
     }
 
@@ -215,7 +215,7 @@ final class ChargeWaiverTest extends IsolatedDbTestCase
     public function the_waiver_is_written_to_the_audit_log(): void
     {
         $this->assertTrue($this->voidRent()['success'] ?? false);
-        $n = (int) self::$pdo->query("SELECT COUNT(*) FROM system_logs WHERE action='VOID_RENT_CHARGE'")->fetchColumn();
+        $n = (int) self::$db->query("SELECT COUNT(*) FROM system_logs WHERE action='VOID_RENT_CHARGE'")->fetchColumn();
         $this->assertSame(1, $n);
     }
 
@@ -231,7 +231,7 @@ final class ChargeWaiverTest extends IsolatedDbTestCase
         ]);
         $this->assertTrue($res['success'] ?? false, 'void failed: ' . ($res['error'] ?? '?'));
 
-        $row = self::$pdo->query("SELECT * FROM unit_charges WHERE id={$chargeId}")->fetch();
+        $row = self::$db->query("SELECT * FROM unit_charges WHERE id={$chargeId}")->fetch();
         $this->assertNotEmpty($row, 'the charge row must survive a void');
         $this->assertNotNull($row['voided_at']);
         $this->assertSame('moved out', $row['void_reason']);
@@ -245,7 +245,7 @@ final class ChargeWaiverTest extends IsolatedDbTestCase
         [$res] = $this->callApiAction(['action' => 'delete_charge', 'id' => (string) $chargeId]);
         $this->assertFalse($res['success'] ?? true);
 
-        $row = self::$pdo->query("SELECT voided_at FROM unit_charges WHERE id={$chargeId}")->fetch();
+        $row = self::$db->query("SELECT voided_at FROM unit_charges WHERE id={$chargeId}")->fetch();
         $this->assertNull($row['voided_at']);
     }
 
@@ -258,7 +258,7 @@ final class ChargeWaiverTest extends IsolatedDbTestCase
         [$res] = $this->callApiAction(['action' => 'restore_charge', 'id' => (string) $chargeId]);
         $this->assertTrue($res['success'] ?? false, 'restore failed: ' . ($res['error'] ?? '?'));
 
-        $row = self::$pdo->query("SELECT * FROM unit_charges WHERE id={$chargeId}")->fetch();
+        $row = self::$db->query("SELECT * FROM unit_charges WHERE id={$chargeId}")->fetch();
         $this->assertNull($row['voided_at']);
         $this->assertNull($row['void_reason']);
     }
@@ -286,7 +286,7 @@ final class ChargeWaiverTest extends IsolatedDbTestCase
         $this->assertSame('10850.00', $res['total']);
         $this->assertSame(self::RATE, $this->activeWaiverTotal());
 
-        $row = self::$pdo->query("SELECT voided_at FROM unit_charges WHERE id={$chargeId}")->fetch();
+        $row = self::$db->query("SELECT voided_at FROM unit_charges WHERE id={$chargeId}")->fetch();
         $this->assertNotNull($row['voided_at']);
     }
 

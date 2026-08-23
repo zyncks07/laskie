@@ -51,29 +51,14 @@ final class VaultRequestTest extends IntegrationTestCase
         parent::tearDown();
     }
 
+    /**
+     * Invoke api/requests_api.php as a given session user. Routed through
+     * callScript() so the subprocess is pinned to laskie_test.
+     */
     private function callRequestsApi(array $post, array $sessionUser): ?array
     {
-        $post['csrf_token'] = str_repeat('c', 64);
-        $postExport = var_export($post, true);
-        $userExport = var_export($sessionUser, true);
-        $code = <<<PHP
-<?php
-session_start();
-define('JSON_RESPONSE', true);
-require_once '/home/bulik/apps/laskie/config/db.php';
-require_once '/home/bulik/apps/laskie/config/functions.php';
-\$_SESSION['user']       = $userExport;
-\$_SESSION['csrf_token'] = str_repeat('c', 64);
-\$_POST = $postExport;
-chdir('/home/bulik/apps/laskie/api');
-include '/home/bulik/apps/laskie/api/requests_api.php';
-PHP;
-        $tmp = tempnam(sys_get_temp_dir(), 'laskie_req_');
-        file_put_contents($tmp, $code);
-        $out = shell_exec('php ' . escapeshellarg($tmp) . ' 2>/dev/null');
-        @unlink($tmp);
-        $json = json_decode((string) $out, true);
-        return is_array($json) ? $json : null;
+        [$json] = $this->callScript('api/requests_api.php', $post, $sessionUser);
+        return $json;
     }
 
     private function requester(): array

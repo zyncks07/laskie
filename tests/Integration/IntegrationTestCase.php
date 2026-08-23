@@ -4,52 +4,52 @@ declare(strict_types=1);
 
 namespace Tests\Integration;
 
-use PHPUnit\Framework\TestCase;
 use PDO;
 
 /**
  * Base class for tests that exercise real DB writes via the HTTP-style
  * API handlers in payments/api_payment.php.
  *
+ * ISOLATION — these used to run against the LIVE `laskie_rental` database,
+ * cleaning up after themselves via the PHPUNIT_MARKER tag. That worked for the
+ * money tables but not for `system_logs`, which is append-only: every run left
+ * audit rows behind on production, and a failed run could leave money rows too.
+ * The class now sits on IsolatedDbTestCase, so the whole Integration suite
+ * targets the throwaway `laskie_test` schema and can never touch live data.
+ *
+ * The surface subclasses rely on is unchanged — `$this->pdo`, `callApiAction()`,
+ * `paymentsCount()`, `cashTransactionsCount()`, and the PHPUNIT_MARKER tearDown
+ * all behave as before — so no test bodies needed rewriting.
+ *
  * Conventions
  * - Test rows are tagged with notes containing PHPUNIT_MARKER so tearDown
  *   can clean up any leftovers even when an assertion fails mid-test.
  * - callApiAction() shells out to a subprocess because jsonOk/jsonErr both
- *   exit(), which would otherwise terminate the test runner.
- * - $this->pdo is loaded lazily so the Unit suite never touches MySQL.
+ *   exit(), which would otherwise terminate the test runner. The subprocess is
+ *   pinned to `laskie_test` by IsolatedDbTestCase.
+ * - The suite self-skips when `laskie_test` is absent; see that class for the
+ *   one-time CREATE DATABASE + GRANT.
  */
-abstract class IntegrationTestCase extends TestCase
+abstract class IntegrationTestCase extends IsolatedDbTestCase
 {
     public const PHPUNIT_MARKER = 'PHPUNIT_INTEGRATION_TEST';
 
+    /** Instance alias for the isolated connection, kept for subclass ergonomics. */
     protected PDO $pdo;
-
-    /** Connection cached for the whole test process to avoid require_once
-     *  losing $pdo to setUp's local scope on the second call. */
-    private static ?PDO $sharedPdo = null;
 
     protected function setUp(): void
     {
-        if (self::$sharedPdo === null) {
-            // Pull in DB_* constants from the project's config (require_once is
-            // safe to keep no-oping; the constants persist across setUp calls).
-            require_once __DIR__ . '/../../config/db.php';
-            self::$sharedPdo = new PDO(
-                'mysql:host=' . DB_HOST . ';dbname=' . DB_NAME . ';charset=' . DB_CHARSET,
-                DB_USER,
-                DB_PASS,
-                [
-                    PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
-                    PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
-                    PDO::ATTR_EMULATE_PREPARES   => false,
-                ]
-            );
-        }
-        $this->pdo = self::$sharedPdo;
+        $this->skipUnlessTestDb();
+        $this->pdo = self::$db;
+        // These suites predate the isolated schema and assume the live DB's
+        // user #1 / unit #1 exist as FK targets.
+        $this->seedAdminUser();
+        $this->seedDefaultUnit();
     }
 
     protected function tearDown(): void
     {
+        if (self::$skip || !self::$db) return;
         // Belt-and-suspenders cleanup: kill anything notes-tagged with our marker.
         $this->pdo->prepare(
             "DELETE ct FROM cash_transactions ct
@@ -59,36 +59,6 @@ abstract class IntegrationTestCase extends TestCase
         $this->pdo->prepare(
             "DELETE FROM payments WHERE notes LIKE ?"
         )->execute(['%' . self::PHPUNIT_MARKER . '%']);
-    }
-
-    /**
-     * Invoke an action handler in payments/api_payment.php with a fake session
-     * + given $_POST. Returns [decodedJsonOrNull, rawStdout].
-     */
-    protected function callApiAction(array $post): array
-    {
-        $post['csrf_token'] = str_repeat('c', 64);
-        $postExport = var_export($post, true);
-
-        $code = <<<PHP
-<?php
-session_start();
-define('JSON_RESPONSE', true);
-require_once '/home/bulik/apps/laskie/config/db.php';
-require_once '/home/bulik/apps/laskie/config/functions.php';
-\$_SESSION['user']       = ['id'=>1,'username'=>'admin','full_name'=>'NJ','role'=>'admin'];
-\$_SESSION['csrf_token'] = str_repeat('c', 64);
-\$_POST = $postExport;
-chdir('/home/bulik/apps/laskie/payments');
-include '/home/bulik/apps/laskie/payments/api_payment.php';
-PHP;
-
-        $tmp = tempnam(sys_get_temp_dir(), 'laskie_phpunit_');
-        file_put_contents($tmp, $code);
-        $out = shell_exec('php ' . escapeshellarg($tmp) . ' 2>/dev/null');
-        @unlink($tmp);
-        $json = json_decode((string) $out, true);
-        return [is_array($json) ? $json : null, (string) $out];
     }
 
     protected function paymentsCount(): int

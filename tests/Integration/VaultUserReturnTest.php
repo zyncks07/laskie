@@ -19,31 +19,14 @@ use PHPUnit\Framework\Attributes\Test;
 final class VaultUserReturnTest extends IntegrationTestCase
 {
     /**
-     * Invoke a vault.php action via subprocess (jsonOk/jsonErr exit).
+     * Invoke an admin/vault.php action. Routed through callScript() so the
+     * subprocess is pinned to laskie_test — this suite used to build its own
+     * and omitted DB_NAME, which sent every write to the live database.
      */
     private function callVaultAction(array $post): ?array
     {
-        $post['csrf_token'] = str_repeat('c', 64);
-        $postExport = var_export($post, true);
-        $code = <<<PHP
-<?php
-session_start();
-define('JSON_RESPONSE', true);
-require_once '/home/bulik/apps/laskie/config/db.php';
-require_once '/home/bulik/apps/laskie/config/functions.php';
-\$_SESSION['user']           = ['id'=>1,'username'=>'admin','full_name'=>'NJ','role'=>'admin'];
-\$_SESSION['csrf_token']     = str_repeat('c', 64);
-\$_SERVER['REQUEST_METHOD']  = 'POST';
-\$_POST = $postExport;
-chdir('/home/bulik/apps/laskie/admin');
-include '/home/bulik/apps/laskie/admin/vault.php';
-PHP;
-        $tmp = tempnam(sys_get_temp_dir(), 'laskie_phpunit_vault_');
-        file_put_contents($tmp, $code);
-        $out = shell_exec('php ' . escapeshellarg($tmp) . ' 2>/dev/null');
-        @unlink($tmp);
-        $json = json_decode((string)$out, true);
-        return is_array($json) ? $json : null;
+        [$json] = $this->callScript('admin/vault.php', $post, null, ['REQUEST_METHOD' => 'POST']);
+        return $json;
     }
 
     protected function tearDown(): void
@@ -135,9 +118,16 @@ PHP;
     #[Test]
     public function rejects_inactive_user(): void
     {
-        // There's already an inactive user (id=10, "test") in the seed data per earlier audit.
-        $inactiveId = (int)$this->pdo->query("SELECT id FROM users WHERE status='inactive' LIMIT 1")->fetchColumn();
-        if (!$inactiveId) $this->markTestSkipped('no inactive user available');
+        // Seed the fixture rather than depending on one happening to exist —
+        // this used to rely on an inactive user in the live DB and skipped
+        // itself once the suite moved to a freshly built schema.
+        $this->pdo->prepare(
+            "INSERT INTO users (username, password_hash, full_name, role, status)
+             VALUES ('phpunit_inactive', ?, 'PHPUnit Inactive', 'staff', 'inactive')
+             ON DUPLICATE KEY UPDATE status='inactive'"
+        )->execute([password_hash('x', PASSWORD_BCRYPT)]);
+        $inactiveId = (int) $this->pdo->query("SELECT id FROM users WHERE status='inactive' LIMIT 1")->fetchColumn();
+        $this->assertGreaterThan(0, $inactiveId, 'inactive fixture user was not created');
 
         $json = $this->callVaultAction([
             'action'      => 'add_user_return',

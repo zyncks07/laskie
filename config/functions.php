@@ -308,6 +308,21 @@ function notifyAdmins(PDO $pdo, string $type, string $message, ?string $link = n
 }
 
 // ─── Invoice Number Generator ────────────────────────────────
+// Issues the next invoice number: PREFIX-YYYY-NNNNN.
+//
+// Backed by a monotonic counter in `settings` (one row per prefix+year), NOT by
+// MAX(invoice_no)+1. The old MAX approach handed a number back out whenever the
+// newest payment was deleted or purged, so two different payments could carry
+// the same invoice_no at different times — a receipt already in a tenant's hands
+// stopped being a unique reference, and audit-log lines naming an invoice became
+// ambiguous. The counter only ever moves forward, so a number is retired the
+// moment it is issued.
+//
+// The UPDATE ... LAST_INSERT_ID(expr) form makes read-modify-write a single
+// atomic statement (LAST_INSERT_ID is per-connection), so concurrent callers
+// cannot draw the same value even without an enclosing transaction. The UNIQUE
+// index on payments.invoice_no plus the retry loop in save_payment remain as a
+// backstop.
 function generateInvoiceNo(PDO $pdo): string {
     $prefix = 'INV';
     try {
@@ -315,10 +330,33 @@ function generateInvoiceNo(PDO $pdo): string {
         if ($row) $prefix = $row;
     } catch (Exception $e) {}
     $year = date('Y');
-    $like = $prefix . '-' . $year . '-%';
-    $max  = $pdo->prepare("SELECT COALESCE(MAX(CAST(SUBSTRING_INDEX(invoice_no,'-',-1) AS UNSIGNED)),0) FROM payments WHERE invoice_no LIKE ?");
-    $max->execute([$like]);
-    return $prefix . '-' . $year . '-' . str_pad((int)$max->fetchColumn() + 1, 5, '0', STR_PAD_LEFT);
+    $key  = 'invoice_seq_' . $prefix . '_' . $year;
+
+    // Atomic increment. Affects 0 rows the first time this prefix+year is used.
+    $bump = $pdo->prepare("UPDATE settings SET setting_value = LAST_INSERT_ID(CAST(setting_value AS UNSIGNED) + 1) WHERE setting_key = ?");
+    $bump->execute([$key]);
+
+    if ($bump->rowCount() === 0) {
+        // Seed the counter above the highest number ever issued for this
+        // prefix+year. Soft-deleted and voided payments are deliberately
+        // included: they keep their invoice_no, so those numbers are spent.
+        $max = $pdo->prepare("SELECT COALESCE(MAX(CAST(SUBSTRING_INDEX(invoice_no,'-',-1) AS UNSIGNED)),0) FROM payments WHERE invoice_no LIKE ?");
+        $max->execute([$prefix . '-' . $year . '-%']);
+        $seed = (int)$max->fetchColumn() + 1;
+
+        // ON DUPLICATE KEY: another connection may have seeded it first, in
+        // which case take the next value from theirs rather than clobbering it.
+        $ins = $pdo->prepare(
+            "INSERT INTO settings (setting_key, setting_value) VALUES (?, ?)
+             ON DUPLICATE KEY UPDATE setting_value = LAST_INSERT_ID(CAST(setting_value AS UNSIGNED) + 1)"
+        );
+        $ins->execute([$key, (string)$seed]);
+        $next = ($ins->rowCount() === 1) ? $seed : (int)$pdo->query("SELECT LAST_INSERT_ID()")->fetchColumn();
+    } else {
+        $next = (int)$pdo->query("SELECT LAST_INSERT_ID()")->fetchColumn();
+    }
+
+    return $prefix . '-' . $year . '-' . str_pad($next, 5, '0', STR_PAD_LEFT);
 }
 
 // ─── Image Compression ───────────────────────────────────────

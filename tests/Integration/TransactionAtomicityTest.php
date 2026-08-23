@@ -65,6 +65,7 @@ final class TransactionAtomicityTest extends IntegrationTestCase
 <?php
 session_start();
 define('JSON_RESPONSE', true);
+define('DB_NAME', 'laskie_test');   // never let the probe touch live
 require_once '/home/bulik/apps/laskie/config/db.php';
 require_once '/home/bulik/apps/laskie/config/functions.php';
 throw new RuntimeException('phpunit-probe-error');

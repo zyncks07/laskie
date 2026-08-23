@@ -37,22 +37,22 @@ final class PaymentReceiptTest extends IsolatedDbTestCase
         $this->truncate(self::MONEY_TABLES);
         $this->seedAdminUser();
 
-        self::$pdo->exec(
+        self::$db->exec(
             "INSERT INTO rental_units (unit_name, monthly_rate, due_day, status)
              VALUES ('TEST-UNIT-A', 5000.00, 5, 'occupied')"
         );
-        $this->unitId = (int) self::$pdo->lastInsertId();
+        $this->unitId = (int) self::$db->lastInsertId();
     }
 
     protected function tearDown(): void
     {
-        if (self::$skip || !self::$pdo) return;
+        if (self::$skip || !self::$db) return;
         $this->truncate(self::MONEY_TABLES);
     }
 
     private function fetchPayment(int $id): array
     {
-        $s = self::$pdo->prepare('SELECT * FROM payments WHERE id=?');
+        $s = self::$db->prepare('SELECT * FROM payments WHERE id=?');
         $s->execute([$id]);
         return $s->fetch() ?: [];
     }
@@ -80,7 +80,7 @@ final class PaymentReceiptTest extends IsolatedDbTestCase
         $this->assertNull($row['receipt_path'], 'receipt_path should be NULL when only a URL is given');
 
         // The payment itself must still be wired up normally (regression guard).
-        $cash = self::$pdo->prepare("SELECT COUNT(*) FROM cash_transactions WHERE reference_payment_id=? AND transaction_type='received'");
+        $cash = self::$db->prepare("SELECT COUNT(*) FROM cash_transactions WHERE reference_payment_id=? AND transaction_type='received'");
         $cash->execute([(int) $res['id']]);
         $this->assertSame(1, (int) $cash->fetchColumn(), 'received cash row missing');
     }
@@ -158,7 +158,7 @@ final class PaymentReceiptTest extends IsolatedDbTestCase
         $id = (int) $create['id'];
 
         $seeded = '/uploads/payments/20260603_seededproof.jpg';
-        $up = self::$pdo->prepare('UPDATE payments SET receipt_path=? WHERE id=?');
+        $up = self::$db->prepare('UPDATE payments SET receipt_path=? WHERE id=?');
         $up->execute([$seeded, $id]);
 
         // Edit the payment (admin) WITHOUT sending a new file. The two-branch

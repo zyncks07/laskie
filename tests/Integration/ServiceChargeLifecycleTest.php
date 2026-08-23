@@ -50,29 +50,29 @@ final class ServiceChargeLifecycleTest extends IsolatedDbTestCase
         $this->month = (int) date('n', strtotime('first day of last month'));
         $this->year  = (int) date('Y', strtotime('first day of last month'));
 
-        self::$pdo->exec(
+        self::$db->exec(
             "INSERT INTO rental_units (unit_name, monthly_rate, due_day, status)
              VALUES ('TEST-SVC-UNIT', 5000.00, 5, 'occupied')"
         );
-        $this->unitId = (int) self::$pdo->lastInsertId();
+        $this->unitId = (int) self::$db->lastInsertId();
 
-        $ins = self::$pdo->prepare(
+        $ins = self::$db->prepare(
             "INSERT INTO tenants (full_name, unit_id, monthly_rate, contract_start, status)
              VALUES ('Service Test Tenant', ?, 5000.00, ?, 'active')"
         );
         $ins->execute([$this->unitId, date('Y-m-d', strtotime('-2 years'))]);
-        $this->tenantId = (int) self::$pdo->lastInsertId();
+        $this->tenantId = (int) self::$db->lastInsertId();
 
         // install.sql seeds the lookup table; pick a real service type rather
         // than assuming an id.
-        $this->serviceId = (int) self::$pdo->query(
+        $this->serviceId = (int) self::$db->query(
             "SELECT id FROM service_types WHERE name='Prepaid Internet' LIMIT 1"
         )->fetchColumn();
     }
 
     protected function tearDown(): void
     {
-        if (self::$skip || !self::$pdo) return;
+        if (self::$skip || !self::$db) return;
         $this->truncate(self::MONEY_TABLES);
     }
 
@@ -118,14 +118,14 @@ final class ServiceChargeLifecycleTest extends IsolatedDbTestCase
     /** @return array<int, array<string, mixed>> every charge row on the test unit */
     private function charges(): array
     {
-        $q = self::$pdo->prepare('SELECT * FROM unit_charges WHERE unit_id=? ORDER BY id');
+        $q = self::$db->prepare('SELECT * FROM unit_charges WHERE unit_id=? ORDER BY id');
         $q->execute([$this->unitId]);
         return $q->fetchAll();
     }
 
     private function receivedCashRows(int $paymentId): int
     {
-        $q = self::$pdo->prepare(
+        $q = self::$db->prepare(
             "SELECT COUNT(*) FROM cash_transactions WHERE reference_payment_id=? AND transaction_type='received'"
         );
         $q->execute([$paymentId]);
@@ -259,7 +259,7 @@ final class ServiceChargeLifecycleTest extends IsolatedDbTestCase
         $this->assertTrue($res['success'] ?? false, 'purge failed: ' . ($res['error'] ?? '?'));
 
         $this->assertSame([], $this->charges());
-        $this->assertSame(0, (int) self::$pdo->query('SELECT COUNT(*) FROM payments')->fetchColumn());
+        $this->assertSame(0, (int) self::$db->query('SELECT COUNT(*) FROM payments')->fetchColumn());
     }
 
     // ── pre_billed: the opposite lifecycle ───────────────────────

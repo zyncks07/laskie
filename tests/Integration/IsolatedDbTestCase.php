@@ -30,7 +30,7 @@ abstract class IsolatedDbTestCase extends TestCase
 {
     protected const TEST_DB = 'laskie_test';
 
-    protected static ?PDO   $pdo        = null;
+    protected static ?PDO   $db         = null;
     protected static bool   $skip       = false;
     protected static string $skipReason = '';
 
@@ -71,7 +71,7 @@ abstract class IsolatedDbTestCase extends TestCase
             return;
         }
 
-        self::$pdo = $pdo;
+        self::$db = $pdo;
         self::loadSchema($pdo);
     }
 
@@ -115,7 +115,7 @@ abstract class IsolatedDbTestCase extends TestCase
         $pdo->exec('SET FOREIGN_KEY_CHECKS=1');
     }
 
-    /** Call from setUp() before touching self::$pdo. */
+    /** Call from setUp() before touching self::$db. */
     protected function skipUnlessTestDb(): void
     {
         if (self::$skip) {
@@ -126,12 +126,26 @@ abstract class IsolatedDbTestCase extends TestCase
     /** Empty the transactional tables between tests (FK order handled). */
     protected function truncate(array $tables): void
     {
-        if (!self::$pdo) return;
-        self::$pdo->exec('SET FOREIGN_KEY_CHECKS=0');
+        if (!self::$db) return;
+        self::$db->exec('SET FOREIGN_KEY_CHECKS=0');
         foreach ($tables as $t) {
-            self::$pdo->exec("TRUNCATE TABLE {$t}");
+            self::$db->exec("TRUNCATE TABLE {$t}");
         }
-        self::$pdo->exec('SET FOREIGN_KEY_CHECKS=1');
+        self::$db->exec('SET FOREIGN_KEY_CHECKS=1');
+    }
+
+    /**
+     * Ensure rental_unit #1 exists. Several suites hardcode unit_id=1 as an FK
+     * target for synthetic payments; on the live DB that unit happened to
+     * exist, so the isolated schema has to provide it too.
+     */
+    protected function seedDefaultUnit(): void
+    {
+        self::$db->exec(
+            "INSERT INTO rental_units (id, unit_name, monthly_rate, due_day, status)
+             VALUES (1, 'TEST-DEFAULT-UNIT', 5000.00, 5, 'occupied')
+             ON DUPLICATE KEY UPDATE status='occupied'"
+        );
     }
 
     /**
@@ -140,7 +154,7 @@ abstract class IsolatedDbTestCase extends TestCase
      */
     protected function seedAdminUser(): void
     {
-        self::$pdo->exec(
+        self::$db->exec(
             "INSERT INTO users (id, username, password_hash, full_name, role, status)
              VALUES (1, 'admin', '" . password_hash('x', PASSWORD_BCRYPT) . "', 'Test Admin', 'admin', 'active')
              ON DUPLICATE KEY UPDATE status='active'"
@@ -148,9 +162,56 @@ abstract class IsolatedDbTestCase extends TestCase
     }
 
     /**
+     * Run ANY project entry point in a subprocess against laskie_test.
+     *
+     * Every suite must go through here rather than hand-rolling its own
+     * subprocess: the `define('DB_NAME', ...)` below is the only thing keeping
+     * a handler's writes off the live database, and a builder that forgets it
+     * silently writes to production while assertions read the test schema.
+     *
+     * @param string     $relPath     entry point relative to the project root
+     * @param array      $post        $_POST payload (csrf_token added here)
+     * @param array|null $sessionUser $_SESSION['user'] override; defaults to admin #1
+     * @param array      $server      extra $_SERVER keys (e.g. REQUEST_METHOD)
+     * @return array{0: ?array, 1: string} decoded JSON (or null) + raw output
+     */
+    protected function callScript(string $relPath, array $post, ?array $sessionUser = null, array $server = []): array
+    {
+        $post['csrf_token'] = str_repeat('c', 64);
+        $postExport = var_export($post, true);
+        $userExport = var_export($sessionUser ?? ['id'=>1,'username'=>'admin','full_name'=>'Test Admin','role'=>'admin'], true);
+        $srvExport  = var_export($server, true);
+        $db   = static::TEST_DB;
+        $root = dirname(__DIR__, 2);
+        $abs  = $root . '/' . ltrim($relPath, '/');
+        $dir  = dirname($abs);
+
+        $code = <<<PHP
+<?php
+session_start();
+define('JSON_RESPONSE', true);
+define('DB_NAME', '{$db}');   // pins the handler to the isolated test DB
+require_once '{$root}/config/db.php';
+require_once '{$root}/config/functions.php';
+\$_SESSION['user']       = {$userExport};
+\$_SESSION['csrf_token'] = str_repeat('c', 64);
+\$_POST = {$postExport};
+foreach ({$srvExport} as \$k => \$v) \$_SERVER[\$k] = \$v;
+chdir('{$dir}');
+include '{$abs}';
+PHP;
+
+        $tmp = tempnam(sys_get_temp_dir(), 'laskie_isolated_test_');
+        file_put_contents($tmp, $code);
+        $out = shell_exec('php ' . escapeshellarg($tmp) . ' 2>/dev/null');
+        @unlink($tmp);
+        $json = json_decode((string) $out, true);
+        return [is_array($json) ? $json : null, (string) $out];
+    }
+
+    /**
      * Invoke a payments/api_payment.php action against laskie_test in a
      * subprocess (jsonOk/jsonErr call exit(), which would kill the test runner).
-     * DB_NAME is pre-defined so config/db.php connects to laskie_test, not live.
      *
      * @return array{0: ?array, 1: string} decoded JSON (or null) + raw output
      */
