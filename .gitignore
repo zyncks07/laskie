@@ -9,3 +9,7 @@ vendor/
 composer.lock
 .phpunit.result.cache
 tests/.phpunit.cache/
+
+# UI bug screenshots — captured from the live app, so they contain real tenant
+# names, arrears and staff usernames. The repo is public; keep these local.
+design/visualBugs/
