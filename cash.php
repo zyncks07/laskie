@@ -440,13 +440,28 @@ function loadTransactions() {
       if (t.linked_invoice) refHtml = '<span class="mono" style="font-size:11.5px">' + esc(t.linked_invoice) + '</span>';
       else if (t.linked_expense) refHtml = '<span class="text-muted" style="font-size:11.5px">' + esc(t.linked_expense) + '</span>';
 
+      // Proof. Manual remittances and vault returns store the document on the
+      // cash row itself; collection / refund / expense rows never do — their
+      // upload lives on the payment or expense they reference, so fall back to
+      // that. Check the row's own doc as a pair first so a row with only a
+      // doc_url doesn't get overridden by a source file.
+      var proofPath = null, proofUrl = null, proofFrom = '';
+      if (t.doc_path || t.doc_url) {
+        proofPath = t.doc_path; proofUrl = t.doc_url;
+      } else if (t.payment_receipt_path || t.payment_receipt_url) {
+        proofPath = t.payment_receipt_path; proofUrl = t.payment_receipt_url;
+        proofFrom = ' (payment receipt)';
+      } else if (t.expense_receipt_path || t.expense_receipt_url) {
+        proofPath = t.expense_receipt_path; proofUrl = t.expense_receipt_url;
+        proofFrom = ' (expense receipt)';
+      }
       var proofHtml = '<span class="text-muted">&#8212;</span>';
-      if (t.doc_path) {
-        var p = safeUrl(t.doc_path);
-        if (p) proofHtml = '<a href="' + p + '" target="_blank" rel="noopener noreferrer" class="btn-icon" title="View file"><i class="fa-solid fa-paperclip fa-xs"></i></a>';
-      } else if (t.doc_url) {
-        var u = safeUrl(t.doc_url);
-        if (u) proofHtml = '<a href="' + u + '" target="_blank" rel="noopener noreferrer" class="btn-icon" title="Open URL"><i class="fa-solid fa-link fa-xs"></i></a>';
+      if (proofPath) {
+        var pf = safeUrl(proofPath);
+        if (pf) proofHtml = '<a href="' + pf + '" target="_blank" rel="noopener noreferrer" class="btn-icon" title="View file' + proofFrom + '"><i class="fa-solid fa-paperclip fa-xs"></i></a>';
+      } else if (proofUrl) {
+        var pu = safeUrl(proofUrl);
+        if (pu) proofHtml = '<a href="' + pu + '" target="_blank" rel="noopener noreferrer" class="btn-icon" title="Open URL' + proofFrom + '"><i class="fa-solid fa-link fa-xs"></i></a>';
       }
 
       var isManual = !t.reference_payment_id && !t.reference_expense_id;

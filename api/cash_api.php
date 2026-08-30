@@ -117,7 +117,15 @@ if ($action === 'list_transactions') {
     if ($type) { $where[] = 'ct.transaction_type=?'; $params[] = $type; }
     $rows = $pdo->prepare("
         SELECT ct.*, u.full_name AS user_name, u.role AS user_role,
-               p.invoice_no AS linked_invoice, e.description AS linked_expense
+               p.invoice_no AS linked_invoice, e.description AS linked_expense,
+               -- Proof of the SOURCE record. Only manual remittances and vault
+               -- returns carry a document on the cash row itself (doc_path/
+               -- doc_url); a collection/refund row's proof lives on the payment
+               -- and an expense row's on the expense. Without these columns the
+               -- Proof column rendered blank for every linked transaction even
+               -- when a receipt had been uploaded.
+               p.receipt_path AS payment_receipt_path, p.receipt_url AS payment_receipt_url,
+               e.receipt_path AS expense_receipt_path, e.receipt_url AS expense_receipt_url
         FROM   cash_transactions ct
         LEFT JOIN users    u ON ct.user_id              = u.id
         LEFT JOIN payments p ON ct.reference_payment_id = p.id
