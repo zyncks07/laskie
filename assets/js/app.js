@@ -108,7 +108,11 @@ window.csrfHeaders = function() {
 // failures (HTTP 400) and CSRF rejections (HTTP 403). We parse the JSON body
 // regardless of status so the callback sees the real server-side error message
 // in res.error rather than a generic "Server error: 400".
-window.apiPost = function(url, data, cb) {
+// Optional 4th arg `onProgress(loadedBytes, totalBytes)` switches the transport to
+// XMLHttpRequest, the only way to observe upload progress — fetch() exposes no
+// equivalent of xhr.upload.onprogress. Callers that don't pass it keep the
+// original fetch path verbatim.
+window.apiPost = function(url, data, cb, onProgress) {
     let fd;
     if (data instanceof FormData) {
         fd = data;
@@ -118,20 +122,38 @@ window.apiPost = function(url, data, cb) {
             if (v !== undefined && v !== null) fd.append(k, v);
         });
     }
+
+    // Shared response handling so both transports behave identically.
+    const deliver = (status, body) => {
+        let parsed;
+        try { parsed = JSON.parse(body); } catch (_) {}
+        if (parsed && typeof parsed === 'object') {
+            // Pass the server's JSON straight through — page code reads res.success / res.error.
+            cb(null, parsed);
+        } else {
+            // Non-JSON body (network error mid-flight, PHP fatal before headers, etc.) — synthesize.
+            const msg = 'Server error: ' + status + (body ? ' — ' + body.slice(0, 80) : '');
+            cb(msg, { success: false, error: msg });
+        }
+    };
+
+    if (typeof onProgress === 'function') {
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', url, true);
+        Object.entries(window.csrfHeaders()).forEach(([k, v]) => xhr.setRequestHeader(k, v));
+        xhr.upload.addEventListener('progress', e => {
+            if (e.lengthComputable) onProgress(e.loaded, e.total);
+        });
+        xhr.addEventListener('load',  () => deliver(xhr.status, xhr.responseText || ''));
+        xhr.addEventListener('error', () => cb('Network error', { success: false, error: 'Network error — check your connection and try again.' }));
+        xhr.addEventListener('abort', () => cb('Aborted',       { success: false, error: 'Upload cancelled.' }));
+        xhr.send(fd);
+        return xhr; // lets a caller abort if it ever needs to
+    }
+
     fetch(url, { method: 'POST', body: fd, credentials: 'same-origin', headers: window.csrfHeaders() })
         .then(r => r.text().then(t => ({ status: r.status, body: t })))
-        .then(({ status, body }) => {
-            let parsed;
-            try { parsed = JSON.parse(body); } catch (_) {}
-            if (parsed && typeof parsed === 'object') {
-                // Pass the server's JSON straight through — page code reads res.success / res.error.
-                cb(null, parsed);
-            } else {
-                // Non-JSON body (network error mid-flight, PHP fatal before headers, etc.) — synthesize.
-                const msg = 'Server error: ' + status + (body ? ' — ' + body.slice(0, 80) : '');
-                cb(msg, { success: false, error: msg });
-            }
-        })
+        .then(({ status, body }) => deliver(status, body))
         .catch(e => cb(e.message, { success: false, error: e.message }));
 };
 
@@ -313,11 +335,17 @@ window.dtDefaults = {
 };
 
 // ─── File size validator ──────────────────────────────────────
+// Checks every selected file, not just files[0], so `<input multiple>` inputs
+// (tenant documents) are covered too. Single-file callers behave as before.
 window.validateFileSize = function(inputEl, maxMb = 30) {
-    const file = inputEl.files[0];
-    if (!file) return true;
-    if (file.size > maxMb * 1024 * 1024) {
-        showToast(`File too large. Max ${maxMb}MB allowed.`, 'error');
+    const files = inputEl.files;
+    if (!files || !files.length) return true;
+    const cap = maxMb * 1024 * 1024;
+    const tooBig = Array.from(files).filter(f => f.size > cap);
+    if (tooBig.length) {
+        const names = tooBig.slice(0, 3).map(f => f.name).join(', ');
+        showToast(`File too large. Max ${maxMb}MB allowed: ${names}`
+            + (tooBig.length > 3 ? ` (+${tooBig.length - 3} more)` : ''), 'error');
         inputEl.value = '';
         return false;
     }

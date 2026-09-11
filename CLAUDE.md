@@ -65,7 +65,7 @@
 │
 ├── admin/                 # Admin-only pages (requireAdmin())
 │   ├── accounts.php       # User CRUD
-│   ├── tenants.php
+│   ├── tenants.php        # Tenant CRUD + Documents modal (Contract / IDs / Supporting, 20 items each)
 │   ├── units.php          # Units + unit_types + service_types + rate history
 │   ├── transactions.php   # All transactions + trash; voided payments, charge waivers — restore UI
 │   ├── requests.php       # Review/approve vault cash requests (approve auto-issues vault_return)
@@ -106,7 +106,9 @@
 │   └── vendor/                # All third-party CSS/JS (self-hosted)
 │
 └── uploads/               # User-uploaded files — writable by www-data
-    ├── contracts/   receipts/   docs/   remittance/
+    ├── contracts/   ids/   docs/          # tenant documents, by category
+    ├── receipts/    payments/             # expense + payment proof
+    ├── remittance/  avatars/
 ```
 
 ---
@@ -119,6 +121,14 @@ Read [`install.sql`](install.sql) for the authoritative DDL. The live DB is curr
 - `users` — id, username, password_hash, full_name, **role** (`admin`/`accountant`/`staff`), status, email/phone
 - `rental_units` — unit_name, unit_type_id, monthly_rate, **due_day**, status (`vacant`/`occupied`)
 - `tenants` — full_name, unit_id, monthly_rate, **contract_start / contract_end**, status (`active`/`inactive`/`former`)
+- `tenant_docs` — per-tenant attachments. **`doc_type` IS the UI category** — exactly
+  `contract` / `id` / `other`, one per section of the Documents modal in
+  `admin/tenants.php` (`TENANT_DOC_CATS` maps each to its `uploads/` subdirectory).
+  A row carries **either** `file_path` (uploaded, images auto-compressed by
+  `handleUpload()`) **or** `external_url` (http(s) only, validated server-side), never
+  neither. Capped at `TENANT_DOC_CAP` (20) rows **per category, per tenant**, enforced in
+  the handler. `doc_name` holds the original filename, or the link's label/host.
+  Hard-deleted on removal (with the file unlinked) — it is an attachment list, not a ledger.
 - `unit_types`, `service_types`, `expense_categories` — lookup tables
 
 ### Money-movement tables
