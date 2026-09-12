@@ -112,7 +112,7 @@ include 'includes/header.php';
     <span class="card-header-title"><i class="fa-solid fa-list me-2"></i>Transaction Log</span>
     <span class="badge bg-secondary" id="txBadge">0</span>
   </div>
-  <div class="card-body py-2 border-bottom">
+  <div class="card-body py-2 border-bottom filter-card">
     <div class="row g-2 align-items-end">
       <?php if(isAdmin() || isAccountant()): ?>
       <div class="col-6 col-md-3">

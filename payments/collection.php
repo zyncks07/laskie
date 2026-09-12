@@ -35,7 +35,7 @@ include '../includes/header.php';
 </div>
 
 <!-- Period Selector -->
-<div class="card mb-3">
+<div class="card filter-card mb-3">
   <div class="card-body py-2">
     <div class="d-flex align-items-center gap-3 flex-wrap">
       <span class="fw-600" style="font-size:13px;color:var(--text-secondary)"><i class="fa-solid fa-calendar me-1"></i>Period:</span>

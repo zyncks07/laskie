@@ -108,7 +108,7 @@ include '../includes/header.php';
 </div>
 
 <!-- ── Filter Panel ─────────────────────────────────────────── -->
-<div class="card mb-3">
+<div class="card filter-card mb-3">
   <div class="card-header"><span class="card-header-title"><i class="fa-solid fa-filter me-2"></i>Filters</span></div>
   <div class="card-body">
     <form method="GET" class="row g-2 align-items-end">

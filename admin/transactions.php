@@ -272,7 +272,7 @@ function statusBadge(string $type, string $status, ?string $deletedAt = null): s
 </div>
 
 <!-- Filter Form -->
-<div class="card mb-3">
+<div class="card filter-card mb-3">
   <div class="card-body py-2">
     <form method="GET" class="row g-2 align-items-end">
       <div class="col-6 col-md-auto">

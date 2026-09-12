@@ -319,7 +319,7 @@ include '../includes/header.php';
 </div>
 
 <!-- Filter Bar -->
-<div class="card mb-3">
+<div class="card filter-card mb-3">
   <div class="card-body py-2">
     <form method="GET" class="row g-2 align-items-end">
       <div class="col-sm-6 col-md-4">

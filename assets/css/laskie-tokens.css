@@ -283,6 +283,36 @@ body {
 .card-body   { padding: 14px 16px; }
 .card-footer { background: transparent; border-top: 1px solid var(--gray-200); padding: 12px 16px; }
 
+/* ── Filter surfaces ─────────────────────────────────── */
+/* A box whose only job is to filter the data below it gets a tinted ground
+   instead of the white card surface, so it reads as a control strip rather
+   than content. Applies either to a whole .card (standalone filter bar) or
+   to a .card-body strip embedded in a content card (cash.php Transaction
+   Log).
+
+   gray-200, not gray-100: the page ground is already gray-50, so a
+   gray-100 fill (#f4f4f4 vs #fafafa) was too close to read as a distinct
+   surface. gray-200 separates from both the page AND the white cards, and
+   inverts the same way in dark mode (#2b2b2b against a #161616 card). */
+.card.filter-card,
+.card-body.filter-card { background: var(--gray-200); }
+
+/* The default card hairline IS gray-200, so on this fill it would vanish.
+   gray-300 is one step up from the tint in BOTH themes (#c4c4c4 on #e4e4e4
+   light, #3f3f3f on #2b2b2b dark) — a real edge without the boxed-in look a
+   gray-400 outline gives in dark mode. */
+.card.filter-card                { border-color: var(--gray-300); }
+.card.filter-card > .card-header { border-bottom-color: var(--gray-300); }
+.card-body.filter-card.border-bottom {
+  border-bottom-color: var(--gray-300) !important;  /* beats Bootstrap's .border-bottom */
+}
+
+/* Printed reports (SoA, audit log) don't need the control strip inked. */
+@media print {
+  .card.filter-card,
+  .card-body.filter-card { background: transparent !important; }
+}
+
 /* Inverted "hero" panel — strongest B&W emphasis. Flips to a light
    bordered panel in dark mode because --ink/--paper invert. */
 .card.dark-card,
