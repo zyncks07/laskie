@@ -109,13 +109,14 @@
     ├── contracts/   ids/   docs/          # tenant documents, by category
     ├── receipts/    payments/             # expense + payment proof
     ├── remittance/  avatars/
+    └── dividends/                          # dividend-distribution proof
 ```
 
 ---
 
 ## 4. Database schema (accounting-critical)
 
-Read [`install.sql`](install.sql) for the authoritative DDL. The live DB is current through **migration 010** (`migrations/` holds the incremental DDL; fresh installs get the same via `install.sql`). Highlights:
+Read [`install.sql`](install.sql) for the authoritative DDL. The live DB is current through **migration 012** (`migrations/` holds the incremental DDL; fresh installs get the same via `install.sql`). Highlights:
 
 ### Core entities
 - `users` — id, username, password_hash, full_name, **role** (`admin`/`accountant`/`staff`), status, email/phone
@@ -152,6 +153,7 @@ Read [`install.sql`](install.sql) for the authoritative DDL. The live DB is curr
 
 ### Dividends ("The Vault")
 - `dividend_recipients`, `dividend_distributions`, `dividend_returns` — money flowing out to (and back from) owners/investors.
+- `dividend_distributions.receipt_path` / `receipt_url` — optional proof of the payout (signed acknowledgement, bank-transfer screenshot, PDF slip) attached from the Distribute Dividend / Edit Distribution modals on `admin/vault.php`. Same shape and upload pipeline as `expenses.receipt_path/receipt_url` and `payments.receipt_path/receipt_url`; uploads land in `uploads/dividends/`. Added in `migrations/012_add_distribution_receipt.sql`. External URLs are validated `^https?://` **server-side on the way in**, because the Distribution Records table is server-rendered.
 
 ### Vault cash requests & notifications (migration 009)
 - `vault_requests` — a staff/accountant request to have cash returned from the Vault (deposit refunds, unexpected expenses after remitting). `status` ∈ {`pending`,`approved`,`rejected`,`cancelled`}. **Approving (admin) auto-issues a `vault_return` `cash_transactions` row** crediting the requester and stores its id in `cash_tx_id`. See `api/requests_api.php`.

@@ -296,6 +296,10 @@ CREATE TABLE IF NOT EXISTS dividend_distributions (
     amount DECIMAL(12,2) NOT NULL,
     distribution_date DATE NOT NULL,
     notes TEXT DEFAULT NULL,
+    -- Optional proof of the payout (signed acknowledgement, bank-transfer
+    -- screenshot, PDF slip). Mirrors expenses/payments receipt_path+receipt_url.
+    receipt_path VARCHAR(500) DEFAULT NULL,
+    receipt_url VARCHAR(1000) DEFAULT NULL,
     created_by INT DEFAULT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (recipient_id) REFERENCES dividend_recipients(id),

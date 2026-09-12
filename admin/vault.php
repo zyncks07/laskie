@@ -65,17 +65,33 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $amount      = trim((string)($_POST['amount'] ?? '0'));
         $date        = trim($_POST['distribution_date'] ?? '');
         $notes       = nullOrStr($_POST['notes'] ?? '');
+        $receiptUrl  = nullOrStr($_POST['receipt_url'] ?? '');
+        $receiptPath = null;
         if (!$recipientId) jsonErr('Please select a recipient.');
         if (!money_is_pos($amount)) jsonErr('Amount must be greater than zero.');
         if (!$date || !strtotime($date)) jsonErr('Valid date required.');
+        // Reject javascript:/data:/file: on the way IN — the Distribution Records
+        // table is server-rendered, so the stored value must already be safe.
+        if ($receiptUrl && !preg_match('#^https?://#i', $receiptUrl)) {
+            jsonErr('External links must start with http:// or https://');
+        }
         $rChk = $pdo->prepare("SELECT id FROM dividend_recipients WHERE id=? AND is_active=1");
         $rChk->execute([$recipientId]);
         if (!$rChk->fetch()) jsonErr('Recipient not found or inactive.');
+        // Optional proof attachment. handleUpload() applies the project whitelist,
+        // the 30 MB cap and in-place JPEG/PNG/WebP compression (PDFs untouched) —
+        // same pipeline as expense and payment receipts. Validated AFTER the cheap
+        // checks so a rejected distribution never leaves an orphan file on disk.
+        if (!empty($_FILES['receipt_file']['name'])) {
+            $up = handleUpload('receipt_file', 'dividends');
+            if ($up['error']) jsonErr($up['error']);
+            $receiptPath = $up['path'];
+        }
         $pdo->beginTransaction();
         try {
-            $pdo->prepare("INSERT INTO dividend_distributions (recipient_id,amount,distribution_date,notes,created_by) VALUES (?,?,?,?,?)")
-                ->execute([$recipientId,$amount,$date,$notes,$_SESSION['user']['id']]);
-            logActivity($pdo,'DIVIDEND_DISTRIBUTION','Vault',"Distributed " . money($amount) . " to recipient #$recipientId");
+            $pdo->prepare("INSERT INTO dividend_distributions (recipient_id,amount,distribution_date,notes,receipt_path,receipt_url,created_by) VALUES (?,?,?,?,?,?,?)")
+                ->execute([$recipientId,$amount,$date,$notes,$receiptPath,$receiptUrl,$_SESSION['user']['id']]);
+            logActivity($pdo,'DIVIDEND_DISTRIBUTION','Vault',"Distributed " . money($amount) . " to recipient #$recipientId" . ($receiptPath || $receiptUrl ? ' (with proof)' : ''));
             $pdo->commit();
         } catch (Throwable $e) { $pdo->rollBack(); throw $e; }
         jsonOk(['msg'=>'Dividend distribution recorded.']);
@@ -84,11 +100,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if ($action === 'delete_distribution') {
         $id = (int)($_POST['id'] ?? 0);
         if (!$id) jsonErr('Distribution ID required.');
-        $chk = $pdo->prepare("SELECT id FROM dividend_distributions WHERE id=?");
+        $chk = $pdo->prepare("SELECT receipt_path FROM dividend_distributions WHERE id=?");
         $chk->execute([$id]);
-        if (!$chk->fetch()) jsonErr('Distribution not found.');
+        $row = $chk->fetch();
+        if (!$row) jsonErr('Distribution not found.');
         $pdo->prepare("DELETE FROM dividend_distributions WHERE id=?")->execute([$id]);
-        logActivity($pdo,'DELETE_DIVIDEND_DIST','Vault',"Deleted distribution #$id");
+        // Row first, file second: a failed DELETE must not destroy the proof,
+        // whereas a failed unlink only leaves a harmless orphan. The
+        // '/uploads/' prefix check keeps a tampered column from reaching
+        // anything outside the upload tree (same guard as tenants.php
+        // delete_doc). This is a hard delete by design — a distribution is not
+        // a ledger row — so the attachment goes with it.
+        $fp = (string)($row['receipt_path'] ?? '');
+        if ($fp !== '' && str_starts_with($fp, '/uploads/')) {
+            @unlink(__DIR__ . '/..' . $fp);
+        }
+        logActivity($pdo,'DELETE_DIVIDEND_DIST','Vault',"Deleted distribution #$id" . ($fp !== '' ? ' (proof file removed)' : ''));
         jsonOk(['msg'=>'Distribution deleted.']);
     }
 
@@ -98,19 +125,41 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $amount      = trim((string)($_POST['amount'] ?? '0'));
         $date        = trim($_POST['distribution_date'] ?? '');
         $notes       = nullOrStr($_POST['notes'] ?? '');
+        $receiptUrl  = nullOrStr($_POST['receipt_url'] ?? '');
+        $receiptPath = null;
         if (!$id) jsonErr('Distribution ID required.');
         if (!$recipientId) jsonErr('Please select a recipient.');
         if (!money_is_pos($amount)) jsonErr('Amount must be greater than zero.');
         if (!$date || !strtotime($date)) jsonErr('Valid date required.');
-        $chk = $pdo->prepare("SELECT recipient_id, amount, distribution_date, notes FROM dividend_distributions WHERE id=?");
+        if ($receiptUrl && !preg_match('#^https?://#i', $receiptUrl)) {
+            jsonErr('External links must start with http:// or https://');
+        }
+        $chk = $pdo->prepare("SELECT recipient_id, amount, distribution_date, notes, receipt_path, receipt_url FROM dividend_distributions WHERE id=?");
         $chk->execute([$id]);
         $before = $chk->fetch();
         if (!$before) jsonErr('Distribution not found.');
+        // Uploaded only after the row is known to exist, so a bad id can't leave
+        // an orphan file behind (same ordering as expenses_api.php::save_expense).
+        if (!empty($_FILES['receipt_file']['name'])) {
+            $up = handleUpload('receipt_file', 'dividends');
+            if ($up['error']) jsonErr($up['error']);
+            $receiptPath = $up['path'];
+        }
         $pdo->beginTransaction();
         try {
-            $pdo->prepare("UPDATE dividend_distributions SET recipient_id=?,amount=?,distribution_date=?,notes=? WHERE id=?")
-                ->execute([$recipientId,$amount,$date,$notes,$id]);
-            logChange($pdo,'EDIT_DIVIDEND_DIST','Vault',$before,['recipient_id'=>$recipientId,'amount'=>$amount,'distribution_date'=>$date,'notes'=>$notes]);
+            // A new upload REPLACES the stored path; no upload leaves the existing
+            // file attached (the URL field is always overwritten by the form).
+            if ($receiptPath) {
+                $pdo->prepare("UPDATE dividend_distributions SET recipient_id=?,amount=?,distribution_date=?,notes=?,receipt_path=?,receipt_url=? WHERE id=?")
+                    ->execute([$recipientId,$amount,$date,$notes,$receiptPath,$receiptUrl,$id]);
+            } else {
+                $pdo->prepare("UPDATE dividend_distributions SET recipient_id=?,amount=?,distribution_date=?,notes=?,receipt_url=? WHERE id=?")
+                    ->execute([$recipientId,$amount,$date,$notes,$receiptUrl,$id]);
+            }
+            logChange($pdo,'EDIT_DIVIDEND_DIST','Vault',$before,[
+                'recipient_id'=>$recipientId,'amount'=>$amount,'distribution_date'=>$date,'notes'=>$notes,
+                'receipt_path'=>$receiptPath ?? $before['receipt_path'], 'receipt_url'=>$receiptUrl,
+            ]);
             $pdo->commit();
         } catch (Throwable $e) { $pdo->rollBack(); throw $e; }
         jsonOk(['msg'=>'Distribution updated.']);
@@ -311,7 +360,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                    CONVERT(u.full_name USING utf8mb4) COLLATE utf8mb4_general_ci AS person_name,
                    CAST(NULL AS CHAR) COLLATE utf8mb4_general_ci AS recipient_name,
                    ct.amount, ct.notes,
-                   CAST(0 AS UNSIGNED) AS recipient_id
+                   CAST(0 AS UNSIGNED) AS recipient_id,
+                   CONVERT(ct.doc_path USING utf8mb4) COLLATE utf8mb4_general_ci AS proof_path,
+                   CONVERT(ct.doc_url  USING utf8mb4) COLLATE utf8mb4_general_ci AS proof_url
             FROM cash_transactions ct
             LEFT JOIN users u ON u.id = ct.user_id
             WHERE ct.transaction_type='remitted'
@@ -321,7 +372,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                    CONVERT(u.full_name USING utf8mb4) COLLATE utf8mb4_general_ci,
                    CONVERT(dr.name USING utf8mb4) COLLATE utf8mb4_general_ci,
                    dd.amount, dd.notes,
-                   dd.recipient_id
+                   dd.recipient_id,
+                   CONVERT(dd.receipt_path USING utf8mb4) COLLATE utf8mb4_general_ci,
+                   CONVERT(dd.receipt_url  USING utf8mb4) COLLATE utf8mb4_general_ci
             FROM dividend_distributions dd
             LEFT JOIN dividend_recipients dr ON dr.id = dd.recipient_id
             LEFT JOIN users u ON u.id = dd.created_by
@@ -331,7 +384,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                    CONVERT(u.full_name USING utf8mb4) COLLATE utf8mb4_general_ci,
                    CONVERT(dr.name USING utf8mb4) COLLATE utf8mb4_general_ci,
                    dret.amount, dret.notes,
-                   dret.recipient_id
+                   dret.recipient_id,
+                   -- dividend_returns carries no attachment columns; the Proof
+                   -- cell renders an em dash for these rows.
+                   CAST(NULL AS CHAR) COLLATE utf8mb4_general_ci,
+                   CAST(NULL AS CHAR) COLLATE utf8mb4_general_ci
             FROM dividend_returns dret
             LEFT JOIN dividend_recipients dr ON dr.id = dret.recipient_id
             LEFT JOIN users u ON u.id = dret.created_by
@@ -341,7 +398,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                    CAST(NULL AS CHAR) COLLATE utf8mb4_general_ci,
                    CONVERT(u2.full_name USING utf8mb4) COLLATE utf8mb4_general_ci,
                    ct2.amount, ct2.notes,
-                   CAST(0 AS UNSIGNED)
+                   CAST(0 AS UNSIGNED),
+                   CONVERT(ct2.doc_path USING utf8mb4) COLLATE utf8mb4_general_ci,
+                   CONVERT(ct2.doc_url  USING utf8mb4) COLLATE utf8mb4_general_ci
             FROM cash_transactions ct2
             LEFT JOIN users u2 ON u2.id = ct2.user_id
             WHERE ct2.transaction_type='vault_return'
@@ -428,7 +487,8 @@ $allRecipients = $pdo->query("SELECT id, name, is_active FROM dividend_recipient
 
 // All individual distribution records for the management table
 $distributions = $pdo->query("
-    SELECT dd.id, dd.recipient_id, dd.amount, dd.distribution_date, dd.notes, dd.created_at,
+    SELECT dd.id, dd.recipient_id, dd.amount, dd.distribution_date, dd.notes,
+           dd.receipt_path, dd.receipt_url, dd.created_at,
            dr.name AS recipient_name, u.full_name AS recorded_by
     FROM dividend_distributions dd
     LEFT JOIN dividend_recipients dr ON dr.id = dd.recipient_id
@@ -552,6 +612,7 @@ include '../includes/header.php';
           <tr>
             <th>Date</th><th>Encode Date</th><th>Recipient</th>
             <th class="text-end">Amount</th><th>Notes</th>
+            <th class="text-center" style="width:56px">Proof</th>
             <th class="text-center" style="width:70px">Actions</th>
           </tr>
         </thead>
@@ -563,6 +624,14 @@ include '../includes/header.php';
             <td class="fw-600"><?= clean($d['recipient_name'] ?? '—') ?></td>
             <td class="text-end fw-600 text-success"><?= money((float)$d['amount']) ?></td>
             <td class="text-muted" style="font-size:12px"><?= $d['notes'] ? clean($d['notes']) : '—' ?></td>
+            <td class="text-center">
+              <?php $dProof = $d['receipt_path'] ?: $d['receipt_url']; ?>
+              <?php if ($dProof): ?>
+              <a href="<?= clean($dProof) ?>" target="_blank" rel="noopener noreferrer" class="btn-icon" title="View proof of distribution"><i class="fa-solid fa-paperclip fa-xs"></i></a>
+              <?php else: ?>
+              <span class="text-muted">—</span>
+              <?php endif; ?>
+            </td>
             <td class="text-center" style="white-space:nowrap">
               <button class="btn-icon" title="Edit" onclick="openEditDist(<?= $d['id'] ?>)"><i class="fa-solid fa-pen fa-xs"></i></button>
               <button class="btn-icon danger" title="Delete" onclick="deleteDistribution(<?= $d['id'] ?>)"><i class="fa-solid fa-trash fa-xs"></i></button>
@@ -574,7 +643,7 @@ include '../includes/header.php';
           <tr style="border-top:2px solid var(--border)">
             <td colspan="3" class="fw-700">Total</td>
             <td class="text-end fw-700" id="distTotal"><?= money($totalDistrib) ?></td>
-            <td colspan="2"></td>
+            <td colspan="3"></td>
           </tr>
         </tfoot>
       </table>
@@ -884,16 +953,31 @@ include '../includes/header.php';
           <label class="form-label">Date</label>
           <input type="date" id="distDate" class="form-control">
         </div>
-        <div class="mb-0">
+        <div class="mb-3">
           <label class="form-label">Notes <span class="text-muted">(optional)</span></label>
           <textarea id="distNotes" class="form-control" rows="2" placeholder="e.g. Q2 dividend share"></textarea>
+        </div>
+        <div class="mb-0">
+          <label class="form-label">Proof of Distribution <span class="text-muted">(optional)</span></label>
+          <input type="file" class="form-control form-control-sm" id="distFile" accept=".jpg,.jpeg,.png,.pdf,.doc,.docx">
+          <div class="form-text">Signed acknowledgement, bank-transfer screenshot or PDF slip — or paste an external link below. Images are compressed on upload; max 30MB.</div>
+          <input type="url" class="form-control form-control-sm mt-1" id="distUrl" placeholder="https://drive.google.com/...">
         </div>
         <?php endif; ?>
       </div>
       <div class="modal-footer">
+        <div id="distUploadProgress" style="display:none;width:100%;margin-bottom:8px">
+          <div class="d-flex align-items-center justify-content-between mb-1">
+            <small style="color:var(--text-muted)"><i class="fa-solid fa-cloud-arrow-up me-1"></i>Uploading proof…</small>
+            <small id="distUploadPct" style="color:var(--text-muted);font-variant-numeric:tabular-nums">0%</small>
+          </div>
+          <div class="progress" style="height:5px;border-radius:3px">
+            <div class="progress-bar progress-bar-striped progress-bar-animated" id="distUploadBar" style="width:0%;background:var(--primary)"></div>
+          </div>
+        </div>
         <button class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
         <?php if (!empty($activeRecipients)): ?>
-        <button class="btn btn-primary" onclick="saveDistribution()"><i class="fa-solid fa-check me-1"></i>Record Distribution</button>
+        <button class="btn btn-primary" id="distSaveBtn" onclick="saveDistribution()"><i class="fa-solid fa-check me-1"></i>Record Distribution</button>
         <?php endif; ?>
       </div>
     </div>
@@ -1060,14 +1144,32 @@ include '../includes/header.php';
           <label class="form-label">Date</label>
           <input type="date" id="editDistDate" class="form-control">
         </div>
-        <div class="mb-0">
+        <div class="mb-3">
           <label class="form-label">Notes <span class="text-muted">(optional)</span></label>
           <textarea id="editDistNotes" class="form-control" rows="2"></textarea>
         </div>
+        <div class="mb-0">
+          <label class="form-label">Proof of Distribution <span class="text-muted">(optional)</span></label>
+          <input type="file" class="form-control form-control-sm" id="editDistFile" accept=".jpg,.jpeg,.png,.pdf,.doc,.docx">
+          <div class="form-text">Upload a new file to replace the current one. Images are compressed on upload; max 30MB.</div>
+          <input type="url" class="form-control form-control-sm mt-1" id="editDistUrl" placeholder="https://drive.google.com/...">
+          <div id="editDistProofCurrent" class="form-text mt-1" style="display:none">
+            Current proof: <a href="#" target="_blank" rel="noopener noreferrer" id="editDistProofLink">view</a>
+          </div>
+        </div>
       </div>
       <div class="modal-footer">
+        <div id="editDistUploadProgress" style="display:none;width:100%;margin-bottom:8px">
+          <div class="d-flex align-items-center justify-content-between mb-1">
+            <small style="color:var(--text-muted)"><i class="fa-solid fa-cloud-arrow-up me-1"></i>Uploading proof…</small>
+            <small id="editDistUploadPct" style="color:var(--text-muted);font-variant-numeric:tabular-nums">0%</small>
+          </div>
+          <div class="progress" style="height:5px;border-radius:3px">
+            <div class="progress-bar progress-bar-striped progress-bar-animated" id="editDistUploadBar" style="width:0%;background:var(--primary)"></div>
+          </div>
+        </div>
         <button class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-        <button class="btn btn-primary" onclick="saveEditDistribution()"><i class="fa-solid fa-check me-1"></i>Save Changes</button>
+        <button class="btn btn-primary" id="editDistSaveBtn" onclick="saveEditDistribution()"><i class="fa-solid fa-check me-1"></i>Save Changes</button>
       </div>
     </div>
   </div>
@@ -1283,7 +1385,9 @@ function loadLogs() {
     let html = `<div class="table-responsive"><table class="table table-sm table-hover mb-0">
       <thead><tr>
         <th>Date</th><th>Type</th><th>Person / Recipient</th>
-        <th class="text-end">Amount</th><th>Notes</th><th class="text-center" style="width:70px"></th>
+        <th class="text-end">Amount</th><th>Notes</th>
+        <th class="text-center" style="width:56px">Proof</th>
+        <th class="text-center" style="width:70px"></th>
       </tr></thead><tbody>`;
     res.logs.forEach(r => {
       const isRem      = r.log_type === 'remittance';
@@ -1317,12 +1421,21 @@ function loadLogs() {
         actions  = `<button class="btn-icon" title="Edit" onclick="openEditUserReturn(${r.id})"><i class="fa-solid fa-pen fa-xs"></i></button>`
                  + `<button class="btn-icon danger" title="Delete" onclick="deleteUserReturn(${r.id})"><i class="fa-solid fa-trash fa-xs"></i></button>`;
       }
+      // Attachment, where the source table has one: remittances and
+      // vault→user returns carry cash_transactions.doc_path/doc_url,
+      // distributions carry dividend_distributions.receipt_path/receipt_url,
+      // and dividend returns have none (the query sends NULL for those).
+      const proofHref = _vaultSafeUrl(r.proof_path || r.proof_url);
+      const proof = proofHref
+        ? `<a href="${esc(proofHref)}" target="_blank" rel="noopener noreferrer" class="btn-icon" title="View proof"><i class="fa-solid fa-paperclip fa-xs"></i></a>`
+        : '<span class="text-muted">—</span>';
       html += `<tr>
         <td style="white-space:nowrap;color:var(--text-secondary)">${esc(r.log_date)}</td>
         <td>${badge}</td>
         <td>${person}</td>
         <td class="text-end fw-600" style="color:${amtColor}">₱${parseFloat(r.amount||0).toLocaleString('en-PH',{minimumFractionDigits:2})}</td>
         <td class="text-muted" style="font-size:12px">${esc(r.notes)||'—'}</td>
+        <td class="text-center">${proof}</td>
         <td class="text-center" style="white-space:nowrap">${actions}</td>
       </tr>`;
     });
@@ -1368,6 +1481,100 @@ function saveRemittance() {
 }
 
 // ── Distribution modal ───────────────────────────────────────
+// ── Proof upload plumbing (shared by both distribution modals) ───
+// Reject javascript:/data:/vbscript: before a stored value reaches an href.
+// Server-side validation rejects those on the way in; this is the render-side
+// belt, matching safeUrl() in collection.php / cash.php.
+function _vaultSafeUrl(u) {
+  if (!u) return '';
+  const v = String(u).trim();
+  return /^\s*(javascript|data|vbscript|file):/i.test(v) ? '' : v;
+}
+
+// Lock a modal's save button and show a spinner — the same shape as
+// expenses.php::_setExpSaveBusy / collection.php::_setPaySaveBusy, so a
+// double-tap cannot fire a second POST before the first round-trip returns.
+function _setDistBusy(btnId, busy, label, idleHtml) {
+  const btn = document.getElementById(btnId);
+  if (!btn) return;
+  btn.disabled = busy;
+  btn.innerHTML = busy
+    ? '<span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>' + (label || 'Saving…')
+    : idleHtml;
+}
+
+function _resetDistProgress(prefix) {
+  const wrap = document.getElementById(prefix + 'UploadProgress');
+  if (!wrap) return;
+  wrap.style.display = 'none';
+  document.getElementById(prefix + 'UploadBar').style.width = '0%';
+  document.getElementById(prefix + 'UploadPct').textContent = '0%';
+}
+
+// Submit a distribution FormData. With a file attached it goes over XHR so
+// upload.onprogress can drive the bar (fetch/apiPost expose no progress);
+// with no file it takes the ordinary apiPost path.
+function _submitDist(o) {
+  const el = document.getElementById(o.msgId);
+
+  const done = (res) => {
+    el.style.display = '';
+    if (!res || !res.success) {
+      _setDistBusy(o.btnId, false, null, o.idleHtml);
+      _resetDistProgress(o.prefix);
+      el.className = 'alert alert-danger';
+      el.textContent = (res && res.error) || 'Save failed.';
+      return;
+    }
+    el.className = 'alert alert-success';
+    el.textContent = res.msg;
+    // Full reload — stat cards, recipient stats and charts are server-rendered
+    // and stay stale otherwise (same as every other write handler on this page).
+    setTimeout(() => { o.modal.hide(); location.reload(); }, 700);
+  };
+
+  const fail = () => {
+    _setDistBusy(o.btnId, false, null, o.idleHtml);
+    _resetDistProgress(o.prefix);
+    el.style.display = '';
+    el.className = 'alert alert-danger';
+    el.textContent = 'Network error. Please try again.';
+  };
+
+  _setDistBusy(o.btnId, true, o.file ? 'Uploading…' : 'Saving…', o.idleHtml);
+  el.style.display = 'none';
+
+  if (!o.file) {
+    apiPost('../admin/vault.php', o.fd, (err, res) => err ? fail() : done(res));
+    return;
+  }
+
+  const bar = document.getElementById(o.prefix + 'UploadBar');
+  const pct = document.getElementById(o.prefix + 'UploadPct');
+  document.getElementById(o.prefix + 'UploadProgress').style.display = '';
+
+  const xhr = new XMLHttpRequest();
+  xhr.open('POST', '../admin/vault.php', true);
+  xhr.withCredentials = true;
+  const hdr = window.csrfHeaders();
+  Object.keys(hdr).forEach(k => xhr.setRequestHeader(k, hdr[k]));
+
+  xhr.upload.onprogress = (e) => {
+    if (!e.lengthComputable) return;
+    const p = Math.round(e.loaded / e.total * 100);
+    bar.style.width = p + '%';
+    pct.textContent = p + '%';
+    // 100% means the bytes are up; the server is still compressing the image.
+    if (p >= 100) { pct.textContent = 'Processing…'; _setDistBusy(o.btnId, true, 'Processing…', o.idleHtml); }
+  };
+  xhr.onload  = () => { _resetDistProgress(o.prefix); try { done(JSON.parse(xhr.responseText)); } catch (e) { fail(); } };
+  xhr.onerror = fail;
+  xhr.send(o.fd);
+}
+
+const DIST_SAVE_HTML      = '<i class="fa-solid fa-check me-1"></i>Record Distribution';
+const EDIT_DIST_SAVE_HTML = '<i class="fa-solid fa-check me-1"></i>Save Changes';
+
 function openDistributionModal() {
   const el = document.getElementById('distRecipient');
   if (el) el.value = '';
@@ -1376,24 +1583,38 @@ function openDistributionModal() {
   document.getElementById('distDate') && (document.getElementById('distDate').value = new Date().toISOString().slice(0,10));
   const nt = document.getElementById('distNotes');
   if (nt) nt.value = '';
+  // The proof fields only exist when there is at least one active recipient.
+  const df = document.getElementById('distFile');
+  if (df) df.value = '';
+  const du = document.getElementById('distUrl');
+  if (du) du.value = '';
+  _setDistBusy('distSaveBtn', false, null, DIST_SAVE_HTML);
+  _resetDistProgress('dist');
   document.getElementById('distMsg').style.display = 'none';
   distributionModal.show();
 }
 
 function saveDistribution() {
-  const el = document.getElementById('distMsg');
-  apiPost('../admin/vault.php', {
-    action:'add_distribution',
-    recipient_id: document.getElementById('distRecipient').value,
-    amount: document.getElementById('distAmount').value,
-    distribution_date: document.getElementById('distDate').value,
-    notes: document.getElementById('distNotes').value
-  }, (err, res) => {
-    el.style.display='';
-    if (!res || !res.success){ el.className='alert alert-danger'; el.textContent=(res && res.error)||'Save failed.'; return; }
-    el.className='alert alert-success'; el.textContent=res.msg;
-    setTimeout(()=>{ distributionModal.hide(); location.reload(); }, 700);
-  });
+  const btn = document.getElementById('distSaveBtn');
+  if (btn && btn.disabled) return;   // double-tap belt
+
+  // Client-side size guard (30 MB — the same cap handleUpload enforces) so an
+  // oversized file fails instantly instead of after a long upload.
+  const fileInput = document.getElementById('distFile');
+  if (fileInput && fileInput.files[0] && !validateFileSize(fileInput)) return;
+  const file = fileInput ? fileInput.files[0] : null;
+
+  const fd = new FormData();
+  fd.append('action',            'add_distribution');
+  fd.append('recipient_id',      document.getElementById('distRecipient').value);
+  fd.append('amount',            document.getElementById('distAmount').value);
+  fd.append('distribution_date', document.getElementById('distDate').value);
+  fd.append('notes',             document.getElementById('distNotes').value);
+  fd.append('receipt_url',       document.getElementById('distUrl').value);
+  if (file) fd.append('receipt_file', file);
+
+  _submitDist({ fd: fd, file: file, prefix: 'dist', btnId: 'distSaveBtn',
+                msgId: 'distMsg', idleHtml: DIST_SAVE_HTML, modal: distributionModal });
 }
 
 // ── Delete handlers ──────────────────────────────────────────
@@ -1490,25 +1711,45 @@ function openEditDist(id) {
   document.getElementById('editDistAmount').value    = parseFloat(d.amount);
   document.getElementById('editDistDate').value      = d.distribution_date;
   document.getElementById('editDistNotes').value     = d.notes || '';
+  document.getElementById('editDistFile').value      = '';
+  document.getElementById('editDistUrl').value       = d.receipt_url || '';
+  // Show what is already attached; uploading a new file replaces it.
+  const pc = document.getElementById('editDistProofCurrent');
+  const pl = document.getElementById('editDistProofLink');
+  const proof = _vaultSafeUrl(d.receipt_path || d.receipt_url);
+  if (proof) {
+    pl.href = proof;
+    pl.textContent = d.receipt_path ? 'Uploaded file' : 'External link';
+    pc.style.display = '';
+  } else {
+    pc.style.display = 'none';
+  }
+  _setDistBusy('editDistSaveBtn', false, null, EDIT_DIST_SAVE_HTML);
+  _resetDistProgress('editDist');
   document.getElementById('editDistMsg').style.display = 'none';
   editDistModal.show();
 }
 
 function saveEditDistribution() {
-  const el = document.getElementById('editDistMsg');
-  apiPost('../admin/vault.php', {
-    action: 'edit_distribution',
-    id: document.getElementById('editDistId').value,
-    recipient_id: document.getElementById('editDistRecipient').value,
-    amount: document.getElementById('editDistAmount').value,
-    distribution_date: document.getElementById('editDistDate').value,
-    notes: document.getElementById('editDistNotes').value
-  }, (err, res) => {
-    el.style.display = '';
-    if (!res || !res.success){ el.className='alert alert-danger'; el.textContent=(res&&res.error)||'Save failed.'; return; }
-    el.className='alert alert-success'; el.textContent=res.msg;
-    setTimeout(()=>{ editDistModal.hide(); location.reload(); }, 700);
-  });
+  const btn = document.getElementById('editDistSaveBtn');
+  if (btn && btn.disabled) return;   // double-tap belt
+
+  const fileInput = document.getElementById('editDistFile');
+  if (fileInput && fileInput.files[0] && !validateFileSize(fileInput)) return;
+  const file = fileInput ? fileInput.files[0] : null;
+
+  const fd = new FormData();
+  fd.append('action',            'edit_distribution');
+  fd.append('id',                document.getElementById('editDistId').value);
+  fd.append('recipient_id',      document.getElementById('editDistRecipient').value);
+  fd.append('amount',            document.getElementById('editDistAmount').value);
+  fd.append('distribution_date', document.getElementById('editDistDate').value);
+  fd.append('notes',             document.getElementById('editDistNotes').value);
+  fd.append('receipt_url',       document.getElementById('editDistUrl').value);
+  if (file) fd.append('receipt_file', file);
+
+  _submitDist({ fd: fd, file: file, prefix: 'editDist', btnId: 'editDistSaveBtn',
+                msgId: 'editDistMsg', idleHtml: EDIT_DIST_SAVE_HTML, modal: editDistModal });
 }
 
 // ── Edit Return ───────────────────────────────────────────────
