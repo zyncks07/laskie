@@ -109,6 +109,8 @@ include '../includes/header.php';
       <div class="modal-body">
         <input type="hidden" id="payId">
         <input type="hidden" id="payIdempotencyKey">
+        <!-- Set only when the cashier came in via a charge's Collect button. -->
+        <input type="hidden" id="payChargeId">
         <div class="row g-3">
           <div class="col-md-6">
             <label class="form-label">Rental Unit *</label>
@@ -497,6 +499,9 @@ function openPaymentModal() {
   document.getElementById('payModalTitle').innerHTML = '<i class="fa-solid fa-money-bill-wave me-2"></i>Record Payment';
   document.getElementById('payId').value          = '';
   document.getElementById('payIdempotencyKey').value = newIdempotencyKey();
+  // Cleared on every open — collectCharge() sets it again right after. A stale
+  // id here would silently settle the previous charge with the next payment.
+  document.getElementById('payChargeId').value    = '';
   document.getElementById('payUnit').value        = '';
   document.getElementById('payTenant').innerHTML  = '<option value="">— Auto from unit —</option>';
   document.getElementById('payType').value        = 'rent';
@@ -656,6 +661,7 @@ function savePayment(andPrint) {
   data.append('idempotency_key', document.getElementById('payIdempotencyKey').value);
   data.append('unit_id',         document.getElementById('payUnit').value);
   data.append('tenant_id',       document.getElementById('payTenant').value);
+  data.append('charge_id',       document.getElementById('payChargeId').value);
   data.append('payment_type',    document.getElementById('payType').value);
   data.append('service_type_id', document.getElementById('payService').value);
   data.append('amount',          document.getElementById('payAmount').value);
@@ -768,7 +774,11 @@ function viewUnitPayments(unitId, unitName, month, year) {
     }
 
     // ── Outstanding service charges ──────────────────────────────
-    var outstanding = charges.filter(function(c) { return !c.payment_id; });
+    // Outstanding is the unsettled REMAINDER (charge_payments), not "has no
+    // payment_id" — a charge paid in instalments stays here until it is fully
+    // settled. The list also carries arrears raised in other periods, which is
+    // where every carried-over balance lives.
+    var outstanding = charges.filter(function(c) { return (parseFloat(c.outstanding) || 0) > 0; });
     if (outstanding.length) {
       html += '<div class="alert alert-warning py-2 mb-3" style="font-size:12.5px">' +
         '<div class="fw-600 mb-2"><i class="fa-solid fa-triangle-exclamation me-1"></i>Outstanding Service Charges</div>' +
@@ -776,17 +786,27 @@ function viewUnitPayments(unitId, unitName, month, year) {
         '<th>Service</th><th>Period</th><th class="text-end">Amount</th><th class="text-center" style="width:90px">Actions</th>' +
         '</tr></thead><tbody>';
       outstanding.forEach(function(c) {
-        var period = MONTHS[(parseInt(c.period_month)||1) - 1] + ' ' + parseInt(c.period_year);
+        var period  = MONTHS[(parseInt(c.period_month)||1) - 1] + ' ' + parseInt(c.period_year);
+        var settled = parseFloat(c.settled)     || 0;
+        var left    = parseFloat(c.outstanding) || 0;
+        // Partly-paid charges show progress so the cashier can see what is left
+        // before typing the next instalment.
+        var amtCell = settled > 0
+          ? '<span class="fw-600">' + fmt(left) + '</span>' +
+            '<div class="stat-sub">' + fmt(settled) + ' of ' + fmt(c.amount) + ' paid</div>'
+          : '<span class="fw-600">' + fmt(c.amount) + '</span>';
         html += '<tr>' +
-          '<td>' + esc(c.service_name || c.description) + '</td>' +
+          '<td>' + esc(c.service_name || c.description) +
+            (parseInt(c.other_period) ? ' <span class="muted-pill" style="font-size:10px">arrears</span>' : '') + '</td>' +
           '<td>' + esc(period) + '</td>' +
-          '<td class="text-end fw-600">' + fmt(c.amount) + '</td>' +
+          '<td class="text-end">' + amtCell + '</td>' +
           '<td class="text-center">' +
             '<button class="btn btn-primary btn-sm py-0 px-2 me-1" style="font-size:11px" title="Collect payment" ' +
-              'onclick="collectCharge(' + parseInt(c.id) + ',' + parseInt(unitId) + ',' + parseInt(c.service_type_id||0) + ',' + (parseFloat(c.amount)||0) + ',' + parseInt(c.period_month) + ',' + parseInt(c.period_year) + ')">' +
+              'onclick="collectCharge(' + parseInt(c.id) + ',' + parseInt(unitId) + ',' + parseInt(c.service_type_id||0) + ',' + left + ',' + parseInt(c.period_month) + ',' + parseInt(c.period_year) + ')">' +
               '<i class="fa-solid fa-money-bill-wave fa-xs me-1"></i>Collect</button>' +
-            '<button class="btn-icon danger" title="Void charge" onclick="deleteCharge(' + parseInt(c.id) + ')">' +
-              '<i class="fa-solid fa-file-circle-xmark fa-xs"></i></button>' +
+            (settled > 0 ? '' :
+              '<button class="btn-icon danger" title="Void charge" onclick="deleteCharge(' + parseInt(c.id) + ')">' +
+              '<i class="fa-solid fa-file-circle-xmark fa-xs"></i></button>') +
           '</td>' +
         '</tr>';
       });
@@ -946,6 +966,9 @@ function editPayment(id) {
 
     document.getElementById('payModalTitle').innerHTML = '<i class="fa-solid fa-pen me-2"></i>Edit Payment';
     document.getElementById('payId').value          = p.id;
+    // An edit never re-targets a charge — the server recovers the allocation
+    // this payment already holds and re-checks the new amount against it.
+    document.getElementById('payChargeId').value    = '';
     // Edits are naturally idempotent (UPDATE by id); no key needed.
     document.getElementById('payIdempotencyKey').value = '';
     document.getElementById('payUnit').value        = p.unit_id;
@@ -1117,6 +1140,11 @@ function saveCharge() {
   });
 }
 
+// `amount` is the charge's OUTSTANDING remainder, not its face value — the
+// cashier types over it to record a smaller instalment. chargeId is posted with
+// the payment so the server settles this exact charge instead of guessing by
+// (service_type, period), a guess that can never match a charge with no service
+// type — which is every carried-over arrears row.
 function collectCharge(chargeId, unitId, serviceTypeId, amount, month, year) {
   unitDetailModal.hide();
   setTimeout(function() {
@@ -1128,6 +1156,7 @@ function collectCharge(chargeId, unitId, serviceTypeId, amount, month, year) {
         document.getElementById('payType').value = 'service';
         onPayTypeChange('service');
         if (serviceTypeId) document.getElementById('payService').value = serviceTypeId;
+        document.getElementById('payChargeId').value     = chargeId;
         document.getElementById('payAmount').value       = parseFloat(amount).toFixed(2);
         document.getElementById('payPeriodMonth').value  = month;
         document.getElementById('payPeriodYear').value   = year;

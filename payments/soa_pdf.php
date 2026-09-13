@@ -106,22 +106,21 @@ if ($payments) {
 }
 
 // ── Fetch Service Charges ─────────────────────────────────────
-// A charge is treated as outstanding when payment_id is NULL OR the linked
-// payment has been voided/soft-deleted. The LEFT JOIN with the deleted/voided
-// filter forces such rows to have p.id IS NULL, which the ledger uses below
-// to label them "(Unpaid)" so they stay as debits with no offsetting credit.
+// Outstanding = the charge total less what LIVE payments have settled against
+// it (charge_payments), so a charge paid down in instalments prints its real
+// remainder. The charge itself always posts as a debit at its FULL amount and
+// each payment as a separate credit, so the printed balance is unaffected —
+// settled only drives the label. Must mirror payments/history.php exactly.
 $pdfServiceCharges = [];
 $sq = $pdo->prepare("
     SELECT uc.*, st.name as service_name, u.full_name as billed_by_name,
            vu.full_name as voided_by_name,
-           (uc.payment_id IS NULL OR p.id IS NULL) AS is_outstanding
+           " . chargeSettledSql('uc') . " AS settled,
+           (uc.amount - " . chargeSettledSql('uc') . " > 0) AS is_outstanding
     FROM unit_charges uc
     LEFT JOIN service_types st ON uc.service_type_id = st.id
     LEFT JOIN users u  ON uc.created_by = u.id
     LEFT JOIN users vu ON uc.voided_by  = vu.id
-    LEFT JOIN payments p ON p.id = uc.payment_id
-                        AND p.deleted_at IS NULL
-                        AND p.status != 'voided'
     WHERE uc.unit_id = ? AND uc.charge_date BETWEEN ? AND ?
     " . ($scopeTenantId !== null ? "AND (uc.tenant_id = ? OR uc.tenant_id IS NULL)" : "") . "
     ORDER BY uc.charge_date ASC
@@ -187,8 +186,11 @@ foreach ($pdfServiceCharges as $c) {
     $period   = date('F Y', mktime(0,0,0,(int)$c['period_month'],1,(int)$c['period_year']));
     $desc     = ($c['service_name'] ?? $c['description']) . ' — ' . $period;
     $isVoided = !empty($c['voided_at']);
-    if (!empty($c['is_outstanding']) && !$isVoided) $desc .= ' (Unpaid)';
-    if ($isVoided)                                  $desc .= ' (Voided)';
+    $unpaid   = !empty($c['is_outstanding']) && !$isVoided;
+    $settled  = from_cents(to_cents($c['settled'] ?? 0));
+    if ($unpaid && money_is_pos($settled)) $desc .= ' (' . money($settled) . ' of ' . money($c['amount']) . ' paid)';
+    elseif ($unpaid)                       $desc .= ' (Unpaid)';
+    if ($isVoided)                         $desc .= ' (Voided)';
     $ledger[] = [
         'date'        => $c['charge_date'],
         'description' => $desc,

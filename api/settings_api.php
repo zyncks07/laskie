@@ -340,6 +340,7 @@ switch ($action) {
             'refunds',
             'cash_transactions',
             'rent_charge_voids',
+            'charge_payments',
             'unit_charges',
             'unit_rate_history',
             'payments',

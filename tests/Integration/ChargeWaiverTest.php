@@ -24,7 +24,7 @@ final class ChargeWaiverTest extends IsolatedDbTestCase
     // system_logs is included so the audit-trail assertion counts only this
     // test's own rows rather than everything the class logged before it.
     private const MONEY_TABLES = [
-        'rent_charge_voids', 'payments', 'cash_transactions',
+        'charge_payments', 'rent_charge_voids', 'payments', 'cash_transactions',
         'unit_charges', 'refunds', 'rental_units', 'tenants', 'system_logs',
     ];
 

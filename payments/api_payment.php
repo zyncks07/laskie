@@ -70,10 +70,17 @@ function voidServiceCharge(PDO $pdo, int $chargeId, string $reason): array {
     $chk->execute([$chargeId]);
     $c = $chk->fetch();
     if (!$c)                        return [false, 'Charge not found.', '0.00'];
-    if ($c['payment_id'] !== null)  return [false, 'Cannot void a paid charge. Refund the payment first.', '0.00'];
     if (!empty($c['voided_at']))    return [false, 'That charge is already voided.', '0.00'];
+    // A charge that has taken money cannot be waived — partly or wholly. Voiding
+    // it would cancel a receivable the tenant has already paid against, leaving
+    // the payment crediting nothing.
+    $settled = getChargeSettled($pdo, $chargeId);
+    if (money_is_pos($settled)) {
+        return [false, money($settled) . ' has already been settled against this charge. '
+                     . 'Refund or void the payment first.', '0.00'];
+    }
 
-    $pdo->prepare("UPDATE unit_charges SET voided_at=NOW(), voided_by=?, void_reason=? WHERE id=? AND payment_id IS NULL")
+    $pdo->prepare("UPDATE unit_charges SET voided_at=NOW(), voided_by=?, void_reason=? WHERE id=?")
         ->execute([$_SESSION['user']['id'], $reason, $chargeId]);
 
     logActivity($pdo, 'VOID_CHARGE', 'Charges',
@@ -82,11 +89,72 @@ function voidServiceCharge(PDO $pdo, int $chargeId, string $reason): array {
     return [true, 'Service charge voided.', from_cents(to_cents($c['amount']))];
 }
 
+/**
+ * Settle $amount of charge #$chargeId from payment #$paymentId.
+ *
+ * One allocation row per (charge, payment) — re-saving an edited payment
+ * updates that row in place rather than stacking a second one. The caller owns
+ * the transaction.
+ */
+function allocateToCharge(PDO $pdo, int $chargeId, int $paymentId, string $amount, ?int $userId): void {
+    $pdo->prepare(
+        "INSERT INTO charge_payments (charge_id, payment_id, amount, created_by)
+         VALUES (?,?,?,?)
+         ON DUPLICATE KEY UPDATE amount = VALUES(amount)"
+    )->execute([$chargeId, $paymentId, $amount, $userId]);
+}
+
+/**
+ * Validate a service payment against the charge it claims to settle.
+ * Returns [ok(bool), message(string), charge(array|null)].
+ *
+ * Overpayment is refused rather than absorbed: the cashier is told exactly what
+ * is left so they either correct the figure or record the excess as its own
+ * payment. Silently inventing a charge for the difference would put money on a
+ * row nobody billed.
+ *
+ * $excludePaymentId lets an EDIT ignore its own existing allocation, so
+ * re-saving a payment at the same amount doesn't read as an overpayment.
+ */
+function validateChargeTarget(PDO $pdo, int $chargeId, int $unitId, string $amount, ?int $excludePaymentId = null): array {
+    $q = $pdo->prepare("SELECT * FROM unit_charges WHERE id=? FOR UPDATE");
+    $q->execute([$chargeId]);
+    $c = $q->fetch();
+    if (!$c)                            return [false, 'That service charge no longer exists.', null];
+    if ((int)$c['unit_id'] !== $unitId) return [false, 'That service charge belongs to a different unit.', null];
+    if (!empty($c['voided_at']))        return [false, 'That service charge has been voided. Restore it first.', null];
+
+    $sql  = "SELECT COALESCE(SUM(cp.amount),0) FROM charge_payments cp
+             JOIN payments pp ON pp.id = cp.payment_id
+             WHERE cp.charge_id = ? AND pp.deleted_at IS NULL AND pp.status <> 'voided'";
+    $args = [$chargeId];
+    if ($excludePaymentId !== null) { $sql .= " AND cp.payment_id <> ?"; $args[] = $excludePaymentId; }
+    $sq = $pdo->prepare($sql);
+    $sq->execute($args);
+    $settled     = from_cents(to_cents($sq->fetchColumn()));
+    $outstanding = money_max('0.00', money_sub($c['amount'], $settled));
+
+    if (!money_is_pos($outstanding)) {
+        return [false, '“' . $c['description'] . '” is already fully settled.', null];
+    }
+    if (money_gt($amount, $outstanding)) {
+        return [false, 'That payment is ' . money(money_sub($amount, $outstanding))
+                     . ' more than the ' . money($outstanding) . ' still outstanding on “'
+                     . $c['description'] . '”. Record the excess as a separate payment.', null];
+    }
+    return [true, '', $c];
+}
+
 // ── Record Payment ────────────────────────────────────────────
 if ($action === 'save_payment') {
     $id          = (int)($_POST['id'] ?? 0);
     $unitId      = (int)($_POST['unit_id'] ?? 0);
     $tenantId    = (int)($_POST['tenant_id'] ?? 0) ?: null;
+    // The specific outstanding charge this payment settles, when the cashier
+    // used the "Collect" button on one. Without it the handler falls back to
+    // guessing by (service_type, period), which can only ever match a charge
+    // that HAS a service type — every carried-over arrears row has none.
+    $chargeId    = (int)($_POST['charge_id'] ?? 0) ?: null;
     $type        = $_POST['payment_type'] ?? 'rent';
     $serviceId   = (int)($_POST['service_type_id'] ?? 0) ?: null;
     $amount      = trim((string)($_POST['amount'] ?? '0'));
@@ -118,6 +186,30 @@ if ($action === 'save_payment') {
         );
         $oq->execute([$unitId, $periodEnd, $periodStart]);
         $tenantId = (int)($oq->fetchColumn() ?: 0) ?: null;
+    }
+
+    // Reject an impossible charge target up front — before the upload below and
+    // before any row is written — so a bad amount can't leave an orphaned file.
+    if ($chargeId !== null && $type !== 'service') {
+        jsonErr('Only a service payment can settle a service charge.');
+    }
+    // On an EDIT the client need not resend charge_id, so recover the charge this
+    // payment already settles. Raising the amount past what the charge still has
+    // outstanding has to be refused here too, or the edit becomes a back door
+    // around the overpayment rule.
+    $verifyChargeId = $chargeId;
+    if ($verifyChargeId === null && $id && $type === 'service') {
+        $ex = $pdo->prepare(
+            "SELECT cp.charge_id FROM charge_payments cp
+             JOIN unit_charges uc ON uc.id = cp.charge_id
+             WHERE cp.payment_id = ? AND uc.source = 'pre_billed' LIMIT 1"
+        );
+        $ex->execute([$id]);
+        $verifyChargeId = ($ex->fetchColumn() ?: null);
+    }
+    if ($verifyChargeId !== null) {
+        [$okT, $msgT] = validateChargeTarget($pdo, (int)$verifyChargeId, $unitId, $amount, $id ?: null);
+        if (!$okT) jsonErr($msgT);
     }
 
     // Editing an existing payment is admin-only. Guard BEFORE touching the
@@ -190,10 +282,16 @@ if ($action === 'save_payment') {
                 ->execute([$amount, $payDate, $id]);
 
             if ($type === 'service') {
-                // After the guards above, unit_id + service_type stay the same — only
-                // amount / charge_date can change, which is exactly what this updates.
-                $pdo->prepare("UPDATE unit_charges SET amount=?, charge_date=? WHERE payment_id=?")
+                // An auto_collected charge IS the payment — it was conjured to make
+                // the statement balance, so it tracks the new amount/date exactly.
+                // A pre_billed charge is a real bill that the payment only settles
+                // part of: its amount must never move, so the ALLOCATION changes
+                // instead. (validateChargeTarget above already proved the new
+                // amount fits, ignoring this payment's own existing allocation.)
+                $pdo->prepare("UPDATE unit_charges SET amount=?, charge_date=? WHERE payment_id=? AND source='auto_collected'")
                     ->execute([$amount, $payDate, $id]);
+                $pdo->prepare("UPDATE charge_payments SET amount=? WHERE payment_id=?")
+                    ->execute([$amount, $id]);
             }
 
             $after = ['unit_id'=>$unitId,'tenant_id'=>$tenantId,'payment_type'=>$type,'service_type_id'=>$serviceId,'amount'=>$amount,'payment_date'=>$payDate,'due_date'=>$dueDate,'period_month'=>$periodMonth,'period_year'=>$periodYear,'notes'=>$notes];
@@ -248,20 +346,47 @@ if ($action === 'save_payment') {
                     $stRow->execute([$serviceId]);
                     $stName  = $stRow->fetchColumn() ?: 'Service';
                     $chgDesc = $notes ?: $stName;
-                    // voided_at IS NULL: a waived charge is already settled and
-                    // carries an offsetting credit on the SoA. Linking a payment
-                    // to it would credit the tenant twice, so a fresh
-                    // auto_collected row is created instead. The same guard
-                    // applies to both restore paths below.
-                    $exist = $pdo->prepare("SELECT id FROM unit_charges WHERE unit_id=? AND service_type_id=? AND period_month=? AND period_year=? AND payment_id IS NULL AND voided_at IS NULL AND source='pre_billed' LIMIT 1");
-                    $exist->execute([$unitId, $serviceId, $periodMonth, $periodYear]);
-                    $existChargeId = $exist->fetchColumn();
-                    if ($existChargeId) {
-                        $pdo->prepare("UPDATE unit_charges SET payment_id=?, amount=?, charge_date=? WHERE id=?")
-                            ->execute([$newId, $amount, $payDate, $existChargeId]);
+
+                    // Settling a charge ALLOCATES against it — it never rewrites
+                    // unit_charges.amount. The old link did, turning a ₱12,500
+                    // charge into a ₱4,000 one on the first instalment and
+                    // destroying the rest of the receivable.
+                    $targetChargeId = $chargeId;
+                    if ($targetChargeId === null) {
+                        // No explicit target: fall back to the historical lookup
+                        // for a pre_billed charge of the same service + period
+                        // that still has something owing.
+                        // voided_at IS NULL — a waived charge is already settled
+                        // and carries an offsetting credit on the SoA, so linking
+                        // a payment to it would credit the tenant twice.
+                        $exist = $pdo->prepare(
+                            "SELECT uc.id FROM unit_charges uc
+                             WHERE uc.unit_id=? AND uc.service_type_id=? AND uc.period_month=? AND uc.period_year=?
+                               AND uc.voided_at IS NULL AND uc.source='pre_billed'
+                               AND uc.amount - " . chargeSettledSql('uc') . " > 0
+                             LIMIT 1"
+                        );
+                        $exist->execute([$unitId, $serviceId, $periodMonth, $periodYear]);
+                        $targetChargeId = ($exist->fetchColumn() ?: null);
+                        // Only take the fallback if it can absorb the whole payment;
+                        // otherwise leave it alone and raise an auto_collected row,
+                        // preserving the pre-existing behaviour for this path.
+                        if ($targetChargeId !== null) {
+                            [$okT] = validateChargeTarget($pdo, (int)$targetChargeId, $unitId, $amount);
+                            if (!$okT) $targetChargeId = null;
+                        }
+                    }
+
+                    if ($targetChargeId !== null) {
+                        allocateToCharge($pdo, (int)$targetChargeId, $newId, $amount, (int)$_SESSION['user']['id']);
                     } else {
+                        // Nothing was billed for this — raise the charge that makes
+                        // the statement balance, and allocate the payment to it in
+                        // full. auto_collected rows stay strictly 1:1 with their
+                        // payment (see ServiceChargeLifecycleTest).
                         $pdo->prepare("INSERT INTO unit_charges (unit_id,tenant_id,service_type_id,amount,description,charge_date,period_month,period_year,payment_id,source,created_by) VALUES (?,?,?,?,?,?,?,?,?,?,?)")
                             ->execute([$unitId,$tenantId,$serviceId,$amount,$chgDesc,$payDate,$periodMonth,$periodYear,$newId,'auto_collected',$_SESSION['user']['id']]);
+                        allocateToCharge($pdo, (int)$pdo->lastInsertId(), $newId, $amount, (int)$_SESSION['user']['id']);
                     }
                 }
 
@@ -320,7 +445,11 @@ if ($action === 'delete_payment') {
         $pdo->prepare("UPDATE payments SET deleted_at=NOW() WHERE id=?")->execute([$id]);
         $pdo->prepare("DELETE FROM cash_transactions WHERE reference_payment_id=? AND transaction_type='received'")->execute([$id]);
         if ($p['payment_type'] === 'service') {
-            $pdo->prepare("UPDATE unit_charges SET payment_id=NULL WHERE payment_id=? AND source='pre_billed'")->execute([$id]);
+            // Allocations are LEFT IN PLACE: they stop settling their charge the
+            // moment the payment is voided/soft-deleted (chargeSettledSql only
+            // counts live payments), and revive untouched on restore. Only the
+            // auto_collected charge — which exists solely because of this
+            // payment — is removed; its allocation cascades with it.
             $pdo->prepare("DELETE FROM unit_charges WHERE payment_id=? AND source='auto_collected'")->execute([$id]);
         }
         logActivity($pdo,'DELETE_PAYMENT','Payments',"Soft-deleted payment #{$id} ({$p['invoice_no']}) ₱{$p['amount']}");
@@ -360,23 +489,35 @@ if ($action === 'restore_deleted_payment') {
                 ->execute([$cashUserId,'received',$p['amount'],$id,"Payment received: {$p['invoice_no']}",$p['payment_date']]);
         }
         if ($p['payment_type'] === 'service') {
-            $look = $pdo->prepare("SELECT id FROM unit_charges WHERE unit_id=? AND service_type_id=? AND period_month=? AND period_year=? AND payment_id IS NULL AND voided_at IS NULL AND source='pre_billed' LIMIT 1");
-            $look->execute([$p['unit_id'], $p['service_type_id'], $p['period_month'], $p['period_year']]);
-            $existChargeId = $look->fetchColumn();
-            $alreadyLinked = $pdo->prepare("SELECT id FROM unit_charges WHERE payment_id=? LIMIT 1");
-            $alreadyLinked->execute([$id]);
-            if ($alreadyLinked->fetchColumn()) {
-                // legacy state: charge survived a previous (broken) delete and is still linked
-            } elseif ($existChargeId) {
-                $pdo->prepare("UPDATE unit_charges SET payment_id=?, amount=?, charge_date=? WHERE id=?")
-                    ->execute([$id, $p['amount'], $p['payment_date'], $existChargeId]);
-            } else {
+            // A pre_billed allocation needs nothing: it was never removed, and it
+            // starts counting again the instant the payment is live. Only the
+            // auto_collected charge has to be rebuilt, and only if the delete
+            // actually took it.
+            // "Live allocation" means one pointing at a charge that is not
+            // waived. A waived charge already carries its own offsetting credit
+            // on the SoA, so letting the restored payment settle it as well
+            // would credit the tenant twice — the payment needs a charge of its
+            // own instead. Drop the stale allocation so restoring the waiver
+            // later cannot resurrect the double credit.
+            $hasAlloc = $pdo->prepare(
+                "SELECT COUNT(*) FROM charge_payments cp
+                 JOIN unit_charges uc ON uc.id = cp.charge_id
+                 WHERE cp.payment_id = ? AND uc.voided_at IS NULL"
+            );
+            $hasAlloc->execute([$id]);
+            if (!(int)$hasAlloc->fetchColumn()) {
+                $pdo->prepare(
+                    "DELETE cp FROM charge_payments cp
+                     JOIN unit_charges uc ON uc.id = cp.charge_id
+                     WHERE cp.payment_id = ? AND uc.voided_at IS NOT NULL"
+                )->execute([$id]);
                 $stRow = $pdo->prepare("SELECT name FROM service_types WHERE id=?");
                 $stRow->execute([$p['service_type_id']]);
                 $stName  = $stRow->fetchColumn() ?: 'Service';
                 $chgDesc = $p['notes'] ?: $stName;
                 $pdo->prepare("INSERT INTO unit_charges (unit_id,tenant_id,service_type_id,amount,description,charge_date,period_month,period_year,payment_id,source,created_by) VALUES (?,?,?,?,?,?,?,?,?,'auto_collected',?)")
                     ->execute([$p['unit_id'], $p['tenant_id'], $p['service_type_id'], $p['amount'], $chgDesc, $p['payment_date'], $p['period_month'], $p['period_year'], $id, $cashUserId]);
+                allocateToCharge($pdo, (int)$pdo->lastInsertId(), $id, $p['amount'], $cashUserId);
             }
         }
         logActivity($pdo,'RESTORE_PAYMENT','Payments',"Restored deleted payment #{$id} ({$p['invoice_no']}) ₱{$p['amount']}");
@@ -448,7 +589,11 @@ if ($action === 'void_payment') {
             // by save_payment and have no pre-existing counterpart, so they must
             // be deleted entirely; otherwise they show up as phantom "Unpaid"
             // entries that inflate outstanding balances.
-            $pdo->prepare("UPDATE unit_charges SET payment_id=NULL WHERE payment_id=? AND source='pre_billed'")->execute([$id]);
+            // Allocations are LEFT IN PLACE: they stop settling their charge the
+            // moment the payment is voided/soft-deleted (chargeSettledSql only
+            // counts live payments), and revive untouched on restore. Only the
+            // auto_collected charge — which exists solely because of this
+            // payment — is removed; its allocation cascades with it.
             $pdo->prepare("DELETE FROM unit_charges WHERE payment_id=? AND source='auto_collected'")->execute([$id]);
         }
         logActivity($pdo,'VOID_PAYMENT','Payments',"Voided payment #{$id} ({$p['invoice_no']}) ₱{$p['amount']}");
@@ -479,23 +624,35 @@ if ($action === 'restore_payment') {
         $cashUserId = $p['received_by'] ?: (int)$_SESSION['user']['id'];
         $pdo->prepare("INSERT INTO cash_transactions (user_id,transaction_type,amount,reference_payment_id,notes,transaction_date) VALUES (?,?,?,?,?,?)")
             ->execute([$cashUserId,'received',$p['amount'],$id,"Payment received: {$p['invoice_no']}",$p['payment_date']]);
-        // Re-link the unit_charges row the same way save_payment did. Prefer an
-        // existing pre_billed outstanding charge for the same period; if none,
-        // recreate the auto_collected row that void_payment deleted.
+        // A pre_billed allocation survived the void untouched and resumes
+        // settling its charge now the payment is live again — nothing to re-link.
+        // Only the auto_collected charge that void_payment deleted is rebuilt.
         if ($p['payment_type'] === 'service') {
-            $look = $pdo->prepare("SELECT id FROM unit_charges WHERE unit_id=? AND service_type_id=? AND period_month=? AND period_year=? AND payment_id IS NULL AND voided_at IS NULL AND source='pre_billed' LIMIT 1");
-            $look->execute([$p['unit_id'], $p['service_type_id'], $p['period_month'], $p['period_year']]);
-            $existChargeId = $look->fetchColumn();
-            if ($existChargeId) {
-                $pdo->prepare("UPDATE unit_charges SET payment_id=?, amount=?, charge_date=? WHERE id=?")
-                    ->execute([$id, $p['amount'], $p['payment_date'], $existChargeId]);
-            } else {
+            // "Live allocation" means one pointing at a charge that is not
+            // waived. A waived charge already carries its own offsetting credit
+            // on the SoA, so letting the restored payment settle it as well
+            // would credit the tenant twice — the payment needs a charge of its
+            // own instead. Drop the stale allocation so restoring the waiver
+            // later cannot resurrect the double credit.
+            $hasAlloc = $pdo->prepare(
+                "SELECT COUNT(*) FROM charge_payments cp
+                 JOIN unit_charges uc ON uc.id = cp.charge_id
+                 WHERE cp.payment_id = ? AND uc.voided_at IS NULL"
+            );
+            $hasAlloc->execute([$id]);
+            if (!(int)$hasAlloc->fetchColumn()) {
+                $pdo->prepare(
+                    "DELETE cp FROM charge_payments cp
+                     JOIN unit_charges uc ON uc.id = cp.charge_id
+                     WHERE cp.payment_id = ? AND uc.voided_at IS NOT NULL"
+                )->execute([$id]);
                 $stRow = $pdo->prepare("SELECT name FROM service_types WHERE id=?");
                 $stRow->execute([$p['service_type_id']]);
                 $stName  = $stRow->fetchColumn() ?: 'Service';
                 $chgDesc = $p['notes'] ?: $stName;
                 $pdo->prepare("INSERT INTO unit_charges (unit_id,tenant_id,service_type_id,amount,description,charge_date,period_month,period_year,payment_id,source,created_by) VALUES (?,?,?,?,?,?,?,?,?,'auto_collected',?)")
                     ->execute([$p['unit_id'], $p['tenant_id'], $p['service_type_id'], $p['amount'], $chgDesc, $p['payment_date'], $p['period_month'], $p['period_year'], $id, $cashUserId]);
+                allocateToCharge($pdo, (int)$pdo->lastInsertId(), $id, $p['amount'], $cashUserId);
             }
         }
         logActivity($pdo,'RESTORE_PAYMENT','Payments',"Restored voided payment #{$id} ({$p['invoice_no']}) ₱{$p['amount']}");
@@ -543,9 +700,28 @@ if ($action === 'get_unit_payments') {
     $unit->execute([$unitId]);
     $unitData = $unit->fetch();
 
-    $cq = $pdo->prepare("SELECT uc.*, st.name as service_name FROM unit_charges uc LEFT JOIN service_types st ON uc.service_type_id=st.id WHERE uc.unit_id=? AND uc.period_month=? AND uc.period_year=? AND uc.voided_at IS NULL ORDER BY uc.charge_date ASC, uc.created_at ASC");
+    // Charges for the selected period, PLUS every still-outstanding charge on the
+    // unit from any other period. Carried-over arrears sit in the period they were
+    // raised (01/2026 for the spreadsheet-era balances), so filtering to the
+    // selected month made them unreachable from the screen where cash is taken.
+    $cq = $pdo->prepare(
+        "SELECT uc.*, st.name as service_name,
+                " . chargeSettledSql('uc') . " AS settled,
+                GREATEST(uc.amount - " . chargeSettledSql('uc') . ", 0) AS outstanding
+         FROM unit_charges uc
+         LEFT JOIN service_types st ON uc.service_type_id = st.id
+         WHERE uc.unit_id = ? AND uc.voided_at IS NULL
+           AND ( (uc.period_month = ? AND uc.period_year = ?)
+                 OR uc.amount - " . chargeSettledSql('uc') . " > 0 )
+         ORDER BY uc.charge_date ASC, uc.created_at ASC"
+    );
     $cq->execute([$unitId, $month, $year]);
     $charges = $cq->fetchAll();
+    // Flag rows that belong to another period so the UI can label them.
+    foreach ($charges as &$cRow) {
+        $cRow['other_period'] = ((int)$cRow['period_month'] !== $month || (int)$cRow['period_year'] !== $year) ? 1 : 0;
+    }
+    unset($cRow);
 
     // Net of refunds: each payment counts for amount − its refunded_total, so a
     // fully-refunded receipt contributes 0 to the period's Total Paid. Also expose
@@ -571,7 +747,10 @@ if ($action === 'monthly_summary') {
             COALESCE(SUM(CASE WHEN p.payment_type='rent' THEN p.amount - COALESCE(r.refsum,0) ELSE 0 END), 0)    as rent_paid,
             COALESCE(SUM(CASE WHEN p.payment_type='service' THEN p.amount - COALESCE(r.refsum,0) ELSE 0 END), 0) as service_paid,
             COALESCE(SUM(p.amount - COALESCE(r.refsum,0)), 0) as total_paid,
-            COALESCE((SELECT SUM(uc.amount) FROM unit_charges uc WHERE uc.unit_id=ru.id AND uc.period_month=? AND uc.period_year=? AND uc.payment_id IS NULL AND uc.voided_at IS NULL), 0) as outstanding_charges,
+            COALESCE((SELECT SUM(GREATEST(uc.amount - " . chargeSettledSql('uc') . ", 0))
+                      FROM unit_charges uc
+                     WHERE uc.unit_id=ru.id AND uc.period_month=? AND uc.period_year=?
+                       AND uc.voided_at IS NULL), 0) as outstanding_charges,
             (SELECT u2.full_name FROM payments p2 LEFT JOIN users u2 ON p2.received_by=u2.id WHERE p2.unit_id=ru.id AND p2.period_month=? AND p2.period_year=? AND p2.deleted_at IS NULL AND p2.status != 'voided' ORDER BY p2.created_at DESC LIMIT 1) as last_cashier
         FROM rental_units ru
         LEFT JOIN tenants t  ON t.unit_id=ru.id AND t.status='active'
@@ -750,11 +929,19 @@ if ($action === 'save_charge') {
         $chk->execute([$chargeId]);
         $chkRow = $chk->fetch();
         if (!$chkRow) jsonErr('Charge not found.');
-        if ($chkRow['payment_id'] !== null) jsonErr('Cannot edit a paid charge. Refund the payment first.');
+        // A partly-paid charge stays editable — a figure carried over from the
+        // spreadsheet era can turn out wrong after someone has already paid
+        // against it — but it can never drop below what has been settled, which
+        // would leave the charge over-paid and the balance negative.
+        $settledOnCharge = getChargeSettled($pdo, $chargeId);
+        if (money_gt($settledOnCharge, $amount)) {
+            jsonErr(money($settledOnCharge) . ' has already been settled against this charge, '
+                  . 'so it cannot be reduced to ' . money($amount) . '.');
+        }
         $before = array_intersect_key($chkRow, array_flip(['service_type_id','amount','description','charge_date','period_month','period_year']));
         $pdo->beginTransaction();
         try {
-            $pdo->prepare("UPDATE unit_charges SET service_type_id=?,amount=?,description=?,charge_date=?,period_month=?,period_year=? WHERE id=? AND payment_id IS NULL")
+            $pdo->prepare("UPDATE unit_charges SET service_type_id=?,amount=?,description=?,charge_date=?,period_month=?,period_year=? WHERE id=? AND source='pre_billed'")
                 ->execute([$serviceId,$amount,$description,$chargeDate,$periodMonth,$periodYear,$chargeId]);
             logChange($pdo,'UPDATE_CHARGE','Charges',$before,['service_type_id'=>$serviceId,'amount'=>$amount,'description'=>$description,'charge_date'=>$chargeDate,'period_month'=>$periodMonth,'period_year'=>$periodYear]);
             $pdo->commit();
@@ -949,7 +1136,8 @@ if ($action === 'bulk_delete_payments') {
             $pdo->prepare("UPDATE payments SET deleted_at=NOW() WHERE id=?")->execute([$id]);
             $pdo->prepare("DELETE FROM cash_transactions WHERE reference_payment_id=? AND transaction_type='received'")->execute([$id]);
             if ($p['payment_type'] === 'service') {
-                $pdo->prepare("UPDATE unit_charges SET payment_id=NULL WHERE payment_id=? AND source='pre_billed'")->execute([$id]);
+                // Allocations stay — a dead payment stops settling its charge on
+                // its own, and restoring revives it. See delete_payment.
                 $pdo->prepare("DELETE FROM unit_charges WHERE payment_id=? AND source='auto_collected'")->execute([$id]);
             }
             logActivity($pdo, 'DELETE_PAYMENT', 'Payments', "Bulk soft-deleted payment #{$id} ({$p['invoice_no']}) ₱{$p['amount']}");

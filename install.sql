@@ -207,6 +207,31 @@ CREATE TABLE IF NOT EXISTS unit_charges (
     FOREIGN KEY (created_by)      REFERENCES users(id)         ON DELETE SET NULL
 );
 
+-- Charge Payment Allocations (partial settlement of a service charge)
+-- A charge may be paid off in instalments, so settlement cannot live in
+-- unit_charges.payment_id — one column cannot hold three payments, and the old
+-- link path overwrote unit_charges.amount with whatever was handed over,
+-- destroying the rest of the receivable. Each row here settles a named amount
+-- of one charge from one payment; outstanding is
+--     amount − SUM(allocations whose payment is live)
+-- so a voided or soft-deleted payment stops settling its charge automatically.
+-- unit_charges.payment_id is still written for auto_collected rows (genuinely
+-- 1:1, and it drives their lifecycle); pre_billed charges settle only here.
+CREATE TABLE IF NOT EXISTS charge_payments (
+    id         INT AUTO_INCREMENT PRIMARY KEY,
+    charge_id  INT NOT NULL,
+    payment_id INT NOT NULL,
+    amount     DECIMAL(12,2) NOT NULL,
+    created_by INT DEFAULT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uniq_charge_payment (charge_id, payment_id),
+    KEY idx_cp_charge  (charge_id),
+    KEY idx_cp_payment (payment_id),
+    FOREIGN KEY (charge_id)  REFERENCES unit_charges(id) ON DELETE CASCADE,
+    FOREIGN KEY (payment_id) REFERENCES payments(id)     ON DELETE CASCADE,
+    FOREIGN KEY (created_by) REFERENCES users(id)        ON DELETE SET NULL
+);
+
 -- Rent Charge Waivers (admin write-offs of the virtual monthly rent charge)
 -- Rent charges are computed at render time (contract x due_day x rate history),
 -- so a waiver needs its own row. Several rows may target one period (partial

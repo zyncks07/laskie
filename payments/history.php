@@ -149,22 +149,26 @@ if ($payments) {
 $totalRefunded = money_sum(array_column($refundRows, 'amount'));
 
 // ── Fetch Service Charges (unit_charges) ──────────────────────
-// is_outstanding = 1 when the charge has no payment_id OR its linked payment
-// was voided / soft-deleted. The filtered LEFT JOIN forces such rows to come
-// back with p.id IS NULL, mirroring the soa_pdf.php fix so the rendered SoA
-// labels them "(Unpaid)" consistently.
+// is_outstanding = 1 when the charge still has an unsettled remainder. Only
+// LIVE payments settle it, so a voided or soft-deleted payment puts the charge
+// back to outstanding — the same behaviour the old filtered LEFT JOIN on
+// payment_id gave, now generalised to partial settlement.
 $serviceCharges = [];
 if ($selUnit) {
+    // settled / outstanding come from charge_payments, so a charge paid down in
+    // instalments reports its true remainder instead of flipping to "paid" on
+    // the first payment. The charge still posts as a debit at its FULL amount
+    // and each payment as its own credit, so the running balance is unchanged —
+    // settled only drives the label.
     $chgSql = "SELECT uc.*, st.name as service_name, u.full_name as billed_by_name,
                       vu.full_name as voided_by_name,
-                      (uc.payment_id IS NULL OR p.id IS NULL) AS is_outstanding
+                      " . chargeSettledSql('uc') . " AS settled,
+                      GREATEST(uc.amount - " . chargeSettledSql('uc') . ", 0) AS outstanding,
+                      (uc.amount - " . chargeSettledSql('uc') . " > 0) AS is_outstanding
                FROM unit_charges uc
                LEFT JOIN service_types st ON uc.service_type_id = st.id
                LEFT JOIN users u  ON uc.created_by = u.id
                LEFT JOIN users vu ON uc.voided_by  = vu.id
-               LEFT JOIN payments p ON p.id = uc.payment_id
-                                   AND p.deleted_at IS NULL
-                                   AND p.status != 'voided'
                WHERE uc.unit_id = ? AND uc.charge_date BETWEEN ? AND ?";
     $chgArgs = [$selUnit, $dateFrom, $dateTo];
     if ($scopeTenantId !== null) {
@@ -302,8 +306,11 @@ if ($selUnit && $unitInfo) {
         // A waived charge is settled, not outstanding.
         $isVoided = !empty($c['voided_at']);
         $unpaid   = !empty($c['is_outstanding']) && !$isVoided;
-        if ($unpaid)   $desc .= ' (Unpaid)';
-        if ($isVoided) $desc .= ' (Voided)';
+        $settled  = from_cents(to_cents($c['settled'] ?? 0));
+        $partPaid = $unpaid && money_is_pos($settled);
+        if ($partPaid)             $desc .= ' (' . money($settled) . ' of ' . money($c['amount']) . ' paid)';
+        elseif ($unpaid)           $desc .= ' (Unpaid)';
+        if ($isVoided)             $desc .= ' (Voided)';
         $ledger[] = [
             'date'        => $c['charge_date'],
             'description' => $desc,
@@ -315,6 +322,7 @@ if ($selUnit && $unitInfo) {
             'id'          => (int)$c['id'],
             'is_unpaid'   => $unpaid,
             'is_voided'   => $isVoided,
+            'part_paid'   => $partPaid,
             'source'      => $c['source'],
             'owner'       => isset($c['tenant_id']) ? (int)$c['tenant_id'] : null,
             'encoded'     => $c['created_at'] ?? null,
@@ -333,12 +341,15 @@ if ($selUnit && $unitInfo) {
                 'owner'       => isset($c['tenant_id']) ? (int)$c['tenant_id'] : null,
                 'encoded'     => $c['voided_at'] ?? null,
             ];
-        } elseif ($unpaid) {
+        } elseif ($unpaid && !$partPaid) {
+            // A charge that has already taken money cannot be waived — doing so
+            // would cancel a receivable the tenant has paid against. Leave it
+            // out of the bulk offer rather than have the handler refuse it.
             $waivable[] = [
                 'type'   => 'service',
                 'id'     => (int)$c['id'],
                 'label'  => $desc,
-                'amount' => from_cents(to_cents($c['amount'])),
+                'amount' => from_cents(to_cents($c['outstanding'] ?? $c['amount'])),
             ];
         }
     }
@@ -749,7 +760,7 @@ include '../includes/header.php';
               onclick="openRefundModal(<?=(int)$row['id']?>,'<?=$invEsc?>',<?=number_format((float)$row['credit'],2,'.','')?>,<?=$alrRef?>,<?=$maxRef?>,<?=(int)($row['received_by'] ?? 0)?>)">
               <i class="fa-solid fa-rotate-left fa-xs" style="color:var(--danger)"></i>
             </button>
-          <?php elseif($isSvcChg && $isUnpaid && isAdmin()): ?>
+          <?php elseif($isSvcChg && $isUnpaid && empty($row['part_paid']) && isAdmin()): ?>
             <button class="btn-icon danger" title="Void Charge"
               onclick="openVoidServiceModal(<?=(int)$row['id']?>,'<?=htmlspecialchars($row['description'], ENT_QUOTES)?>',<?=number_format((float)$row['debit'],2,'.','')?>)">
               <i class="fa-solid fa-file-circle-xmark fa-xs"></i>

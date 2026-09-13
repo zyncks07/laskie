@@ -29,7 +29,7 @@ use PHPUnit\Framework\Attributes\Test;
 final class ServiceChargeLifecycleTest extends IsolatedDbTestCase
 {
     private const MONEY_TABLES = [
-        'rent_charge_voids', 'payments', 'cash_transactions',
+        'charge_payments', 'rent_charge_voids', 'payments', 'cash_transactions',
         'unit_charges', 'refunds', 'rental_units', 'tenants', 'system_logs',
     ];
 
@@ -121,6 +121,23 @@ final class ServiceChargeLifecycleTest extends IsolatedDbTestCase
         $q = self::$db->prepare('SELECT * FROM unit_charges WHERE unit_id=? ORDER BY id');
         $q->execute([$this->unitId]);
         return $q->fetchAll();
+    }
+
+    /**
+     * Amount payment #$paymentId settles against charge #$chargeId.
+     *
+     * A pre_billed charge is settled through charge_payments, not through
+     * unit_charges.payment_id — one column cannot hold the three instalments a
+     * carried-over arrears balance is paid off in. payment_id survives only on
+     * auto_collected rows, where it is genuinely 1:1.
+     */
+    private function allocatedAmount(int $chargeId, int $paymentId): string
+    {
+        $q = self::$db->prepare(
+            'SELECT COALESCE(SUM(amount),0) FROM charge_payments WHERE charge_id=? AND payment_id=?'
+        );
+        $q->execute([$chargeId, $paymentId]);
+        return from_cents(to_cents($q->fetchColumn()));
     }
 
     private function receivedCashRows(int $paymentId): int
@@ -276,7 +293,8 @@ final class ServiceChargeLifecycleTest extends IsolatedDbTestCase
         $this->assertCount(1, $charges, 'paying a pre-billed charge must not create a duplicate');
         $this->assertSame($chargeId, (int) $charges[0]['id']);
         $this->assertSame('pre_billed', $charges[0]['source']);
-        $this->assertSame($paymentId, (int) $charges[0]['payment_id']);
+        $this->assertSame(self::AMOUNT, $charges[0]['amount'], 'the bill is never rewritten by the payment');
+        $this->assertSame(self::AMOUNT, $this->allocatedAmount($chargeId, $paymentId));
         $this->assertSame('0.00', $this->outstandingPerGrid());
     }
 
@@ -307,7 +325,8 @@ final class ServiceChargeLifecycleTest extends IsolatedDbTestCase
         $this->assertCount(1, $charges, 'restore must reuse the pre-billed row, not add an auto_collected one');
         $this->assertSame($chargeId, (int) $charges[0]['id']);
         $this->assertSame('pre_billed', $charges[0]['source']);
-        $this->assertSame($paymentId, (int) $charges[0]['payment_id']);
+        $this->assertSame(self::AMOUNT, $this->allocatedAmount($chargeId, $paymentId),
+            'the allocation survived the void untouched and settles the charge again');
         $this->assertSame('0.00', $this->outstandingPerGrid());
     }
 

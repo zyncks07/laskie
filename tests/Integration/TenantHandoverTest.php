@@ -29,7 +29,7 @@ use PHPUnit\Framework\Attributes\Test;
 final class TenantHandoverTest extends IsolatedDbTestCase
 {
     private const MONEY_TABLES = [
-        'rent_charge_voids', 'payments', 'cash_transactions',
+        'charge_payments', 'rent_charge_voids', 'payments', 'cash_transactions',
         'unit_charges', 'refunds', 'rental_units', 'tenants', 'system_logs',
     ];
 

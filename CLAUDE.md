@@ -145,6 +145,8 @@ Read [`install.sql`](install.sql) for the authoritative DDL. The live DB is curr
 - `cash_transactions` — per-user ledger; `transaction_type` ∈ {`received`, `remitted`, `expense`}; FKs back to `payments.id` / `expenses.id`
 - **`unit_charges`** — pre-billed line items per unit/period; rows with `payment_id IS NULL` are outstanding. `source` ∈ {`pre_billed`, `auto_collected`}. **`voided_at`/`voided_by`/`void_reason`** = admin write-off (migration 011); a voided charge is never outstanding and is never hard-deleted.
   > DDL shipped in `migrations/001_create_unit_charges.sql` and embedded in `install.sql`, so fresh installs work.
+- **`charge_payments`** — allocation rows: how much of a `unit_charges` row a given payment settled (migration 013). A charge may be paid off in instalments, so settlement cannot live in `unit_charges.payment_id` — one column cannot hold three payments, and the old link path overwrote `unit_charges.amount` with whatever was handed over, destroying the rest of the receivable. Outstanding is `amount − SUM(allocations whose payment is live)`. `ON DELETE CASCADE` both ways, so purging a payment or deleting a charge clears its allocations with no handler code.
+  > `unit_charges.payment_id` is still written for **`auto_collected`** rows only, where it is genuinely 1:1 and drives their lifecycle. `pre_billed` charges settle purely through `charge_payments`.
 - **`rent_charge_voids`** — admin write-offs of the **virtual** monthly rent charge (migration 011). Keyed on `(unit_id, period_month, period_year)` + optional `tenant_id`; several rows may waive one period (partials accumulate). Only rows with `restored_at IS NULL` are in effect. Waivers move receivables only — no cash, no income.
 
 ### History & audit
@@ -202,6 +204,17 @@ These are the rules that keep the books consistent. Any change in this area requ
     charge it offsets once move-out proration shrinks a final month (or rate history moves).
     `buildRentChargeRows()` caps each waiver into a per-waiver `applied` field; renderers must credit that.
     `amount` stays untouched for the audit trail. Crediting the raw figure opens a phantom credit.
+15. **A service charge is settled through `charge_payments`, never by rewriting it.** `unit_charges.amount`
+    is what was billed and must not change because someone paid part of it. Outstanding is
+    `amount − SUM(allocations whose payment is live)` — use **`chargeSettledSql()`** in set queries and
+    **`getChargeOutstanding()`** / **`getChargeSettled()`** for one row; never test `payment_id IS NULL`
+    for outstanding again. Because only live payments settle, a void or soft-delete releases the charge
+    and a restore re-settles it with **no re-linking at all** — allocations are left in place on reversal.
+    The one exception: on restore, an allocation pointing at a now-**waived** charge is dropped and a
+    fresh `auto_collected` row raised instead, because a waived charge already carries its own offsetting
+    credit and settling it again would credit the tenant twice. Overpaying a charge is **refused** with the
+    outstanding figure; a partly-paid charge stays editable but can never be reduced below what is settled,
+    and can never be waived.
 
 ---
 
@@ -235,6 +248,8 @@ Helpers Claude should reuse rather than re-implement:
 | `getRentPaidForPeriod($pdo, $unitId, $m, $y, $tenantId?)` / `getRentPaidByPeriod($pdo, $unitId, $tenantId?)` | Net rent paid (payments − refunds), single period / all periods keyed `"Y-n"`. **Pass `$tenantId` for any waiver cap** — the charge is per-tenant |
 | `getGrossRentCharge($pdo, $unitId, $m, $y, $tenantId?)` | Server-side recompute of a period's full rent charge — never trust a posted amount |
 | `waivableRent($gross, $netPaid, $alreadyVoided)` | Cap rule for a void: `max(0, gross − paid − waived)` |
+| `chargeSettledSql($ucAlias = 'uc')` | Correlated-subquery SQL for "settled by live payments" — **the** definition, use it in every set-based outstanding query |
+| `getChargeOutstanding($pdo, $chargeId)` / `getChargeSettled($pdo, $chargeId)` | Single-charge remainder / settled amount |
 | `getUnitPaymentStatus($pdo, $unitId, $m, $y)` | Returns `'green'`/`'amber'`/`'red'`/`'gray'`. **Currently uncalled** — `dashboard.php` computes unit status inline |
 | `getPastTenantArrears($pdo, $unitId?)` / `getCurrentTenantArrears($pdo, $unitId?)` | Outstanding per unit keyed `unit_id`, split by whether the tenant is still in place (`getTenantArrears()` is the shared core) |
 | `getUserCashOnHand($pdo, $userId)` | Authoritative per-user cash on hand (`received + vault_return − remitted − expenses − refunded`). Use for any "enough cash?" gate (e.g. refund cashier check) |

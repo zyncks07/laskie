@@ -707,6 +707,50 @@ function chargeDate(int $dueDay, ?string $contractStart, int $month, int $year):
     return sprintf('%04d-%02d-%02d', $year, $month, min($dueDay, $daysInMonth));
 }
 
+// ─── Service Charge Settlement (charge_payments) ─────────────
+// A unit_charges row can be settled by several payments — a carried-over
+// arrears balance paid down in instalments, for instance. Settlement therefore
+// lives in charge_payments, not in unit_charges.payment_id: one column cannot
+// hold three payments, and the old link path overwrote unit_charges.amount with
+// whatever was handed over, silently destroying the rest of the receivable.
+//
+// ONE definition, used by every outstanding calculation in the app. Only LIVE
+// payments settle a charge, so a voided or soft-deleted payment releases it
+// again — exactly what the old payment_id rule achieved through its filtered
+// LEFT JOIN, which forced p.id IS NULL for a dead payment.
+//
+// Returns fixed SQL with no interpolated user input. $ucAlias is the caller's
+// alias for unit_charges and must be a bare identifier the caller controls.
+function chargeSettledSql(string $ucAlias = 'uc'): string {
+    return "COALESCE((SELECT SUM(cp.amount)
+                        FROM charge_payments cp
+                        JOIN payments pp ON pp.id = cp.payment_id
+                       WHERE cp.charge_id = {$ucAlias}.id
+                         AND pp.deleted_at IS NULL
+                         AND pp.status <> 'voided'), 0)";
+}
+
+// Amount still owed on one charge. A voided charge owes nothing — it carries an
+// offsetting credit on the SoA and must never read as outstanding.
+function getChargeOutstanding(PDO $pdo, int $chargeId): string {
+    $q = $pdo->prepare(
+        "SELECT uc.amount - " . chargeSettledSql('uc') . " AS outstanding
+         FROM unit_charges uc WHERE uc.id = ? AND uc.voided_at IS NULL"
+    );
+    $q->execute([$chargeId]);
+    $v = $q->fetchColumn();
+    return $v === false ? '0.00' : money_max('0.00', from_cents(to_cents($v)));
+}
+
+// Amount already settled against one charge by live payments.
+function getChargeSettled(PDO $pdo, int $chargeId): string {
+    $q = $pdo->prepare(
+        "SELECT " . chargeSettledSql('uc') . " FROM unit_charges uc WHERE uc.id = ?"
+    );
+    $q->execute([$chargeId]);
+    return from_cents(to_cents($q->fetchColumn() ?: 0));
+}
+
 // ─── Rent Charge Waivers (admin write-offs) ──────────────────
 // Rent charges are VIRTUAL — recomputed on every render from contract x due_day
 // x rate history — so a waived month has no row to flag. rent_charge_voids is
@@ -1000,13 +1044,13 @@ function getTenantArrears(PDO $pdo, bool $pastOnly = true, ?int $unitId = null):
     $pq->execute($ids);
     $paidBy = array_column($pq->fetchAll(), 'paid', 'tenant_id');
 
+    // Outstanding = charge total less what live payments have settled, so a
+    // charge paid down in instalments contributes only its remainder.
     $cq = $pdo->prepare(
-        "SELECT uc.tenant_id, COALESCE(SUM(uc.amount),0) AS owed
+        "SELECT uc.tenant_id,
+                COALESCE(SUM(GREATEST(uc.amount - " . chargeSettledSql('uc') . ", 0)), 0) AS owed
          FROM unit_charges uc
-         LEFT JOIN payments p ON p.id = uc.payment_id
-                             AND p.deleted_at IS NULL AND p.status != 'voided'
          WHERE uc.tenant_id IN ($ph) AND uc.voided_at IS NULL
-           AND (uc.payment_id IS NULL OR p.id IS NULL)
          GROUP BY uc.tenant_id"
     );
     $cq->execute($ids);

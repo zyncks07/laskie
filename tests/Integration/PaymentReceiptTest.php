@@ -27,7 +27,7 @@ use PHPUnit\Framework\Attributes\Test;
 final class PaymentReceiptTest extends IsolatedDbTestCase
 {
     /** Tables this class rewrites between tests. */
-    private const MONEY_TABLES = ['payments', 'cash_transactions', 'unit_charges', 'refunds', 'rental_units', 'tenants'];
+    private const MONEY_TABLES = ['charge_payments', 'payments', 'cash_transactions', 'unit_charges', 'refunds', 'rental_units', 'tenants'];
 
     private int $unitId = 0;
 
