@@ -179,6 +179,29 @@ These are the rules that keep the books consistent. Any change in this area requ
 9. **All money columns are `DECIMAL(12,2)`.** PHP-side they are read as float — be aware of float drift; sum in SQL when possible.
 10. **All audit-relevant mutations call `logActivity()` or `logChange()`** with module, action, and details. Don't skip this for "small" admin edits.
 11. **Soft-delete restore goes through `admin/transactions.php`** — do not expose restore links elsewhere.
+12. **Tenancy windows are closed and non-overlapping; a Statement of Account belongs to ONE tenancy.**
+    Rent is virtual and generated month-by-month from `contract_start` → `contract_end`, so a departed
+    tenant with a blank `contract_end` accrues rent forever *and* double-bills every month the successor
+    is billed (measured: 18 rows / ₱153,000 on a unit that should bill ₱102,000). `admin/tenants.php`
+    therefore **rejects** an overlapping window on the same unit and **requires** `contract_end` when a
+    tenant is set to `former`/`inactive`; `occupancyEndDate()` is the defensive backstop for legacy rows.
+    The SoA (`payments/history.php` + `soa_pdf.php`) is scoped to the selected tenant — their charges,
+    payments, waivers — with `tenant_id=all` giving the landlord a unit ledger **segmented per occupancy**,
+    each with its own running balance. Never merge two tenancies into one balance: that puts a departed
+    tenant's arrears at the head of the next tenant's statement. Past-tenant arrears surface on the
+    dashboard and collection grid via `getPastTenantArrears()` and are reported **alongside** the period
+    balance, never folded into it.
+13. **Both ends of a tenancy prorate.** `prorateFirstMonth()` handles move-in (full month if the start is
+    on or before `due_day`), `prorateLastMonth()` handles move-out by days occupied, and
+    **`prorateOccupancyMonth()` is the one to call** — it composes both over a single day span when a
+    tenancy starts and ends in the same month. `contract_end` is **inclusive** (the last day of
+    occupancy). A mid-month handover must bill `prorated_out + prorated_in == one month`, never
+    `full + prorated`. `getGrossRentCharge()` uses the same helper so the waiver cap can never disagree
+    with the rendered charge.
+14. **A waiver is credited at `applied`, never `amount`.** A stored `rent_charge_voids` row can exceed the
+    charge it offsets once move-out proration shrinks a final month (or rate history moves).
+    `buildRentChargeRows()` caps each waiver into a per-waiver `applied` field; renderers must credit that.
+    `amount` stays untouched for the audit trail. Crediting the raw figure opens a phantom credit.
 
 ---
 
@@ -189,6 +212,7 @@ Helpers Claude should reuse rather than re-implement:
 | Function | Purpose |
 |---|---|
 | `money($amount)` | Format peso amount with current currency symbol |
+| `money_min($a, $b)` / `money_max($a, $b)` | Cents-exact min / max |
 | `fmtDate($iso, $fmt = 'M j, Y')` | Safe date formatter (returns `—` for null) |
 | `currentUser()` / `isAdmin()` / `isAccountant()` | Session-user accessors |
 | `requireLogin()` / `requireAdmin()` / `requireRole([...])` | Page/API guards — call at the top of every protected file |
@@ -198,16 +222,21 @@ Helpers Claude should reuse rather than re-implement:
 | `handleUpload($field, $subDir)` | File upload with whitelist + 30 MB cap. Auto-compresses image uploads via `compressImage()`. Returns `['path'=>..., 'error'=>...]` |
 | `compressImage($absPath, $opts)` | Re-encode JPEG/PNG/WebP in place (long-edge cap + quality). Non-images and GIFs are no-ops. Returns `['compressed'=>bool, 'original_size'=>, 'new_size'=>, 'new_path'=>, 'reason'=>]` |
 | `getRateForMonth($pdo, $unitId, $base, $m, $y)` | **Use this**, not `rental_units.monthly_rate`, for historical billing |
-| `prorateFirstMonth($rate, $dueDay, $contractStart, $m, $y)` | First-month proration |
+| `prorateFirstMonth($rate, $dueDay, $contractStart, $m, $y)` | Move-in proration (full month if start ≤ `due_day`) |
+| `prorateLastMonth($rate, $contractEnd, $m, $y)` | Move-out proration by days occupied (`contract_end` inclusive) |
+| `prorateOccupancyMonth($rate, $dueDay, $cStart, $cEnd, $m, $y)` | **Use this** — composes both ends over one day span |
+| `occupancyEndDate($pdo, $occupant, $laterOccupants)` | Effective last day of a tenancy; backstop for a blank `contract_end` |
+| `resolveOccupancyEnds($pdo, $occupants)` | Fill `contract_end` on a sorted occupant list so a subset bills like the whole |
 | `chargeDate($dueDay, $contractStart, $m, $y)` | Returns correct charge date (proration-aware) |
 | `buildRentChargeRows($pdo, $unitId, $occupants, $dueDay, $baseRate, $from, $to, $voidMap)` | **The** rent-charge generator (SoA screen + PDF). Returns per-month `gross`/`voided`/`net` + attached waivers |
-| `getRentVoidMap($pdo, $unitId, $from, $to)` | Active rent waivers for a unit over a range, keyed `"Y-n"` |
+| `getRentVoidMap($pdo, $unitId, $from, $to, $tenantId?)` | Active rent waivers for a unit over a range, keyed `"Y-n"` |
 | `getRentVoidTotals($pdo, $m, $y)` | **Batched** waiver totals for one period keyed by `unit_id` — use in per-unit loops (dashboard, collection grid) |
-| `getRentVoidedForPeriod($pdo, $unitId, $m, $y)` | Waiver total for one unit/period |
-| `getRentPaidForPeriod($pdo, $unitId, $m, $y)` / `getRentPaidByPeriod($pdo, $unitId)` | Net rent paid (payments − refunds), single period / all periods keyed `"Y-n"` |
+| `getRentVoidedForPeriod($pdo, $unitId, $m, $y, $tenantId?)` | Waiver total for one unit/period |
+| `getRentPaidForPeriod($pdo, $unitId, $m, $y, $tenantId?)` / `getRentPaidByPeriod($pdo, $unitId, $tenantId?)` | Net rent paid (payments − refunds), single period / all periods keyed `"Y-n"`. **Pass `$tenantId` for any waiver cap** — the charge is per-tenant |
 | `getGrossRentCharge($pdo, $unitId, $m, $y, $tenantId?)` | Server-side recompute of a period's full rent charge — never trust a posted amount |
 | `waivableRent($gross, $netPaid, $alreadyVoided)` | Cap rule for a void: `max(0, gross − paid − waived)` |
-| `getUnitPaymentStatus($pdo, $unitId, $m, $y)` | Returns `'green'`/`'amber'`/`'red'`/`'gray'` for the unit-status grid |
+| `getUnitPaymentStatus($pdo, $unitId, $m, $y)` | Returns `'green'`/`'amber'`/`'red'`/`'gray'`. **Currently uncalled** — `dashboard.php` computes unit status inline |
+| `getPastTenantArrears($pdo, $unitId?)` / `getCurrentTenantArrears($pdo, $unitId?)` | Outstanding per unit keyed `unit_id`, split by whether the tenant is still in place (`getTenantArrears()` is the shared core) |
 | `getUserCashOnHand($pdo, $userId)` | Authoritative per-user cash on hand (`received + vault_return − remitted − expenses − refunded`). Use for any "enough cash?" gate (e.g. refund cashier check) |
 | `notifyUser($pdo, $userId, $type, $msg, $link?, $reqId?)` / `notifyAdmins(...)` | Insert in-app notification(s) for the topbar bell. Best-effort (try/catch); store **raw** text (render escapes) |
 | `jsonOk([...])` / `jsonErr($msg, $code=400)` | JSON response shorthand for `/api/` and `/payments/api_payment.php` |

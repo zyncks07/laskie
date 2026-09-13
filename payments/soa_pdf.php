@@ -11,6 +11,9 @@ requireLogin();
 $unitId   = (int)($_GET['unit_id']   ?? 0);
 $dateFrom = $_GET['date_from'] ?? date('Y-01-01');
 $dateTo   = $_GET['date_to']   ?? date('Y-m-d');
+// Occupancy scope — must mirror payments/history.php exactly, or the printed
+// statement and the on-screen one disagree. 'all' is the unit ledger.
+$tenantParam = trim((string)($_GET['tenant_id'] ?? ''));
 
 // Clamp absurd spans: the ledger is built month-by-month in PHP (a query per
 // month per occupant), so a 1000-year range would pin a worker. Cap at ~10 yrs.
@@ -28,39 +31,61 @@ $s->execute([$unitId]);
 $unit = $s->fetch();
 if (!$unit) die('<p style="font-family:sans-serif;padding:2rem;color:red;">Unit not found.</p>');
 
-// ── Fetch Occupants overlapping the date range ────────────────
+// ── Occupancy scope ───────────────────────────────────────────
+// The statement is addressed to one tenant by default: their charges, their
+// payments, their waivers. A departed tenant's arrears must never head the next
+// tenant's statement (CLAUDE.md §5 invariant 12).
 $t = $pdo->prepare("
     SELECT * FROM tenants
-    WHERE unit_id = ?
-      AND status IN ('active','former','inactive')
-      AND (contract_start IS NULL OR contract_start <= ?)
-      AND (contract_end   IS NULL OR contract_end   >= ?)
+    WHERE unit_id = ? AND status IN ('active','former','inactive')
     ORDER BY COALESCE(contract_start,'1970-01-01') ASC
 ");
-$t->execute([$unitId, $dateTo, $dateFrom]);
-$occupants = $t->fetchAll();
+$t->execute([$unitId]);
+$unitTenants = resolveOccupancyEnds($pdo, $t->fetchAll());
 
-// Primary tenant for the header/signature panel
-$tenant = null;
-foreach ($occupants as $occ) {
-    if ($occ['status'] === 'active') { $tenant = $occ; break; }
+$scopeAll = ($tenantParam === 'all');
+$tenant   = null;
+if (!$scopeAll) {
+    if ($tenantParam !== '') {
+        foreach ($unitTenants as $occ) {
+            if ((int)$occ['id'] === (int)$tenantParam) { $tenant = $occ; break; }
+        }
+    }
+    if (!$tenant) {
+        foreach ($unitTenants as $occ) {
+            if ($occ['status'] === 'active') { $tenant = $occ; break; }
+        }
+    }
+    if (!$tenant && $unitTenants) $tenant = end($unitTenants);
 }
-if (!$tenant && !empty($occupants)) $tenant = end($occupants);
+if ($tenant) {
+    $occupants = [$tenant];
+} else {
+    $scopeAll  = true;
+    $occupants = array_values(array_filter($unitTenants, fn($o) =>
+        (empty($o['contract_start']) || $o['contract_start'] <= $dateTo) &&
+        (empty($o['contract_end'])   || $o['contract_end']   >= $dateFrom)));
+}
+$scopeTenantId = $tenant ? (int)$tenant['id'] : null;
 
 // ── Fetch Payments ────────────────────────────────────────────
 // Voided and soft-deleted payments must not appear as credits on a tenant
 // statement — they did not change the actual amount paid. (Refunds are
 // pulled separately as offsetting debits below.)
-$q = $pdo->prepare("
-    SELECT p.*, st.name AS service_name, u.full_name AS cashier_name
-    FROM   payments p
-    LEFT JOIN service_types st ON p.service_type_id = st.id
-    LEFT JOIN users u          ON p.received_by = u.id
-    WHERE  p.unit_id = ? AND p.payment_date BETWEEN ? AND ?
-      AND  p.deleted_at IS NULL AND p.status != 'voided'
-    ORDER  BY p.payment_date ASC, p.created_at ASC
-");
-$q->execute([$unitId, $dateFrom, $dateTo]);
+$paySql  = "SELECT p.*, st.name AS service_name, u.full_name AS cashier_name
+            FROM   payments p
+            LEFT JOIN service_types st ON p.service_type_id = st.id
+            LEFT JOIN users u          ON p.received_by = u.id
+            WHERE  p.unit_id = ? AND p.payment_date BETWEEN ? AND ?
+              AND  p.deleted_at IS NULL AND p.status != 'voided'";
+$payArgs = [$unitId, $dateFrom, $dateTo];
+if ($scopeTenantId !== null) {
+    $paySql   .= " AND (p.tenant_id = ? OR p.tenant_id IS NULL)";
+    $payArgs[] = $scopeTenantId;
+}
+$paySql .= " ORDER BY p.payment_date ASC, p.created_at ASC";
+$q = $pdo->prepare($paySql);
+$q->execute($payArgs);
 $payments = $q->fetchAll();
 
 // ── Fetch Refunds ─────────────────────────────────────────────
@@ -98,9 +123,12 @@ $sq = $pdo->prepare("
                         AND p.deleted_at IS NULL
                         AND p.status != 'voided'
     WHERE uc.unit_id = ? AND uc.charge_date BETWEEN ? AND ?
+    " . ($scopeTenantId !== null ? "AND (uc.tenant_id = ? OR uc.tenant_id IS NULL)" : "") . "
     ORDER BY uc.charge_date ASC
 ");
-$sq->execute([$unitId, $dateFrom, $dateTo]);
+$sq->execute($scopeTenantId !== null
+    ? [$unitId, $dateFrom, $dateTo, $scopeTenantId]
+    : [$unitId, $dateFrom, $dateTo]);
 $pdfServiceCharges = $sq->fetchAll();
 
 // ── Build Ledger ──────────────────────────────────────────────
@@ -113,27 +141,35 @@ $rate     = getRateForMonth($pdo, $unitId, $baseRate, (int)date('n', strtotime($
 
 // Rent charges (and any admin waivers against them) come from the same shared
 // generator the on-screen SoA uses, so both statements always agree.
-$rentVoidMap = getRentVoidMap($pdo, $unitId, $dateFrom, $dateTo);
+$rentVoidMap = getRentVoidMap($pdo, $unitId, $dateFrom, $dateTo, $scopeTenantId);
 foreach (buildRentChargeRows($pdo, $unitId, $occupants, $dueDay, $baseRate, $dateFrom, $dateTo, $rentVoidMap) as $rc) {
-    $ledger[] = ['date'=>$rc['date'],'description'=>$rc['description'],'type'=>'charge','debit'=>$rc['gross'],'credit'=>'0.00'];
+    $ledger[] = ['date'=>$rc['date'],'description'=>$rc['description'],'type'=>'charge','debit'=>$rc['gross'],'credit'=>'0.00','owner'=>$rc['tenant_id']];
     foreach ($rc['waivers'] as $w) {
+        // 'applied', not 'amount' — a stored waiver can exceed the charge it
+        // offsets once move-out proration shrinks a final month, and the raw
+        // figure would print a phantom credit.
+        if (!money_is_pos($w['applied'])) continue;
         $ledger[] = [
             'date'        => $rc['date'],
             'description' => 'Rent Waived — ' . date('F Y', mktime(0,0,0,$rc['period_month'],1,$rc['period_year']))
                              . ' (' . $w['reason'] . ')',
             'type'        => 'rent_waiver',
             'debit'       => '0.00',
-            'credit'      => from_cents(to_cents($w['amount'])),
+            'credit'      => $w['applied'],
             'invoice_no'  => '',
             'cashier'     => $w['voided_by_name'] ?? '',
+            'owner'       => $rc['tenant_id'],
         ];
     }
 }
+// payment_id => tenant_id, so a refund segments with the payment it reverses.
+$pdfPayTenant = [];
+foreach ($payments as $p) $pdfPayTenant[$p['id']] = isset($p['tenant_id']) ? (int)$p['tenant_id'] : null;
 foreach ($payments as $p) {
     $desc = $p['payment_type']==='rent'
         ? 'Payment — '.date('F Y',mktime(0,0,0,(int)$p['period_month'],1,(int)$p['period_year']))
         : ($p['service_name']??'Service').' — '.date('F Y',mktime(0,0,0,(int)$p['period_month'],1,(int)$p['period_year']));
-    $ledger[] = ['date'=>$p['payment_date'],'description'=>$desc,'type'=>'payment','debit'=>'0.00','credit'=>$p['amount'],'invoice_no'=>$p['invoice_no']??'','cashier'=>$p['cashier_name']??''];
+    $ledger[] = ['date'=>$p['payment_date'],'description'=>$desc,'type'=>'payment','debit'=>'0.00','credit'=>$p['amount'],'invoice_no'=>$p['invoice_no']??'','cashier'=>$p['cashier_name']??'','owner'=>isset($p['tenant_id'])?(int)$p['tenant_id']:null];
 }
 foreach ($pdfRefunds as $r) {
     $ledger[] = [
@@ -144,6 +180,7 @@ foreach ($pdfRefunds as $r) {
         'credit'      => '0.00',
         'invoice_no'  => '',
         'cashier'     => $r['refunded_by_name'] ?? '',
+        'owner'       => $pdfPayTenant[$r['payment_id']] ?? null,
     ];
 }
 foreach ($pdfServiceCharges as $c) {
@@ -160,6 +197,7 @@ foreach ($pdfServiceCharges as $c) {
         'credit'      => '0.00',
         'invoice_no'  => '',
         'cashier'     => $c['billed_by_name'] ?? '',
+        'owner'       => isset($c['tenant_id']) ? (int)$c['tenant_id'] : null,
     ];
     if ($isVoided) {
         $ledger[] = [
@@ -171,19 +209,38 @@ foreach ($pdfServiceCharges as $c) {
             'credit'      => $c['amount'],
             'invoice_no'  => '',
             'cashier'     => $c['voided_by_name'] ?? '',
+            'owner'       => isset($c['tenant_id']) ? (int)$c['tenant_id'] : null,
         ];
     }
 }
 
-usort($ledger, function($a,$b){
+// Occupancy grouping — the unit ledger prints each tenancy as its own block
+// with its own running balance, so no tenant's section inherits the previous
+// one's debt. A tenant-scoped statement has a single block.
+$occSeq = []; $occNames = [];
+foreach ($occupants as $i => $o) { $occSeq[(int)$o['id']] = $i; $occNames[(int)$o['id']] = $o['full_name']; }
+$occRank = fn($r) => (($r['owner'] ?? null) !== null && isset($occSeq[$r['owner']])) ? $occSeq[$r['owner']] : PHP_INT_MAX;
+
+usort($ledger, function($a,$b) use ($scopeAll, $occRank) {
+    if ($scopeAll) {
+        $c = $occRank($a) <=> $occRank($b);
+        if ($c !== 0) return $c;
+    }
     $c = strcmp($a['date'],$b['date']);
     if ($c !== 0) return $c;
     $order = ['charge'=>0,'rent_waiver'=>1,'service_charge'=>2,'service_waiver'=>3,'payment'=>4,'refund'=>5];
     return ($order[$a['type']]??4) - ($order[$b['type']]??4);
 });
-// Running balance — cents math, no float drift.
-$runBal = '0.00';
+// Running balance — cents math, no float drift. Resets at each handover.
+$runBal    = '0.00';
+$prevOwner = false;
 foreach ($ledger as &$row) {
+    $owner = $row['owner'] ?? null;
+    if ($scopeAll && $prevOwner !== false && $owner !== $prevOwner) {
+        $row['segment_start'] = true;
+        $runBal = '0.00';
+    }
+    $prevOwner = $owner;
     $runBal = money_add($runBal, money_sub($row['debit'], $row['credit']));
     $row['balance'] = $runBal;
 }
@@ -358,13 +415,28 @@ table.ledger tfoot td{padding:10px 8px;font-weight:700;border-top:2px solid var(
         <?php endforeach; ?>
       </div>
       <div class="soa-party">
-        <div class="party-label">Tenant Information</div>
+        <div class="party-label"><?=$scopeAll?'Occupants':'Statement For'?></div>
         <?php if($tenant):
-          foreach([['Name',$tenant['full_name']],['Phone',$tenant['phone']??'—'],['Email',$tenant['email']??'—'],['Contract Start',($tenant['contract_start']?fmtDate($tenant['contract_start'],'M j, Y'):'—')],['Contract End',($tenant['contract_end']?fmtDate($tenant['contract_end'],'M j, Y'):'Open')]] as [$k,$v]): ?>
+          foreach([['Name',$tenant['full_name']],['Phone',$tenant['phone']??'—'],['Email',$tenant['email']??'—'],['Occupancy From',($tenant['contract_start']?fmtDate($tenant['contract_start'],'M j, Y'):'—')],['Occupancy To',($tenant['contract_end']?fmtDate($tenant['contract_end'],'M j, Y'):'Open')]] as [$k,$v]): ?>
           <div class="party-kv"><span class="party-k"><?=$k?></span><span class="party-v"><?=clean($v)?></span></div>
-          <?php endforeach;
-        else: ?>
-          <div style="color:var(--muted);font-size:12px;margin-top:8px">No active tenant on record.</div>
+          <?php endforeach; ?>
+          <div style="color:var(--muted);font-size:10.5px;margin-top:8px">
+            Covers this occupancy only. Charges and payments belonging to other
+            tenants of this unit are not included.
+          </div>
+        <?php elseif($scopeAll && $occupants):
+          foreach($occupants as $o): ?>
+          <div class="party-kv">
+            <span class="party-k"><?=clean($o['full_name'])?></span>
+            <span class="party-v"><?=$o['contract_start']?fmtDate($o['contract_start'],'M j, Y'):'—'?> – <?=$o['contract_end']?fmtDate($o['contract_end'],'M j, Y'):'Open'?></span>
+          </div>
+          <?php endforeach; ?>
+          <div style="color:var(--muted);font-size:10.5px;margin-top:8px">
+            Unit ledger — every occupancy, each with its own running balance.
+            This is not a tenant statement.
+          </div>
+        <?php else: ?>
+          <div style="color:var(--muted);font-size:12px;margin-top:8px">No tenant on record for this unit.</div>
         <?php endif; ?>
       </div>
     </div>
@@ -385,7 +457,17 @@ table.ledger tfoot td{padding:10px 8px;font-weight:700;border-top:2px solid var(
           </tr>
         </thead>
         <tbody>
-        <?php foreach($ledger as $row): ?>
+        <?php $segSeen = false; foreach($ledger as $li => $row): ?>
+        <?php
+          if ($scopeAll && (!$segSeen || !empty($row['segment_start']))):
+              $segSeen  = true;
+              $segOwner = $row['owner'] ?? null;
+              $segName  = $segOwner !== null ? ($occNames[$segOwner] ?? 'Unknown tenant') : 'Unattributed';
+        ?>
+        <tr><td colspan="7" style="background:var(--bg);font-weight:700;font-size:11px;padding:6px 8px">
+          Occupancy — <?=clean($segName)?>
+        </td></tr>
+        <?php endif; ?>
         <?php
           $rowClass = match($row['type']) {
               'charge'         => 'charge-row',
@@ -412,6 +494,19 @@ table.ledger tfoot td{padding:10px 8px;font-weight:700;border-top:2px solid var(
             else: echo '—'; endif; ?>
           </td>
         </tr>
+        <?php
+          $nextRow = $ledger[$li + 1] ?? null;
+          if ($scopeAll && ($nextRow === null || !empty($nextRow['segment_start']))):
+        ?>
+        <tr><td colspan="6" class="r" style="font-weight:600;font-size:11px;color:var(--muted);padding:5px 8px">
+          Closing balance — <?=clean($segName ?? '')?>
+        </td>
+        <td class="r" style="font-weight:700;border-top:1px solid var(--border)">
+          <?php if(money_is_pos($row['balance'])): echo money($row['balance']);
+          elseif(money_lt($row['balance'],'0.00')): echo '('.money(money_abs($row['balance'])).') CR';
+          else: echo 'Settled'; endif; ?>
+        </td></tr>
+        <?php endif; ?>
         <?php endforeach; ?>
         <?php if(empty($ledger)): ?>
         <tr><td colspan="7" style="text-align:center;padding:20px;color:var(--muted)">No transactions in this period.</td></tr>

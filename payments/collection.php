@@ -422,6 +422,15 @@ function loadSummary() {
         ? '<span class="badge badge-occupied">Occupied</span>'
         : '<span class="badge badge-vacant">Vacant</span>';
       var tenantCell  = r.tenant_name ? esc(r.tenant_name) : '<span class="text-muted">—</span>';
+      // Arrears left by a tenant who has moved out. Shown next to the tenant,
+      // never added into this period's Balance — it isn't due this period, and
+      // folding it in would corrupt the collection totals. Without it the figure
+      // disappears from every screen the moment the unit turns vacant.
+      var pastDue = parseFloat(r.past_arrears) || 0;
+      if (pastDue > 0) {
+        tenantCell += '<div class="stat-sub mt-1" title="Owed by a previous tenant of this unit">' +
+          '<i class="fa-solid fa-clock-rotate-left me-1"></i>' + fmt(pastDue) + ' past tenant</div>';
+      }
       var rentCell    = rentPd > 0 ? '<span class="num">' + fmt(rentPd) + '</span>' : '<span class="text-muted">—</span>';
       var svcCell     = svcPd  > 0 ? '<span class="num">' + fmt(svcPd) + '</span>'  : '<span class="text-muted">—</span>';
       var totCell     = totPd  > 0 ? '<span class="num">' + fmt(totPd) + '</span>'  : '<span class="text-muted">—</span>';

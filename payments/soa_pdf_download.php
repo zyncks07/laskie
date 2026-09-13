@@ -12,6 +12,11 @@ requireLogin();
 $unitId   = (int)($_GET['unit_id']   ?? 0);
 $dateFrom = $_GET['date_from'] ?? date('Y-01-01');
 $dateTo   = $_GET['date_to']   ?? date('Y-m-d');
+// Occupancy scope, forwarded verbatim to soa_pdf.php below. Constrained to a
+// digit string or the literal 'all' before it can reach the filename.
+$tenantParam = trim((string)($_GET['tenant_id'] ?? ''));
+if ($tenantParam !== 'all' && !ctype_digit($tenantParam)) $tenantParam = '';
+$_GET['tenant_id'] = $tenantParam;
 
 if (!$unitId) { http_response_code(400); die('Unit ID required.'); }
 
@@ -29,6 +34,17 @@ $_GET['date_to']   = $dateTo;
 $s = $pdo->prepare("SELECT unit_name FROM rental_units WHERE id=?");
 $s->execute([$unitId]);
 $unitName = $s->fetchColumn() ?: 'Unit';
+
+// Name the file after the occupancy it covers, so two tenants of the same unit
+// don't produce identically-named statements.
+$scopeName = '';
+if ($tenantParam === 'all') {
+    $scopeName = 'All-Occupants';
+} elseif ($tenantParam !== '') {
+    $tq = $pdo->prepare("SELECT full_name FROM tenants WHERE id=? AND unit_id=?");
+    $tq->execute([(int)$tenantParam, $unitId]);
+    $scopeName = (string)($tq->fetchColumn() ?: '');
+}
 
 // Render the SoA HTML in-process. soa_pdf.php reads from $_GET (already set
 // above) and echoes a full HTML document. Output-buffer it instead of
@@ -56,8 +72,10 @@ try {
     die('Could not generate the Statement of Account PDF. See the system audit log for details.');
 }
 
-$safeName = preg_replace('/_+/', '_', trim(preg_replace('/[^A-Za-z0-9\-_]/', '_', $unitName), '_'));
-$filename = "SOA-{$safeName}-{$dateFrom}-to-{$dateTo}.pdf";
+$slug     = fn(string $v) => preg_replace('/_+/', '_', trim(preg_replace('/[^A-Za-z0-9\-_]/', '_', $v), '_'));
+$safeName = $slug($unitName);
+$safeScope = $scopeName !== '' ? '-' . $slug($scopeName) : '';
+$filename = "SOA-{$safeName}{$safeScope}-{$dateFrom}-to-{$dateTo}.pdf";
 
 header('Content-Type: application/pdf');
 header('Content-Disposition: attachment; filename="' . $filename . '"');

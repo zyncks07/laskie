@@ -17,6 +17,9 @@ $units    = $pdo->query("
 $selUnit  = (int)($_GET['unit_id']   ?? ($units[0]['id'] ?? 0));
 $dateFrom = $_GET['date_from'] ?? date('Y-01-01');
 $dateTo   = $_GET['date_to']   ?? date('Y-m-d');
+// Scope selector: a tenant id narrows the statement to that one occupancy;
+// 'all' is the landlord's unit ledger (every occupant, segmented).
+$tenantParam = trim((string)($_GET['tenant_id'] ?? ''));
 // Active users for the refund "Returned by (cashier)" selector.
 $activeUsers = $pdo->query("SELECT id, full_name FROM users WHERE status='active' ORDER BY full_name")->fetchAll();
 
@@ -28,42 +31,85 @@ if ($selUnit) {
     $unitInfo = $s->fetch();
 }
 
-// ── Occupants overlapping the requested date range ───────────
-// Includes active tenant AND former/inactive tenants whose contract
-// period intersects [dateFrom, dateTo] so that historical charges
-// are generated correctly even after a tenant moves out or transfers.
-$occupants = [];
-$tenant    = null; // primary tenant for display (active, or most recent former)
+// ── Occupancy scope ──────────────────────────────────────────
+// A Statement of Account is addressed to a TENANT, about their occupancy of a
+// unit — so the ledger is scoped to one tenancy by default. Without this, a
+// tenant who moves out owing money leaves their arrears sitting at the head of
+// the next tenant's statement (see CLAUDE.md §5 invariant 12).
+//
+// $scopeAll switches to the unit ledger: every occupant, segmented by tenancy
+// with its own closing balance. That is the landlord's receivable view.
+$unitTenants = [];   // every tenancy of this unit — the selector's options
+$occupants   = [];   // the tenancies this statement actually renders
+$tenant      = null; // the tenancy being rendered (null in unit-ledger mode)
+$scopeAll    = ($tenantParam === 'all');
 if ($selUnit) {
     $t = $pdo->prepare("
         SELECT * FROM tenants
-        WHERE unit_id = ?
-          AND status IN ('active','former','inactive')
-          AND (contract_start IS NULL OR contract_start <= ?)
-          AND (contract_end   IS NULL OR contract_end   >= ?)
+        WHERE unit_id = ? AND status IN ('active','former','inactive')
         ORDER BY COALESCE(contract_start,'1970-01-01') ASC
     ");
-    $t->execute([$selUnit, $dateTo, $dateFrom]);
-    $occupants = $t->fetchAll();
-    foreach ($occupants as $occ) {
-        if ($occ['status'] === 'active') { $tenant = $occ; break; }
+    $t->execute([$selUnit]);
+    // Resolve every blank contract_end up front so handing the generator a
+    // single tenancy below yields exactly the charges the full list would.
+    $unitTenants = resolveOccupancyEnds($pdo, $t->fetchAll());
+
+    if (!$scopeAll) {
+        if ($tenantParam !== '') {
+            foreach ($unitTenants as $occ) {
+                if ((int)$occ['id'] === (int)$tenantParam) { $tenant = $occ; break; }
+            }
+        }
+        // No explicit pick: the active tenant, else the most recent occupant so
+        // a vacated unit still opens on the tenant whose arrears you're chasing.
+        if (!$tenant) {
+            foreach ($unitTenants as $occ) {
+                if ($occ['status'] === 'active') { $tenant = $occ; break; }
+            }
+        }
+        if (!$tenant && $unitTenants) $tenant = end($unitTenants);
     }
-    if (!$tenant && !empty($occupants)) $tenant = end($occupants);
+
+    if ($tenant) {
+        // Deliberately NOT clamping the range to the contract window here.
+        // buildRentChargeRows() already bounds the virtual rent charges by the
+        // tenancy, and recorded rows are selected by tenant_id — so the scope is
+        // already right. Clamping as well would drop rows that genuinely belong
+        // to this tenant but sit a few days outside their contract dates, which
+        // is exactly where an opening "balance brought forward" charge lands.
+        // The date inputs still default to the occupancy window (see
+        // onTenantScopeChange) so the usual view reads as the tenancy.
+        $occupants = [$tenant];
+    } else {
+        $scopeAll  = true;
+        $occupants = array_values(array_filter($unitTenants, fn($o) =>
+            (empty($o['contract_start']) || $o['contract_start'] <= $dateTo) &&
+            (empty($o['contract_end'])   || $o['contract_end']   >= $dateFrom)));
+    }
 }
+// Tenant filter applied to every ledger source below. Unattributed rows
+// (tenant_id IS NULL) are matched by date against the tenancy window, so a row
+// recorded before payments carried a tenant can never silently vanish.
+$scopeTenantId = $tenant ? (int)$tenant['id'] : null;
 
 // ── Payment Records ───────────────────────────────────────────
 $payments  = [];
 $totalPaid = 0;
 if ($selUnit) {
-    $q = $pdo->prepare("
-        SELECT p.*, st.name AS service_name, u.full_name AS cashier_name
-        FROM   payments p
-        LEFT JOIN service_types st ON p.service_type_id = st.id
-        LEFT JOIN users u          ON p.received_by     = u.id
-        WHERE  p.unit_id = ? AND p.payment_date BETWEEN ? AND ? AND p.deleted_at IS NULL AND p.status != 'voided'
-        ORDER  BY p.payment_date ASC, p.created_at ASC
-    ");
-    $q->execute([$selUnit, $dateFrom, $dateTo]);
+    $paySql  = "SELECT p.*, st.name AS service_name, u.full_name AS cashier_name
+                FROM   payments p
+                LEFT JOIN service_types st ON p.service_type_id = st.id
+                LEFT JOIN users u          ON p.received_by     = u.id
+                WHERE  p.unit_id = ? AND p.payment_date BETWEEN ? AND ?
+                  AND  p.deleted_at IS NULL AND p.status != 'voided'";
+    $payArgs = [$selUnit, $dateFrom, $dateTo];
+    if ($scopeTenantId !== null) {
+        $paySql   .= " AND (p.tenant_id = ? OR p.tenant_id IS NULL)";
+        $payArgs[] = $scopeTenantId;
+    }
+    $paySql .= " ORDER BY p.payment_date ASC, p.created_at ASC";
+    $q = $pdo->prepare($paySql);
+    $q->execute($payArgs);
     $payments  = $q->fetchAll();
     $totalPaid = money_sum(array_column($payments, 'amount'));
 }
@@ -72,6 +118,12 @@ if ($selUnit) {
 $refundRows   = [];
 $refundedMap  = []; // payment_id => total_refunded
 $payStatusMap = []; // payment_id => status
+// payment_id => tenant_id, so a refund lands in the same occupancy segment as
+// the payment it reverses. Refunds reach a tenant only through their payment.
+$payTenantMap = [];
+foreach ($payments as $p) {
+    $payTenantMap[$p['id']] = isset($p['tenant_id']) ? (int)$p['tenant_id'] : null;
+}
 if ($payments) {
     $payIds = array_column($payments, 'id');
     $in     = implode(',', array_fill(0, count($payIds), '?'));
@@ -103,29 +155,33 @@ $totalRefunded = money_sum(array_column($refundRows, 'amount'));
 // labels them "(Unpaid)" consistently.
 $serviceCharges = [];
 if ($selUnit) {
-    $sq = $pdo->prepare("
-        SELECT uc.*, st.name as service_name, u.full_name as billed_by_name,
-               vu.full_name as voided_by_name,
-               (uc.payment_id IS NULL OR p.id IS NULL) AS is_outstanding
-        FROM unit_charges uc
-        LEFT JOIN service_types st ON uc.service_type_id = st.id
-        LEFT JOIN users u  ON uc.created_by = u.id
-        LEFT JOIN users vu ON uc.voided_by  = vu.id
-        LEFT JOIN payments p ON p.id = uc.payment_id
-                            AND p.deleted_at IS NULL
-                            AND p.status != 'voided'
-        WHERE uc.unit_id = ? AND uc.charge_date BETWEEN ? AND ?
-        ORDER BY uc.charge_date ASC, uc.created_at ASC
-    ");
-    $sq->execute([$selUnit, $dateFrom, $dateTo]);
+    $chgSql = "SELECT uc.*, st.name as service_name, u.full_name as billed_by_name,
+                      vu.full_name as voided_by_name,
+                      (uc.payment_id IS NULL OR p.id IS NULL) AS is_outstanding
+               FROM unit_charges uc
+               LEFT JOIN service_types st ON uc.service_type_id = st.id
+               LEFT JOIN users u  ON uc.created_by = u.id
+               LEFT JOIN users vu ON uc.voided_by  = vu.id
+               LEFT JOIN payments p ON p.id = uc.payment_id
+                                   AND p.deleted_at IS NULL
+                                   AND p.status != 'voided'
+               WHERE uc.unit_id = ? AND uc.charge_date BETWEEN ? AND ?";
+    $chgArgs = [$selUnit, $dateFrom, $dateTo];
+    if ($scopeTenantId !== null) {
+        $chgSql   .= " AND (uc.tenant_id = ? OR uc.tenant_id IS NULL)";
+        $chgArgs[] = $scopeTenantId;
+    }
+    $chgSql .= " ORDER BY uc.charge_date ASC, uc.created_at ASC";
+    $sq = $pdo->prepare($chgSql);
+    $sq->execute($chgArgs);
     $serviceCharges = $sq->fetchAll();
 }
 
 // ── Waived (voided) rent charges for this unit + range ────────
 // Rent charges are virtual, so an admin write-off lives in rent_charge_voids
 // and is rendered as an offsetting credit line, never by hiding the charge.
-$rentVoidMap  = $selUnit ? getRentVoidMap($pdo, $selUnit, $dateFrom, $dateTo) : [];
-$rentPaidMap  = $selUnit ? getRentPaidByPeriod($pdo, $selUnit) : [];
+$rentVoidMap  = $selUnit ? getRentVoidMap($pdo, $selUnit, $dateFrom, $dateTo, $scopeTenantId) : [];
+$rentPaidMap  = $selUnit ? getRentPaidByPeriod($pdo, $selUnit, $scopeTenantId) : [];
 
 // ── Build Ledger (charges + payments merged, sorted by date) ──
 $ledger   = [];
@@ -137,9 +193,18 @@ if ($selUnit && $unitInfo) {
     // Shared generator — payments/soa_pdf.php renders from the same helper.
     $rentRows = buildRentChargeRows($pdo, $selUnit, $occupants, $dueDay, $baseRate, $dateFrom, $dateTo, $rentVoidMap);
 
+    // Rent charges are per-tenant, so the waiver cap must be too: a unit-wide
+    // paid figure makes the outgoing tenant's arrears look settled by the
+    // incoming tenant's payment when they share a period (a mid-month handover).
+    $rentPaidMaps = [];
+    foreach ($occupants as $o) {
+        $rentPaidMaps[(int)$o['id']] = getRentPaidByPeriod($pdo, $selUnit, (int)$o['id']);
+    }
+
     foreach ($rentRows as $rc) {
         $periodKey = $rc['period_year'] . '-' . $rc['period_month'];
-        $paid      = $rentPaidMap[$periodKey] ?? '0.00';
+        $paidMap   = $rentPaidMaps[(int)$rc['tenant_id']] ?? $rentPaidMap;
+        $paid      = $paidMap[$periodKey] ?? '0.00';
         $canWaive  = waivableRent($rc['gross'], $paid, $rc['voided']);
         $ledger[]  = [
             'date'         => $rc['date'],
@@ -151,6 +216,7 @@ if ($selUnit && $unitInfo) {
             'period_month' => $rc['period_month'],
             'period_year'  => $rc['period_year'],
             'tenant_id'    => $rc['tenant_id'],
+            'owner'        => $rc['tenant_id'],
             'waivable'     => $canWaive,
         ];
         if (money_is_pos($canWaive)) {
@@ -166,16 +232,22 @@ if ($selUnit && $unitInfo) {
         // One credit row per waiver, stamped on the charge date so it nets
         // against its charge in the running balance.
         foreach ($rc['waivers'] as $w) {
+            // 'applied', not 'amount' — a stored waiver can exceed the charge it
+            // offsets (rate history moved, or move-out proration shrank the
+            // final month) and crediting the raw figure would open a phantom
+            // credit in the running balance.
+            if (!money_is_pos($w['applied'])) continue;
             $ledger[] = [
                 'date'        => $rc['date'],
                 'description' => 'Rent Waived — ' . date('F Y', mktime(0,0,0,$rc['period_month'],1,$rc['period_year']))
                                  . ' (' . $w['reason'] . ')',
                 'type'        => 'rent_waiver',
                 'debit'       => '0.00',
-                'credit'      => from_cents(to_cents($w['amount'])),
+                'credit'      => $w['applied'],
                 'invoice_no'  => '',
                 'cashier'     => $w['voided_by_name'] ?? '',
                 'id'          => (int)$w['id'],
+                'owner'       => $rc['tenant_id'],
                 'encoded'     => $w['voided_at'] ?? null,
             ];
         }
@@ -196,6 +268,7 @@ if ($selUnit && $unitInfo) {
             'cashier'          => $p['cashier_name'] ?? '',
             'pay_type'         => $p['payment_type'],
             'id'               => $p['id'],
+            'owner'            => isset($p['tenant_id']) ? (int)$p['tenant_id'] : null,
             'received_by'      => $p['received_by'] ?? 0,
             'pay_status'       => $payStatusMap[$p['id']] ?? 'paid',
             'already_refunded' => $refundedMap[$p['id']] ?? '0.00',
@@ -215,6 +288,7 @@ if ($selUnit && $unitInfo) {
             'invoice_no'  => '',
             'cashier'     => $r['refunded_by_name'] ?? '',
             'id'          => null,
+            'owner'       => $payTenantMap[$r['payment_id']] ?? null,
             'encoded'     => $r['refunded_at'] ?? null,
         ];
     }
@@ -242,6 +316,7 @@ if ($selUnit && $unitInfo) {
             'is_unpaid'   => $unpaid,
             'is_voided'   => $isVoided,
             'source'      => $c['source'],
+            'owner'       => isset($c['tenant_id']) ? (int)$c['tenant_id'] : null,
             'encoded'     => $c['created_at'] ?? null,
         ];
         if ($isVoided) {
@@ -255,6 +330,7 @@ if ($selUnit && $unitInfo) {
                 'invoice_no'  => '',
                 'cashier'     => $c['voided_by_name'] ?? '',
                 'id'          => (int)$c['id'],
+                'owner'       => isset($c['tenant_id']) ? (int)$c['tenant_id'] : null,
                 'encoded'     => $c['voided_at'] ?? null,
             ];
         } elseif ($unpaid) {
@@ -268,19 +344,49 @@ if ($selUnit && $unitInfo) {
     }
 }
 
-// Sort by date asc; within same date: rent charges → service charges → payments → refunds
-usort($ledger, function($a,$b){
+// Occupancy ordering — in unit-ledger mode the ledger is grouped by tenancy so
+// each occupant gets their own running balance and closing figure, instead of
+// one number that silently rolls a departed tenant's debt onto the next tenant.
+$occSeq   = [];  // tenant_id => position
+$occNames = [];  // tenant_id => display name
+foreach ($occupants as $i => $o) {
+    $occSeq[(int)$o['id']]   = $i;
+    $occNames[(int)$o['id']] = $o['full_name'];
+}
+$occRank = function ($row) use ($occSeq) {
+    $owner = $row['owner'] ?? null;
+    // Unattributed rows sort after every known occupancy.
+    return $owner !== null && isset($occSeq[$owner]) ? $occSeq[$owner] : PHP_INT_MAX;
+};
+
+// Sort by occupancy, then date asc; within same date:
+// rent charges → service charges → payments → refunds
+usort($ledger, function($a,$b) use ($scopeAll, $occRank) {
+    if ($scopeAll) {
+        $cmp = $occRank($a) <=> $occRank($b);
+        if ($cmp !== 0) return $cmp;
+    }
     $cmp = strcmp($a['date'],$b['date']);
     if ($cmp !== 0) return $cmp;
     $order = ['charge'=>0,'rent_waiver'=>1,'service_charge'=>2,'service_waiver'=>3,'payment'=>4,'refund'=>5];
     return ($order[$a['type']]??4) - ($order[$b['type']]??4);
 });
 
-// Running balance — cents math, no float drift.
-$runBal = '0.00';
+// Running balance — cents math, no float drift. In unit-ledger mode it resets
+// at each handover, so no tenant's statement line inherits the previous one.
+$runBal      = '0.00';
+$segBal      = [];   // owner key => closing balance for that occupancy
+$prevOwner   = false;
 foreach ($ledger as &$row) {
+    $owner = $row['owner'] ?? null;
+    if ($scopeAll && $prevOwner !== false && $owner !== $prevOwner) {
+        $row['segment_start'] = true;
+        $runBal = '0.00';
+    }
+    $prevOwner = $owner;
     $runBal = money_add($runBal, money_sub($row['debit'], $row['credit']));
     $row['balance'] = $runBal;
+    $segBal[$owner === null ? '' : $owner] = $runBal;
 }
 unset($row);
 
@@ -290,7 +396,12 @@ $totalDebit        = money_sum(array_column($ledger, 'debit'));
 $totalCredit       = money_sum(array_column($ledger, 'credit'));
 $finalBal          = money_sub($totalDebit, $totalCredit);
 
-logActivity($pdo, 'VIEW_SOA', 'SOA', "Viewed SOA unit #$selUnit ($dateFrom – $dateTo)");
+// Link/scope helpers shared by the PDF buttons, the filter form and the header.
+$scopeParam = $scopeAll ? 'all' : (string)$scopeTenantId;
+$scopeLabel = $scopeAll ? 'All occupants' : ($tenant['full_name'] ?? '—');
+
+logActivity($pdo, 'VIEW_SOA', 'SOA',
+    "Viewed SOA unit #$selUnit ($dateFrom – $dateTo) — scope: $scopeLabel");
 include '../includes/header.php';
 ?>
 
@@ -298,11 +409,11 @@ include '../includes/header.php';
   <h1 class="page-title"><i class="fa-solid fa-file-invoice me-2 text-primary-custom"></i>Statement of Account</h1>
   <div class="d-flex gap-2">
     <?php if ($selUnit && $unitInfo): ?>
-    <a href="soa_pdf.php?unit_id=<?=$selUnit?>&date_from=<?=urlencode($dateFrom)?>&date_to=<?=urlencode($dateTo)?>"
+    <a href="soa_pdf.php?unit_id=<?=$selUnit?>&tenant_id=<?=urlencode($scopeParam)?>&date_from=<?=urlencode($dateFrom)?>&date_to=<?=urlencode($dateTo)?>"
        target="_blank" class="btn btn-sm btn-outline-primary no-print">
       <i class="fa-solid fa-file-pdf me-1"></i>Preview SOA
     </a>
-    <a href="soa_pdf_download.php?unit_id=<?=$selUnit?>&date_from=<?=urlencode($dateFrom)?>&date_to=<?=urlencode($dateTo)?>"
+    <a href="soa_pdf_download.php?unit_id=<?=$selUnit?>&tenant_id=<?=urlencode($scopeParam)?>&date_from=<?=urlencode($dateFrom)?>&date_to=<?=urlencode($dateTo)?>"
        class="btn btn-sm btn-primary no-print">
       <i class="fa-solid fa-download me-1"></i>Download PDF
     </a>
@@ -322,9 +433,9 @@ include '../includes/header.php';
 <div class="card filter-card mb-3">
   <div class="card-body py-2">
     <form method="GET" class="row g-2 align-items-end">
-      <div class="col-sm-6 col-md-4">
+      <div class="col-sm-6 col-md-3">
         <label class="form-label">Rental Unit</label>
-        <select name="unit_id" class="form-select form-select-sm">
+        <select name="unit_id" class="form-select form-select-sm" onchange="this.form.submit()">
           <?php foreach($units as $u): ?>
           <option value="<?=$u['id']?>" <?=$u['id']==$selUnit?'selected':''?>>
             <?=clean($u['unit_name'])?> (<?=ucfirst($u['status'])?>)<?= $u['tenant_name'] ? ' — ' . clean($u['tenant_name']) : '' ?>
@@ -333,12 +444,26 @@ include '../includes/header.php';
         </select>
       </div>
       <div class="col-sm-6 col-md-3">
-        <label class="form-label">Date From</label>
-        <input type="date" name="date_from" class="form-control form-control-sm" value="<?=clean($dateFrom)?>">
+        <label class="form-label">Tenant</label>
+        <select name="tenant_id" id="soaTenant" class="form-select form-select-sm" onchange="onTenantScopeChange(this)">
+          <?php foreach($unitTenants as $ut): ?>
+          <option value="<?=(int)$ut['id']?>"
+                  data-from="<?=clean($ut['contract_start'] ?? '')?>"
+                  data-to="<?=clean($ut['contract_end'] ?? '')?>"
+                  <?= (!$scopeAll && $scopeTenantId === (int)$ut['id']) ? 'selected' : '' ?>>
+            <?=clean($ut['full_name'])?><?= $ut['status'] !== 'active' ? ' (' . ucfirst($ut['status']) . ')' : '' ?>
+          </option>
+          <?php endforeach; ?>
+          <option value="all" <?=$scopeAll?'selected':''?>>— All occupants (unit ledger) —</option>
+        </select>
       </div>
-      <div class="col-sm-6 col-md-3">
+      <div class="col-sm-6 col-md-2">
+        <label class="form-label">Date From</label>
+        <input type="date" name="date_from" id="soaFrom" class="form-control form-control-sm" value="<?=clean($dateFrom)?>">
+      </div>
+      <div class="col-sm-6 col-md-2">
         <label class="form-label">Date To</label>
-        <input type="date" name="date_to" class="form-control form-control-sm" value="<?=clean($dateTo)?>">
+        <input type="date" name="date_to" id="soaTo" class="form-control form-control-sm" value="<?=clean($dateTo)?>">
       </div>
       <div class="col-12 col-md-auto d-flex gap-1">
         <button type="submit" class="btn btn-primary btn-sm"><i class="fa-solid fa-search me-1"></i>View</button>
@@ -372,16 +497,40 @@ include '../includes/header.php';
   </div>
   <div class="col-md-6">
     <div class="card h-100">
-      <div class="card-header"><span class="card-header-title"><i class="fa-solid fa-user me-2"></i>Current Tenant</span></div>
+      <div class="card-header"><span class="card-header-title">
+        <i class="fa-solid fa-<?=$scopeAll?'users':'user'?> me-2"></i><?=$scopeAll?'Unit Ledger':'Statement For'?>
+      </span></div>
       <div class="card-body py-2">
         <?php if($tenant): ?>
         <table style="width:100%;font-size:13px;border-collapse:collapse">
-          <?php $trows=[['Name',$tenant['full_name']],['Phone',$tenant['phone']??'—'],['Email',$tenant['email']??'—'],['Contract',($tenant['contract_start']?fmtDate($tenant['contract_start'],'M j, Y').' – '.($tenant['contract_end']?fmtDate($tenant['contract_end'],'M j, Y'):'Open'):'—')]]; foreach($trows as [$l,$v]): ?>
+          <?php $trows=[['Name',$tenant['full_name']],['Phone',$tenant['phone']??'—'],['Email',$tenant['email']??'—'],['Occupancy',($tenant['contract_start']?fmtDate($tenant['contract_start'],'M j, Y').' – '.($tenant['contract_end']?fmtDate($tenant['contract_end'],'M j, Y'):'Open'):'—')]]; foreach($trows as [$l,$v]): ?>
           <tr><td style="padding:5px 0;color:var(--text-muted);width:130px"><?=$l?></td><td style="padding:5px 0;font-weight:600"><?=clean($v)?></td></tr>
           <?php endforeach; ?>
+          <tr><td style="padding:5px 0;color:var(--text-muted)">Status</td>
+              <td style="padding:5px 0"><span class="badge badge-<?=clean($tenant['status'])?>"><?=ucfirst(clean($tenant['status']))?></span></td></tr>
         </table>
+        <div class="stat-sub mt-2">
+          <i class="fa-solid fa-circle-info me-1"></i>Covers this occupancy only — charges and
+          payments from other tenants of this unit are not included.
+        </div>
+        <?php elseif($scopeAll && $occupants): ?>
+        <table style="width:100%;font-size:13px;border-collapse:collapse">
+          <?php foreach($occupants as $o): ?>
+          <tr>
+            <td style="padding:5px 0;font-weight:600"><?=clean($o['full_name'])?></td>
+            <td style="padding:5px 0;color:var(--text-muted);text-align:right">
+              <?=$o['contract_start']?fmtDate($o['contract_start'],'M j, Y'):'—'?> –
+              <?=$o['contract_end']?fmtDate($o['contract_end'],'M j, Y'):'Open'?>
+            </td>
+          </tr>
+          <?php endforeach; ?>
+        </table>
+        <div class="stat-sub mt-2">
+          <i class="fa-solid fa-circle-info me-1"></i>Every occupancy of this unit, each with its
+          own running balance. Not a tenant statement.
+        </div>
         <?php else: ?>
-        <div class="text-center py-3 text-muted"><i class="fa-solid fa-user-slash me-1"></i> No active tenant</div>
+        <div class="text-center py-3 text-muted"><i class="fa-solid fa-user-slash me-1"></i> No tenant on record for this unit</div>
         <?php endif; ?>
       </div>
     </div>
@@ -471,7 +620,7 @@ include '../includes/header.php';
     <span style="font-size:12px;color:var(--text-muted)"><?=fmtDate($dateFrom,'M j, Y')?> – <?=fmtDate($dateTo,'M j, Y')?></span>
   </div>
   <div class="table-responsive">
-    <table class="table" id="ledgerTable">
+    <table class="table" id="ledgerTable"<?= $scopeAll ? ' data-segmented="1"' : '' ?>>
       <thead>
         <tr>
           <th>Date</th>
@@ -489,7 +638,21 @@ include '../includes/header.php';
       <?php if (empty($ledger)): ?>
         <tr><td colspan="9" class="text-center py-4 text-muted">No records for the selected period and unit.</td></tr>
       <?php endif; ?>
-      <?php foreach($ledger as $row): ?>
+      <?php $segSeen = false; foreach($ledger as $li => $row): ?>
+      <?php
+        // Occupancy banner in unit-ledger mode: one per tenancy, so it is always
+        // visible whose debt a given block of rows belongs to.
+        if ($scopeAll && (!$segSeen || !empty($row['segment_start']))):
+            $segSeen = true;
+            $segOwner = $row['owner'] ?? null;
+            $segName  = $segOwner !== null ? ($occNames[$segOwner] ?? 'Unknown tenant') : 'Unattributed';
+      ?>
+      <tr class="soa-segment">
+        <td colspan="9" style="background:var(--gray-100);font-weight:700;font-size:12px;border-top:2px solid var(--gray-300)">
+          <i class="fa-solid fa-user fa-xs me-1"></i>Occupancy — <?=clean($segName)?>
+        </td>
+      </tr>
+      <?php endif; ?>
       <?php
         $isRefund  = $row['type'] === 'refund';
         $isSvcChg  = $row['type'] === 'service_charge';
@@ -604,6 +767,24 @@ include '../includes/header.php';
           <?php endif; ?>
         </td>
       </tr>
+      <?php
+        // Close the occupancy when the next row belongs to a different tenancy
+        // (or there is no next row): each tenant gets their own bottom line.
+        $nextRow = $ledger[$li + 1] ?? null;
+        if ($scopeAll && ($nextRow === null || !empty($nextRow['segment_start']))):
+      ?>
+      <tr class="soa-segment-total">
+        <td colspan="7" class="text-end" style="font-weight:600;font-size:12px;color:var(--text-muted)">
+          Closing balance — <?=clean($segName ?? '')?>
+        </td>
+        <td class="text-end fw-600 num" style="border-top:1px solid var(--gray-300)">
+          <?php if(money_is_pos($row['balance'])): ?><span class="delta-neg"><?=money($row['balance'])?></span>
+          <?php elseif(money_lt($row['balance'],'0.00')): ?><span class="text-muted">(<?=money(money_abs($row['balance']))?>) CR</span>
+          <?php else: ?><span class="text-muted">Settled</span><?php endif; ?>
+        </td>
+        <td class="no-print"></td>
+      </tr>
+      <?php endif; ?>
       <?php endforeach; ?>
       </tbody>
       <tfoot>
@@ -627,11 +808,11 @@ include '../includes/header.php';
       Dr = Charges &nbsp;·&nbsp; Cr = Payments &nbsp;·&nbsp; Balance is cumulative Dr minus Cr
     </div>
     <div class="d-flex gap-2">
-      <a href="soa_pdf.php?unit_id=<?=$selUnit?>&date_from=<?=urlencode($dateFrom)?>&date_to=<?=urlencode($dateTo)?>"
+      <a href="soa_pdf.php?unit_id=<?=$selUnit?>&tenant_id=<?=urlencode($scopeParam)?>&date_from=<?=urlencode($dateFrom)?>&date_to=<?=urlencode($dateTo)?>"
          target="_blank" class="btn btn-sm btn-outline-primary">
         <i class="fa-solid fa-eye me-1"></i>Preview SOA
       </a>
-      <a href="soa_pdf_download.php?unit_id=<?=$selUnit?>&date_from=<?=urlencode($dateFrom)?>&date_to=<?=urlencode($dateTo)?>"
+      <a href="soa_pdf_download.php?unit_id=<?=$selUnit?>&tenant_id=<?=urlencode($scopeParam)?>&date_from=<?=urlencode($dateFrom)?>&date_to=<?=urlencode($dateTo)?>"
          class="btn btn-sm btn-primary">
         <i class="fa-solid fa-download me-1"></i>Download PDF
       </a>
@@ -779,7 +960,11 @@ function esc(s) {
 }
 
 $(document).ready(function(){
-  if (document.getElementById('ledgerTable')) {
+  // The unit ledger is grouped by occupancy, so it is a document, not a
+  // sortable grid — DataTables would sort the banner and subtotal rows in
+  // among the entries and destroy the grouping.
+  var ledgerEl = document.getElementById('ledgerTable');
+  if (ledgerEl && !ledgerEl.dataset.segmented) {
     $('#ledgerTable').DataTable({
       pageLength: 50,
       order: [[0,'asc']],
@@ -797,6 +982,20 @@ $(document).ready(function(){
   var bulkVoidEl = document.getElementById('bulkVoidModal');
   if (bulkVoidEl) window.bulkVoidModal = new bootstrap.Modal(bulkVoidEl);
 });
+
+// Switching tenancy resets the date range to that occupancy's contract window,
+// so the statement opens on the period it is actually for. The server clamps
+// the range again anyway — this just keeps the inputs honest.
+function onTenantScopeChange(sel) {
+  var opt  = sel.options[sel.selectedIndex];
+  var from = document.getElementById('soaFrom');
+  var to   = document.getElementById('soaTo');
+  if (sel.value !== 'all') {
+    if (opt.dataset.from) from.value = opt.dataset.from;
+    to.value = opt.dataset.to || new Date().toISOString().slice(0, 10);
+  }
+  sel.form.submit();
+}
 
 function openRefundModal(paymentId, invoiceNo, amount, alreadyRefunded, maxRefund, cashierId) {
   alreadyRefunded = alreadyRefunded || 0;

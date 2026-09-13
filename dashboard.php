@@ -137,6 +137,15 @@ if ($selectedYear === $curYear) {
     ");
     $usStmt->execute([$curMonth, $curYear]);
     $unitStatusData = $usStmt->fetchAll();
+
+    // Outstanding receivables, split by whether the tenant is still in place.
+    // Past-tenant arrears are invisible everywhere else on this page and on the
+    // collection grid — both join tenants on status='active' and zero out vacant
+    // units — so a departed tenant's debt would otherwise vanish at move-out.
+    // As-of-today, not year-scoped, so it is only shown on the current year.
+    $arrearsCurrent = money_sum(array_values(getCurrentTenantArrears($pdo)));
+    $arrearsPast    = money_sum(array_values(getPastTenantArrears($pdo)));
+    $arrearsTotal   = money_add($arrearsCurrent, $arrearsPast);
     // Admin rent waivers for the current month, keyed by unit_id. Batched here
     // so the status loop below stays free of per-unit queries.
     $curRentVoids = getRentVoidTotals($pdo, $curMonth, $curYear);
@@ -247,6 +256,20 @@ include 'includes/header.php';
     <div class="stat-value"><?= $occupiedUnits ?> / <?= $totalUnits ?></div>
     <div class="stat-sub">Rental units</div>
   </div>
+  <?php if ($selectedYear === $curYear): ?>
+  <div class="db-hero-cell">
+    <div class="stat-label">Outstanding Receivables</div>
+    <div class="stat-value num"><?= money($arrearsTotal) ?></div>
+    <div class="stat-sub">
+      Current <?= money($arrearsCurrent) ?>
+      <?php if (money_is_pos($arrearsPast)): ?>
+      &middot; <a href="payments/collection.php" style="color:inherit;text-decoration:underline">Past tenants <?= money($arrearsPast) ?></a>
+      <?php else: ?>
+      &middot; Past tenants <?= money($arrearsPast) ?>
+      <?php endif; ?>
+    </div>
+  </div>
+  <?php endif; ?>
 </div>
 
 <?php if ($selectedYear === $curYear): ?>

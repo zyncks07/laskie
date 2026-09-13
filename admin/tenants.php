@@ -43,6 +43,36 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if (!in_array($status, ['active','inactive','former'], true)) jsonErr('Invalid tenant status.');
         if ($start && $end && strtotime($start) > strtotime($end)) jsonErr('Contract start date cannot be after contract end date.');
 
+        // ── Tenancy windows must be closed and non-overlapping ──────────
+        // Rent charges are virtual: they are generated month by month from
+        // contract_start → contract_end. A departed tenant with a blank end date
+        // therefore keeps accruing rent forever, and every month the successor
+        // is also billed gets charged twice. Closing the window at move-out is
+        // what stops that (CLAUDE.md §5 invariant 12).
+        if ($unitId && $status !== 'active' && !$end) {
+            jsonErr('A former or inactive tenant needs a contract end date — '
+                  . 'without one they keep accruing rent charges on this unit indefinitely.');
+        }
+        if ($unitId && $start) {
+            $ov = $pdo->prepare(
+                "SELECT full_name, contract_start, contract_end FROM tenants
+                 WHERE unit_id = ? AND id <> ? AND status IN ('active','former','inactive')
+                   AND (contract_start IS NULL OR ? IS NULL OR contract_start <= ?)
+                   AND (contract_end   IS NULL OR contract_end >= ?)
+                 ORDER BY COALESCE(contract_start,'1970-01-01') LIMIT 1"
+            );
+            // Open-ended new tenancy: treat its end as "forever" for the test.
+            $ov->execute([$unitId, $id, $end, $end ?: '9999-12-31', $start]);
+            if ($clash = $ov->fetch()) {
+                $clashWin = ($clash['contract_start'] ? fmtDate($clash['contract_start'], 'M j, Y') : 'open')
+                          . ' → ' . ($clash['contract_end'] ? fmtDate($clash['contract_end'], 'M j, Y') : 'open');
+                jsonErr($fullName . ' (' . fmtDate($start, 'M j, Y') . ' → '
+                      . ($end ? fmtDate($end, 'M j, Y') : 'open') . ') overlaps '
+                      . $clash['full_name'] . ' (' . $clashWin . ') on this unit. '
+                      . 'Set a contract end date for the outgoing tenant first.');
+            }
+        }
+
         if ($id) {
             // Capture before-state: old unit for occupancy resync + full field
             // set for the audit diff.

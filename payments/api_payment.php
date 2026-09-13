@@ -34,8 +34,12 @@ function voidRentPeriod(PDO $pdo, int $unitId, int $month, int $year, ?int $tena
     $label = date('F Y', mktime(0, 0, 0, $month, 1, $year));
     if (!money_is_pos($g['gross'])) return [false, "No rent charge exists for $label.", '0.00'];
 
-    $paid   = getRentPaidForPeriod($pdo, $unitId, $month, $year);
-    $voided = getRentVoidedForPeriod($pdo, $unitId, $month, $year);
+    // Cap against THIS tenancy, not the unit: when two occupants share a period
+    // (a mid-month handover) a unit-wide sum makes the outgoing tenant's arrears
+    // look settled by the incoming tenant's payment, and the waiver is refused.
+    $capTenant = $tenantId ?: ($g['tenant_id'] ?: null);
+    $paid   = getRentPaidForPeriod($pdo, $unitId, $month, $year, $capTenant);
+    $voided = getRentVoidedForPeriod($pdo, $unitId, $month, $year, $capTenant);
     $max    = waivableRent($g['gross'], $paid, $voided);
     if (!money_is_pos($max)) {
         return [false, "$label is already settled (paid or waived) — use Refund to reverse a payment.", '0.00'];
@@ -97,6 +101,24 @@ if ($action === 'save_payment') {
     if (!$unitId)             jsonErr('Rental unit is required.');
     if (!money_is_pos($amount)) jsonErr('Amount must be greater than zero.');
     if (!in_array($type, ['rent','service'])) jsonErr('Invalid payment type.');
+
+    // Attribute the payment to whoever occupied the unit for this period when
+    // the form didn't say. An unattributed payment can't be placed on a tenant's
+    // statement, and after a handover there is no safe way to guess later.
+    if ($tenantId === null) {
+        $periodStart = sprintf('%04d-%02d-01', $periodYear, $periodMonth);
+        $periodEnd   = date('Y-m-t', strtotime($periodStart));
+        $oq = $pdo->prepare(
+            "SELECT id FROM tenants
+             WHERE unit_id=? AND status IN ('active','former','inactive')
+               AND (contract_start IS NULL OR contract_start <= ?)
+               AND (contract_end   IS NULL OR contract_end   >= ?)
+             ORDER BY status='active' DESC, COALESCE(contract_start,'1970-01-01') DESC
+             LIMIT 1"
+        );
+        $oq->execute([$unitId, $periodEnd, $periodStart]);
+        $tenantId = (int)($oq->fetchColumn() ?: 0) ?: null;
+    }
 
     // Editing an existing payment is admin-only. Guard BEFORE touching the
     // filesystem so a non-admin edit attempt can't leave an orphaned upload
@@ -565,8 +587,15 @@ if ($action === 'monthly_summary') {
     // whole grid rather than one per unit inside the loop below.
     $rentVoids = getRentVoidTotals($pdo, $month, $year);
 
+    // Outstanding left behind by tenants who have moved out. Reported ALONGSIDE
+    // the period balance, never folded into it — this is not money due for this
+    // period, and mixing the two would corrupt the collection totals. Without it
+    // the figure vanishes from every screen the moment the unit turns vacant.
+    $pastArrears = getPastTenantArrears($pdo);
+
     // Compute status + balance per unit (cents math — no float drift)
     foreach ($summary as &$row) {
+        $row['past_arrears'] = $pastArrears[(int)$row['id']] ?? '0.00';
         // Vacant units have no active tenant, so there is nothing to charge or owe.
         // Skip the rent computation so the row renders as a neutral dash, not a red balance.
         if ($row['status'] === 'vacant') {
