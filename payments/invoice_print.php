@@ -117,8 +117,10 @@ logActivity($pdo, 'PRINT_INVOICE', 'Payments', "Printed invoice {$pay['invoice_n
 
   /* Header band */
   .inv-header {
-    background: var(--primary);
-    color: #ffffff;
+    background: #ffffff;
+    color: #0a0a0a;
+    border: 2px solid #0a0a0a;
+    border-radius: 11px 11px 0 0;
     padding: 28px 32px;
     display: flex;
     justify-content: space-between;
@@ -188,8 +190,9 @@ logActivity($pdo, 'PRINT_INVOICE', 'Payments', "Printed invoice {$pay['invoice_n
   /* Total box */
   .inv-total-wrap { display: flex; justify-content: flex-end; margin-bottom: 24px; }
   .inv-total-box {
-    background: var(--primary);
-    color: #ffffff;
+    background: #ffffff;
+    color: #0a0a0a;
+    border: 2px solid #0a0a0a;
     border-radius: 10px;
     padding: 16px 24px;
     text-align: right;
@@ -229,13 +232,14 @@ logActivity($pdo, 'PRINT_INVOICE', 'Payments', "Printed invoice {$pay['invoice_n
 
   /* Print */
   @media print {
-    body { background: #fff; padding: 0; }
+    body { background: #fff; padding: 10mm 12mm; }
     .page-actions { display: none; }
     .invoice { box-shadow: none; border: none; max-width: 100%; border-radius: 0; }
-    .inv-header { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    .inv-header { border-radius: 0; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
     .inv-status-row { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
     .inv-total-box { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   }
+  @page { size: A4; margin: 0mm; }
 </style>
 </head>
 <body>
