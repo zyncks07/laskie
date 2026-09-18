@@ -154,26 +154,41 @@ if ($action === 'list_transactions') {
     // was collected in earlier months, so this can legitimately go negative.
     $periodNet = money_sub(money_sub(money_sub(money_add($totRec, $totVaultIn), $totRem), $totExp), $totRef);
     // True cash on hand = the user's full lifetime running balance, ignoring the
-    // date/type filter. This is what the summary strip's "Net Cash on Hand" cell
-    // displays so it always reflects the real balance regardless of the filter.
+    // date/type filter. This is what the summary strip's "Cash on Hand (all
+    // time)" cell displays so it always reflects the real balance regardless of
+    // the filter, split into cash held vs money the business owes them.
     if ($userId) {
         $trueCashOnHand = getUserCashOnHand($pdo, $userId);
+        $truePos        = splitCashPosition($trueCashOnHand);
     } else {
         // "All Staff" selected — sum every user's lifetime balance (mirrors the
-        // unscoped period totals shown beside it).
-        $allBal = $pdo->query("
+        // unscoped period totals shown beside it). GROUP BY user is load-bearing:
+        // the on_hand/owed split has to happen per user and only then be summed,
+        // or one staffer's advance silently cancels another's cash and both
+        // disappear from the figure.
+        $perUser = $pdo->query("
             SELECT
                 COALESCE(SUM(CASE WHEN transaction_type='received'     THEN amount ELSE 0 END),0) AS received,
                 COALESCE(SUM(CASE WHEN transaction_type='vault_return' THEN amount ELSE 0 END),0) AS vault_return,
                 COALESCE(SUM(CASE WHEN transaction_type='remitted'     THEN amount ELSE 0 END),0) AS remitted,
                 COALESCE(SUM(CASE WHEN transaction_type='expense'      THEN amount ELSE 0 END),0) AS expenses,
                 COALESCE(SUM(CASE WHEN transaction_type='refunded'     THEN amount ELSE 0 END),0) AS refunded
-            FROM cash_transactions
-        ")->fetch();
-        $trueCashOnHand = money_sub(
-            money_sub(money_sub(money_add($allBal['received'], $allBal['vault_return']), $allBal['remitted']), $allBal['expenses']),
-            $allBal['refunded']
-        );
+            FROM cash_transactions GROUP BY user_id
+        ")->fetchAll();
+        $balances = [];
+        foreach ($perUser as $b) {
+            $balances[] = money_sub(
+                money_sub(money_sub(money_add($b['received'], $b['vault_return']), $b['remitted']), $b['expenses']),
+                $b['refunded']
+            );
+        }
+        $trueCashOnHand = money_sum($balances);
+        $splits  = array_map('splitCashPosition', $balances);
+        $truePos = [
+            'balance' => $trueCashOnHand,
+            'on_hand' => money_sum(array_column($splits, 'on_hand')),
+            'owed'    => money_sum(array_column($splits, 'owed')),
+        ];
     }
     jsonOk([
         'transactions'        => $txns,
@@ -183,7 +198,9 @@ if ($action === 'list_transactions') {
         'total_vault_returns' => $totVaultIn,
         'total_refunded'      => $totRef,
         'cash_on_hand'        => $periodNet,       // period net (legacy field)
-        'true_cash_on_hand'   => $trueCashOnHand,  // lifetime running balance
+        'true_cash_on_hand'   => $trueCashOnHand,  // lifetime signed balance
+        'true_on_hand'        => $truePos['on_hand'],
+        'true_owed'           => $truePos['owed'],
         'count'               => count($txns),
     ]);
 }
@@ -214,13 +231,34 @@ if ($action === 'all_users_balance') {
             $d['total_expenses']),
             $d['total_refunded']
         );
+        // Split the signed balance into cash actually held vs money the business
+        // owes for expenses this user shouldered past their float. The table
+        // renders on_hand, so it never shows a negative "cash" figure.
+        $pos          = splitCashPosition($d['cash_on_hand']);
+        $d['on_hand'] = $pos['on_hand'];
+        $d['owed']    = $pos['owed'];
     }
     unset($d);
+    // Every leg of the cash_on_hand formula is totalled, not just the three
+    // that used to be here: the footer row has to reconcile to net_on_hand the
+    // same way each user row reconciles to its own cash_on_hand. Leaving
+    // vault_return and refunded out made the TOTAL line disagree with its own
+    // columns by the sum of every vault return ever issued.
+    // total_on_hand / total_owed sum the PER-USER halves — they are not a split
+    // of the aggregate. One staffer being owed 5,000 while another holds 5,000
+    // is 5,000 of company cash and a 5,000 liability, not a tidy zero; splitting
+    // the aggregate would net them into nothing. Summing the halves keeps the
+    // footer reconciling the same way each row does, since
+    // sum(balance) + sum(owed) = sum(on_hand).
     $totals = [
-        'total_received' => money_sum(array_column($data, 'total_received')),
-        'total_remitted' => money_sum(array_column($data, 'total_remitted')),
-        'total_expenses' => money_sum(array_column($data, 'total_expenses')),
-        'net_on_hand'    => money_sum(array_column($data, 'cash_on_hand')),
+        'total_received'      => money_sum(array_column($data, 'total_received')),
+        'total_vault_returns' => money_sum(array_column($data, 'total_vault_returns')),
+        'total_remitted'      => money_sum(array_column($data, 'total_remitted')),
+        'total_expenses'      => money_sum(array_column($data, 'total_expenses')),
+        'total_refunded'      => money_sum(array_column($data, 'total_refunded')),
+        'total_owed'          => money_sum(array_column($data, 'owed')),
+        'total_on_hand'       => money_sum(array_column($data, 'on_hand')),
+        'net_on_hand'         => money_sum(array_column($data, 'cash_on_hand')),
     ];
     jsonOk(['users' => $data, 'totals' => $totals]);
 }

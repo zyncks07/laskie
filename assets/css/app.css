@@ -275,6 +275,7 @@ body {
 .badge-received     { background:#d1fae5; color:#065f46; }
 .badge-remitted     { background:#dbeafe; color:#1e40af; }
 .badge-expense      { background:#fee2e2; color:#991b1b; }
+.badge-refunded     { background:#fee2e2; color:#991b1b; }
 .badge-vault-return { background:#e0f2fe; color:#0369a1; }
 
 /* ─── BUTTONS ─────────────────────────────────────────────── */

@@ -95,6 +95,7 @@ function money_max($a, $b): string { return money_gt($a, $b) ? from_cents(to_cen
 function money_min($a, $b): string { return money_lt($a, $b) ? from_cents(to_cents($a)) : from_cents(to_cents($b)); }
 function money_is_zero($a): bool  { return to_cents($a) === 0; }
 function money_is_pos($a): bool   { return to_cents($a) >  0; }
+function money_is_neg($a): bool   { return to_cents($a) <  0; }
 function money_abs($a): string    { return from_cents(abs(to_cents($a))); }
 
 function fmtDate(?string $date, string $format = 'M j, Y'): string {
@@ -282,6 +283,43 @@ function getUserCashOnHand(PDO $pdo, int $userId): string {
         ),
         $r['refunded']
     );
+}
+
+// Splits the signed ledger balance into the two different things it carries.
+//
+// A single per-user account nets company cash the user is holding against money
+// the business owes them: when the float runs short they shoulder an expense
+// personally, the balance goes negative, and the next collection repays them
+// silently. The arithmetic is right — the net position is exact — but "cash on
+// hand: -4,770.62" is not a statement about cash. Cash is a physical asset and
+// floors at zero; a negative balance is a LIABILITY, and one field carrying two
+// meanings discriminated by sign can't be reconciled against a drawer count.
+//
+//   on_hand = max(0, balance)   — company cash held; countable
+//   owed    = max(0, -balance)  — advanced personally, not yet recovered
+//
+// and therefore balance = on_hand - owed, so nothing is invented or lost: the
+// same rows are simply reported as the two positions they represent.
+//
+// This is exact only while a user repays themselves out of the NEXT collection
+// before treating any of it as float — which is how the ledger is actually
+// worked. Someone holding collected cash while still owed would be in both
+// positions at once, and a single signed number cannot express that. If that
+// ever becomes routine, the expense rows need a "paid from own pocket" flag
+// rather than a smarter split here.
+function splitCashPosition($balance): array {
+    $neg = money_is_neg($balance);
+    return [
+        'balance' => from_cents(to_cents($balance)),
+        'on_hand' => $neg ? '0.00' : from_cents(to_cents($balance)),
+        'owed'    => $neg ? money_abs($balance) : '0.00',
+    ];
+}
+
+// getUserCashOnHand() for one user, decomposed. Use this for any display of a
+// user's position; use getUserCashOnHand() when you want the raw signed balance.
+function getUserCashPosition(PDO $pdo, int $userId): array {
+    return splitCashPosition(getUserCashOnHand($pdo, $userId));
 }
 
 // ─── In-app Notifications ────────────────────────────────────

@@ -31,6 +31,36 @@ $myCash = money_sub(
     $myBalance['total_refunded']
 );
 
+// $myCash is the signed ledger balance. What the user can actually count is the
+// on_hand half; a negative balance means they shouldered expenses past their
+// float and the business owes them the difference. See splitCashPosition().
+$myPos = splitCashPosition($myCash);
+
+// The hero breakdown must add up to the headline figure on screen — showing only
+// received/remitted/expenses left the vault_return and refunded legs invisible,
+// so the cards silently disagreed with the headline (by exactly the user's
+// vault_return total) and the page read as drifting. Every leg of the formula is
+// listed, with its sign; optional legs are hidden only when they are zero and
+// therefore cannot move the total. Same non-zero guard my_summary.php uses for
+// its Vault Returns / Refunded stat cards.
+//
+// "Owed to You" is the last leg because the headline is on_hand, not balance:
+//   on_hand = received + vault_return - remitted - expenses - refunded + owed
+// It is what stops the figure going negative, so it belongs in the sum that
+// explains it — and it says plainly that part of that outflow was own money.
+$myCashLegs = [
+    ['sign' => '+', 'label' => 'Total Received', 'value' => $myBalance['total_received'],      'always' => true],
+    ['sign' => '+', 'label' => 'Vault→You',      'value' => $myBalance['total_vault_returns'], 'always' => false],
+    ['sign' => '−', 'label' => 'Total Remitted', 'value' => $myBalance['total_remitted'],      'always' => true],
+    ['sign' => '−', 'label' => 'Total Expenses', 'value' => $myBalance['total_expenses'],      'always' => true],
+    ['sign' => '−', 'label' => 'Refunded',       'value' => $myBalance['total_refunded'],      'always' => false],
+    ['sign' => '+', 'label' => 'Owed to You',    'value' => $myPos['owed'],                    'always' => false],
+];
+$myCashLegs = array_values(array_filter(
+    $myCashLegs,
+    fn($leg) => $leg['always'] || money_is_pos($leg['value'])
+));
+
 logActivity($pdo, 'VIEW_CASH', 'Cash', 'Viewed cash on hand page');
 include 'includes/header.php';
 ?>
@@ -52,31 +82,32 @@ include 'includes/header.php';
   <div class="row g-3 align-items-center">
     <div class="col-md-4">
       <div style="font-size:11px;text-transform:uppercase;letter-spacing:.1em;opacity:.75;margin-bottom:4px">My Current Cash on Hand</div>
-      <div class="cash-hero-amount" style="font-size:36px;font-weight:800;letter-spacing:-1px"><?=money($myCash)?></div>
+      <div class="cash-hero-amount" style="font-size:36px;font-weight:800;letter-spacing:-1px"><?=money($myPos['on_hand'])?></div>
+      <?php if (money_is_pos($myPos['owed'])): ?>
+      <div style="font-size:12.5px;font-weight:600;margin-top:6px;padding:6px 10px;border-radius:8px;background:rgba(127,127,127,.2)">
+        <i class="fa-solid fa-hand-holding-dollar me-1"></i>The business owes you <?=money($myPos['owed'])?>
+        <div style="font-size:11px;font-weight:400;opacity:.8;margin-top:2px">
+          You covered expenses beyond the cash you were holding. Collections you keep will repay it.
+        </div>
+      </div>
+      <?php endif; ?>
+      <div style="font-size:11px;opacity:.7;margin-top:6px">
+        <?php foreach ($myCashLegs as $i => $leg): ?><?= $i ? ' ' . $leg['sign'] . ' ' : '' ?><?= clean($leg['label']) ?><?php endforeach; ?>
+      </div>
       <div style="font-size:12px;opacity:.8;margin-top:4px">
         <?=clean($_SESSION['user']['full_name'])?> &nbsp;&middot;&nbsp; <?=ucfirst($_SESSION['user']['role'])?>
       </div>
     </div>
     <div class="col-md-8">
       <div class="row g-2">
-        <div class="col-4">
+        <?php foreach ($myCashLegs as $leg): ?>
+        <div class="col-6 col-sm-4">
           <div class="cash-stat-inner" style="background:rgba(127,127,127,.15);border-radius:8px;padding:12px;text-align:center">
-            <div style="font-size:10px;text-transform:uppercase;letter-spacing:.08em;opacity:.75;margin-bottom:4px">Total Received</div>
-            <div class="cash-stat-val" style="font-size:18px;font-weight:700"><?=money((float)$myBalance['total_received'])?></div>
+            <div style="font-size:10px;text-transform:uppercase;letter-spacing:.08em;opacity:.75;margin-bottom:4px"><?=clean($leg['label'])?></div>
+            <div class="cash-stat-val" style="font-size:18px;font-weight:700"><?=$leg['sign']?> <?=money($leg['value'])?></div>
           </div>
         </div>
-        <div class="col-4">
-          <div class="cash-stat-inner" style="background:rgba(127,127,127,.15);border-radius:8px;padding:12px;text-align:center">
-            <div style="font-size:10px;text-transform:uppercase;letter-spacing:.08em;opacity:.75;margin-bottom:4px">Total Remitted</div>
-            <div class="cash-stat-val" style="font-size:18px;font-weight:700"><?=money((float)$myBalance['total_remitted'])?></div>
-          </div>
-        </div>
-        <div class="col-4">
-          <div class="cash-stat-inner" style="background:rgba(127,127,127,.15);border-radius:8px;padding:12px;text-align:center">
-            <div style="font-size:10px;text-transform:uppercase;letter-spacing:.08em;opacity:.75;margin-bottom:4px">Total Expenses</div>
-            <div class="cash-stat-val" style="font-size:18px;font-weight:700"><?=money((float)$myBalance['total_expenses'])?></div>
-          </div>
-        </div>
+        <?php endforeach; ?>
       </div>
     </div>
   </div>
@@ -91,15 +122,26 @@ include 'includes/header.php';
     <button class="btn btn-xs btn-outline-secondary" onclick="loadAllBalances()"><i class="fa-solid fa-rotate me-1"></i>Refresh</button>
   </div>
   <div class="table-responsive">
-    <table class="table">
+    <!-- Every leg of the cash-on-hand formula gets a column, so each row's
+         figures reconcile to its Cash on Hand cell. Vault→You was missing here
+         and was the entire reason the table looked wrong: a staff member with
+         vault returns showed a deeply negative visible sum beside a positive
+         balance. Refunded and Owed stay hidden until some user actually has one
+         (loadAllBalances unhides them) — a column of zeroes is just noise.
+         Cash on Hand shows the on_hand half, so it never renders negative;
+         what a user has shouldered personally shows as Owed instead. -->
+    <table class="table" id="allBalTable">
       <thead><tr>
         <th>Staff Member</th><th>Role</th>
-        <th class="text-end">Total Received</th><th class="text-end">Total Remitted</th>
-        <th class="text-end">Total Expenses</th><th class="text-end">Cash on Hand</th>
+        <th class="text-end">Total Received</th><th class="text-end">Vault&rarr;You</th>
+        <th class="text-end">Total Remitted</th><th class="text-end">Total Expenses</th>
+        <th class="text-end d-none" id="thRefunded">Refunded</th>
+        <th class="text-end d-none" id="thOwed" title="Expenses this user covered beyond the cash they were holding — the business owes it back">Owed to Them</th>
+        <th class="text-end">Cash on Hand</th>
         <th class="text-center">Actions</th>
       </tr></thead>
       <tbody id="allBalBody">
-        <tr><td colspan="7" class="text-center py-3"><span class="spinner-border spinner-border-sm text-primary me-2"></span>Loading...</td></tr>
+        <tr><td colspan="8" class="text-center py-3"><span class="spinner-border spinner-border-sm text-primary me-2"></span>Loading...</td></tr>
       </tbody>
     </table>
   </div>
@@ -150,6 +192,7 @@ include 'includes/header.php';
           <option value="remitted">Remitted</option>
           <option value="expense">Expense</option>
           <option value="vault_return">Vault→You</option>
+          <option value="refunded">Refunded</option>
         </select>
       </div>
       <div class="col-6 col-md-2">
@@ -167,8 +210,14 @@ include 'includes/header.php';
     </div>
   </div>
 
-  <!-- Period summary strip -->
-  <div class="d-flex gap-3 flex-wrap px-3 py-2 border-bottom" style="background:var(--gray-100);font-size:12.5px">
+  <!-- Period summary strip. The first cells are scoped to the active filter;
+       the last one is the lifetime balance and deliberately ignores it (see
+       api/cash_api.php list_transactions). Nothing used to say so, so the four
+       period figures read as a failed attempt to explain the balance beside
+       them — this month's collections minus this month's expenses against an
+       all-time total. The labels now carry the scope. -->
+  <div class="d-flex gap-3 flex-wrap px-3 py-2 border-bottom align-items-center" style="background:var(--gray-100);font-size:12.5px">
+    <span class="text-muted" id="pScope" style="text-transform:uppercase;letter-spacing:.06em;font-size:10.5px">This period</span>
     <span>Received: <strong id="pRec">&#8212;</strong></span>
     <span class="text-muted">|</span>
     <span>Remitted: <strong id="pRem">&#8212;</strong></span>
@@ -176,8 +225,11 @@ include 'includes/header.php';
     <span>Expenses: <strong id="pExp">&#8212;</strong></span>
     <span class="text-muted">|</span>
     <span>Vault&rarr;You: <strong id="pVret">&#8212;</strong></span>
-    <span class="text-muted">|</span>
-    <span>Net Cash on Hand: <strong id="pNet">&#8212;</strong></span>
+    <span id="pRefWrap" class="d-none"><span class="text-muted me-3">|</span>Refunded: <strong id="pRef">&#8212;</strong></span>
+    <span class="ms-auto" title="Lifetime position for the selected staff member. Not affected by the period, type or date filters above.">
+      <span id="pOwedWrap" class="d-none">Owed to Them: <strong id="pOwed">&#8212;</strong><span class="text-muted mx-2">|</span></span>
+      Cash on Hand <span class="text-muted">(all time)</span>: <strong id="pNet">&#8212;</strong>
+    </span>
   </div>
 
   <div class="table-responsive">
@@ -188,7 +240,7 @@ include 'includes/header.php';
         <th class="text-center">Proof</th><th class="text-center no-print">Actions</th>
       </tr></thead>
       <tbody id="txBody">
-        <tr><td colspan="8" class="text-center py-4">
+        <tr><td colspan="9" class="text-center py-4">
           <span class="spinner-border spinner-border-sm text-primary me-2"></span>Loading...
         </td></tr>
       </tbody>
@@ -352,45 +404,85 @@ document.addEventListener('DOMContentLoaded', function() {
   if (CAN_VIEW_ALL) loadAllBalances();
 });
 
+// Width of the balances table as currently rendered. Derived from the header
+// rather than hard-coded so adding or hiding a column can't leave a stale
+// colspan behind on the loading / error / empty rows.
+function allBalCols() {
+  var head = document.getElementById('allBalTable');
+  if (!head || !head.tHead || !head.tHead.rows.length) return 8;
+  var cells = head.tHead.rows[0].cells, n = 0;
+  for (var i = 0; i < cells.length; i++) {
+    if (!cells[i].classList.contains('d-none')) n++;
+  }
+  return n;
+}
+
+function allBalMsg(cls, text) {
+  return '<tr><td colspan="' + allBalCols() + '" class="' + cls + '">' + text + '</td></tr>';
+}
+
 function loadAllBalances() {
   if (!CAN_VIEW_ALL) return;
-  document.getElementById('allBalBody').innerHTML = '<tr><td colspan="7" class="text-center py-3"><span class="spinner-border spinner-border-sm text-primary me-2"></span>Loading...</td></tr>';
+  document.getElementById('allBalBody').innerHTML =
+    allBalMsg('text-center py-3', '<span class="spinner-border spinner-border-sm text-primary me-2"></span>Loading...');
   apiPost('api/cash_api.php', {action:'all_users_balance'}, function(err, res) {
     if (!res || !res.success) {
-      document.getElementById('allBalBody').innerHTML = '<tr><td colspan="7" class="text-center text-danger">Failed to load.</td></tr>';
+      document.getElementById('allBalBody').innerHTML = allBalMsg('text-center text-danger', 'Failed to load.');
       return;
     }
+    // Reveal the Refunded / Owed columns only when one actually exists —
+    // otherwise they are columns of zeroes. The header cells drive
+    // allBalCols(), so unhide them BEFORE any colspan is computed below.
+    var totRef  = parseFloat((res.totals || {}).total_refunded) || 0;
+    var totOwed = parseFloat((res.totals || {}).total_owed)     || 0;
+    var showRef  = totRef  !== 0;
+    var showOwed = totOwed !== 0;
+    var thRef  = document.getElementById('thRefunded');
+    var thOwed = document.getElementById('thOwed');
+    if (thRef)  thRef.classList.toggle('d-none', !showRef);
+    if (thOwed) thOwed.classList.toggle('d-none', !showOwed);
+
     var html = '';
     for (var i = 0; i < res.users.length; i++) {
       var u = res.users[i];
-      var r = parseFloat(u.total_received) || 0;
-      var m = parseFloat(u.total_remitted) || 0;
-      var e = parseFloat(u.total_expenses) || 0;
-      var c = parseFloat(u.cash_on_hand)   || 0;
+      var r = parseFloat(u.total_received)      || 0;
+      var v = parseFloat(u.total_vault_returns) || 0;
+      var m = parseFloat(u.total_remitted)      || 0;
+      var e = parseFloat(u.total_expenses)      || 0;
+      var f = parseFloat(u.total_refunded)      || 0;
+      var o = parseFloat(u.owed)                || 0;
+      var c = parseFloat(u.on_hand)             || 0;
       var roleBadge = '<span class="badge badge-' + esc(u.role) + '">' + esc(u.role.charAt(0).toUpperCase() + u.role.slice(1)) + '</span>';
       html += '<tr>';
       html += '<td class="fw-600">' + esc(u.full_name) + '</td>';
       html += '<td>' + roleBadge + '</td>';
       html += '<td class="text-end">' + fmt(r) + '</td>';
+      html += '<td class="text-end">' + fmt(v) + '</td>';
       html += '<td class="text-end">' + fmt(m) + '</td>';
       html += '<td class="text-end">' + fmt(e) + '</td>';
+      if (showRef)  html += '<td class="text-end">' + fmt(f) + '</td>';
+      if (showOwed) html += '<td class="text-end' + (o ? ' fw-600' : '') + '">' + fmt(o) + '</td>';
       html += '<td class="text-end fw-600 num">' + fmt(c) + '</td>';
       html += '<td class="text-center"><button class="btn-icon" title="View" onclick="filterByUser(' + parseInt(u.id) + ')"><i class="fa-solid fa-eye fa-xs"></i></button></td>';
       html += '</tr>';
     }
     var t = res.totals || {};
-    var totR   = parseFloat(t.total_received) || 0;
-    var totM   = parseFloat(t.total_remitted) || 0;
-    var totE   = parseFloat(t.total_expenses) || 0;
-    var totNet = parseFloat(t.net_on_hand)    || 0;
+    var totR   = parseFloat(t.total_received)      || 0;
+    var totV   = parseFloat(t.total_vault_returns) || 0;
+    var totM   = parseFloat(t.total_remitted)      || 0;
+    var totE   = parseFloat(t.total_expenses)      || 0;
+    var totNet = parseFloat(t.total_on_hand)       || 0;
     html += '<tr style="background:var(--gray-100);font-weight:700;border-top:2px solid var(--gray-200)">';
     html += '<td colspan="2">TOTAL</td>';
     html += '<td class="text-end">' + fmt(totR) + '</td>';
+    html += '<td class="text-end">' + fmt(totV) + '</td>';
     html += '<td class="text-end">' + fmt(totM) + '</td>';
     html += '<td class="text-end">' + fmt(totE) + '</td>';
+    if (showRef)  html += '<td class="text-end">' + fmt(totRef) + '</td>';
+    if (showOwed) html += '<td class="text-end">' + fmt(totOwed) + '</td>';
     html += '<td class="text-end fw-600 num">' + fmt(totNet) + '</td>';
     html += '<td></td></tr>';
-    document.getElementById('allBalBody').innerHTML = html || '<tr><td colspan="7" class="text-center text-muted py-3">No active users.</td></tr>';
+    document.getElementById('allBalBody').innerHTML = html || allBalMsg('text-center text-muted py-3', 'No active users.');
   });
 }
 
@@ -399,6 +491,21 @@ function filterByUser(userId) {
   if (sel) sel.value = userId;
   loadTransactions();
   document.getElementById('txBody').scrollIntoView({behavior:'smooth'});
+}
+
+// Human label for the window the strip's left-hand figures cover. Mirrors the
+// filter precedence in cash_api.php list_transactions: explicit dates win over
+// Month/Year, and month 0 means the whole year.
+var MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+function periodScopeLabel(month, year, dateFrom, dateTo) {
+  if (dateFrom && dateTo) return fmtDate(dateFrom) + ' – ' + fmtDate(dateTo);
+  if (dateFrom)           return 'From ' + fmtDate(dateFrom);
+  if (dateTo)             return 'Up to ' + fmtDate(dateTo);
+  var m = parseInt(month, 10) || 0;
+  var y = parseInt(year, 10)  || 0;
+  if (!y)         return 'All time';
+  if (m >= 1 && m <= 12) return MONTH_NAMES[m - 1] + ' ' + y;
+  return 'Year ' + y;
 }
 
 function loadTransactions() {
@@ -422,15 +529,31 @@ function loadTransactions() {
     document.getElementById('pExp').textContent  = fmt(res.total_expenses);
     document.getElementById('pVret').textContent = fmt(res.total_vault_returns || 0);
 
-    // "Net Cash on Hand" shows the TRUE lifetime balance (unaffected by the
-    // period/type filter), not the period net — so it never reads negative just
-    // because this month's remittances exceed this month's collections.
-    var netEl = document.getElementById('pNet');
-    netEl.textContent = fmt(res.true_cash_on_hand != null ? res.true_cash_on_hand : res.cash_on_hand);
+    // Refunded joins the strip only when the filter actually returned one.
+    var refTot = parseFloat(res.total_refunded) || 0;
+    document.getElementById('pRef').textContent = fmt(refTot);
+    document.getElementById('pRefWrap').classList.toggle('d-none', refTot === 0);
 
-    var typeBadge = {received:'badge-received', remitted:'badge-remitted', expense:'badge-expense', vault_return:'badge-vault-return'};
-    var typeIcon  = {received:'fa-arrow-down',  remitted:'fa-arrow-up',    expense:'fa-minus-circle', vault_return:'fa-hand-holding-dollar'};
-    var typeLabel = {received:'Collection',      remitted:'Remitted',       expense:'Expense',         vault_return:'Vault→You'};
+    // Say which window the figures to the left cover, so they are not read as
+    // an explanation of the all-time balance on the right.
+    document.getElementById('pScope').textContent = periodScopeLabel(month, year, dateFrom, dateTo);
+
+    // "Cash on Hand (all time)" shows the TRUE lifetime position (unaffected by
+    // the period/type filter), not the period net — so it never reads negative
+    // just because this month's remittances exceed this month's collections.
+    // It shows the on_hand half; anything the user shouldered personally shows
+    // beside it as "Owed to Them" instead of dragging cash below zero.
+    var netEl  = document.getElementById('pNet');
+    var owed   = parseFloat(res.true_owed) || 0;
+    var onHand = res.true_on_hand != null ? res.true_on_hand
+               : (res.true_cash_on_hand != null ? res.true_cash_on_hand : res.cash_on_hand);
+    netEl.textContent = fmt(onHand);
+    document.getElementById('pOwed').textContent = fmt(owed);
+    document.getElementById('pOwedWrap').classList.toggle('d-none', owed === 0);
+
+    var typeBadge = {received:'badge-received', remitted:'badge-remitted', expense:'badge-expense', vault_return:'badge-vault-return', refunded:'badge-refunded'};
+    var typeIcon  = {received:'fa-arrow-down',  remitted:'fa-arrow-up',    expense:'fa-minus-circle', vault_return:'fa-hand-holding-dollar', refunded:'fa-rotate-left'};
+    var typeLabel = {received:'Collection',      remitted:'Remitted',       expense:'Expense',         vault_return:'Vault→You',              refunded:'Refunded'};
 
     var html = '';
     for (var i = 0; i < res.transactions.length; i++) {

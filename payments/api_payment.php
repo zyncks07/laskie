@@ -477,14 +477,18 @@ if ($action === 'restore_deleted_payment') {
     $pdo->beginTransaction();
     try {
         $pdo->prepare("UPDATE payments SET deleted_at=NULL WHERE id=?")->execute([$id]);
+        // Fall back to the acting admin if the original collector was deleted
+        // (received_by SET NULL) — cash_transactions.user_id is NOT NULL.
+        // Resolved up front, not inside the branch below: the service-charge
+        // rebuild further down also uses it, so a restore whose cash row was
+        // already present left it undefined and wrote a NULL created_by.
+        // Matches restore_payment, which already hoists it.
+        $cashUserId = $p['received_by'] ?: (int)$_SESSION['user']['id'];
         // Only recreate the cash row if it isn't already there — covers the
         // historical case where an older delete_payment left it in place.
         $existing = $pdo->prepare("SELECT id FROM cash_transactions WHERE reference_payment_id=? AND transaction_type='received' LIMIT 1");
         $existing->execute([$id]);
         if (!$existing->fetchColumn()) {
-            // Fall back to the acting admin if the original collector was deleted
-            // (received_by SET NULL) — cash_transactions.user_id is NOT NULL.
-            $cashUserId = $p['received_by'] ?: (int)$_SESSION['user']['id'];
             $pdo->prepare("INSERT INTO cash_transactions (user_id,transaction_type,amount,reference_payment_id,notes,transaction_date) VALUES (?,?,?,?,?,?)")
                 ->execute([$cashUserId,'received',$p['amount'],$id,"Payment received: {$p['invoice_no']}",$p['payment_date']]);
         }
@@ -873,9 +877,19 @@ if ($action === 'process_refund') {
         // Hard gate: you cannot hand back more cash than the cashier is holding.
         // If short, the cashier needs a vault "return to user" to top up first
         // (request flow lives in api/requests_api.php / admin/requests.php).
-        $available = getUserCashOnHand($pdo, $cashierId);
+        //
+        // Gated on the on_hand half, not the signed balance. Same outcome either
+        // way — a negative balance already failed against any positive refund —
+        // but the message then quoted a negative "cash on hand", which is not a
+        // thing anyone can hold. A cashier in that position is owed money, and
+        // saying so points at the fix (top them up) instead of reading as a bug.
+        $cashPos   = getUserCashPosition($pdo, $cashierId);
+        $available = $cashPos['on_hand'];
         if (money_gt($refundAmount, $available)) {
-            jsonErr("$cashierName has only " . money($available) . " cash on hand — short by "
+            $owedNote = money_is_pos($cashPos['owed'])
+                ? " (the business owes them " . money($cashPos['owed']) . " for expenses they covered)"
+                : "";
+            jsonErr("$cashierName has only " . money($available) . " cash on hand$owedNote — short by "
                 . money(money_sub($refundAmount, $available))
                 . ". Request a vault return to top up their cash before refunding.");
         }

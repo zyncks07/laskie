@@ -161,6 +161,12 @@ $myCash = money_sub(
     $run['refunded']
 );
 
+// Same split as cash.php: the stat card shows cash actually held, and anything
+// shouldered personally past the float surfaces as its own "Owed to You" card
+// rather than pushing "cash on hand" negative. Point-in-time — this is the
+// position as the selected month closed, not today's. See splitCashPosition().
+$myPos = splitCashPosition($myCash);
+
 $cashSubLabel = 'End of ' . date('M Y', mktime(0, 0, 0, $selMonth, 1, $selYear));
 ?>
 <div class="row g-3 mb-3">
@@ -218,12 +224,24 @@ $cashSubLabel = 'End of ' . date('M Y', mktime(0, 0, 0, $selMonth, 1, $selYear))
     </div>
   </div>
   <?php endif; ?>
+  <?php if (money_is_pos($myPos['owed'])): ?>
+  <div class="col-6 col-md-2">
+    <div class="stat-card">
+      <div class="stat-icon"><i class="fa-solid fa-hand-holding-dollar"></i></div>
+      <div class="stat-body">
+        <div class="stat-label">Owed to You</div>
+        <div class="stat-value num" style="font-size:17px"><?= money($myPos['owed']) ?></div>
+        <div class="stat-sub">You covered this yourself</div>
+      </div>
+    </div>
+  </div>
+  <?php endif; ?>
   <div class="col-6 col-md-2">
     <div class="stat-card">
       <div class="stat-icon purple"><i class="fa-solid fa-wallet"></i></div>
       <div class="stat-body">
         <div class="stat-label">Cash on Hand</div>
-        <div class="stat-value num" style="font-size:17px"><?= money($myCash) ?></div>
+        <div class="stat-value num" style="font-size:17px"><?= money($myPos['on_hand']) ?></div>
         <div class="stat-sub"><?= clean($cashSubLabel) ?></div>
       </div>
     </div>

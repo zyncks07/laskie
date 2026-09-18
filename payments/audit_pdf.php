@@ -167,6 +167,8 @@ tfoot td { background: #fafafa; font-weight: 700; border-top: 2px solid var(--bo
 .badge-recv    { background: #e4e4e4; color: #3f3f3f; }
 .badge-remit   { background: #e4e4e4; color: #3f3f3f; }
 .badge-exp     { background: #e4e4e4; color: #3f3f3f; }
+.badge-vault   { background: #e4e4e4; color: #3f3f3f; }
+.badge-ref     { background: #e4e4e4; color: #3f3f3f; }
 .badge-voided  { background: #e4e4e4; color: #3f3f3f; }
 .badge-deleted { background: #f4f4f4; color: #737373; }
 tr.row-excluded td { color: #9b9b9b; text-decoration: line-through; }
@@ -439,7 +441,19 @@ tr.row-excluded td .badge { text-decoration: none; }
     <?php if (empty($cashTxns)): ?>
       <p class="text-muted" style="padding:10px 12px;font-size:11px">No cash transactions recorded for this period.</p>
     <?php else:
+      // One running total per transaction_type. vault_return and refunded were
+      // missing, so those rows printed in the table but vanished from the
+      // footer — the tfoot claimed to summarise the section and didn't.
       $totalReceived = '0.00'; $totalRemitted = '0.00'; $totalCashExp = '0.00';
+      $totalVaultRet = '0.00'; $totalRefunded = '0.00';
+      // ucfirst() on the raw enum renders "Vault_return" in a printed report.
+      $cashTypeLabels = [
+          'received'     => 'Received',
+          'remitted'     => 'Remitted',
+          'expense'      => 'Expense',
+          'vault_return' => 'Vault Return',
+          'refunded'     => 'Refunded',
+      ];
     ?>
     <table>
       <thead>
@@ -447,15 +461,23 @@ tr.row-excluded td .badge { text-decoration: none; }
       </thead>
       <tbody>
         <?php foreach ($cashTxns as $i => $ct):
-          if ($ct['transaction_type'] === 'received')  $totalReceived  = money_add($totalReceived, $ct['amount']);
-          if ($ct['transaction_type'] === 'remitted')  $totalRemitted  = money_add($totalRemitted, $ct['amount']);
-          if ($ct['transaction_type'] === 'expense')   $totalCashExp   = money_add($totalCashExp,  $ct['amount']);
-          $badgeClass = ['received' => 'badge-recv', 'remitted' => 'badge-remit', 'expense' => 'badge-exp'][$ct['transaction_type']] ?? '';
+          if ($ct['transaction_type'] === 'received')     $totalReceived  = money_add($totalReceived, $ct['amount']);
+          if ($ct['transaction_type'] === 'remitted')     $totalRemitted  = money_add($totalRemitted, $ct['amount']);
+          if ($ct['transaction_type'] === 'expense')      $totalCashExp   = money_add($totalCashExp,  $ct['amount']);
+          if ($ct['transaction_type'] === 'vault_return') $totalVaultRet  = money_add($totalVaultRet, $ct['amount']);
+          if ($ct['transaction_type'] === 'refunded')     $totalRefunded  = money_add($totalRefunded, $ct['amount']);
+          $badgeClass = [
+              'received'     => 'badge-recv',
+              'remitted'     => 'badge-remit',
+              'expense'      => 'badge-exp',
+              'vault_return' => 'badge-vault',
+              'refunded'     => 'badge-ref',
+          ][$ct['transaction_type']] ?? '';
         ?>
         <tr>
           <td class="text-muted"><?= $i + 1 ?></td>
           <td><?= $ct['transaction_date'] ?></td>
-          <td><span class="badge <?= $badgeClass ?>"><?= ucfirst($ct['transaction_type']) ?></span></td>
+          <td><span class="badge <?= $badgeClass ?>"><?= clean($cashTypeLabels[$ct['transaction_type']] ?? ucfirst($ct['transaction_type'])) ?></span></td>
           <td><?= clean($ct['user_name'] ?: '—') ?></td>
           <td class="text-muted"><?= clean($ct['notes'] ?: '—') ?></td>
           <td class="r"><strong><?= fmt_money((float)$ct['amount'], $currSymbol) ?></strong></td>
@@ -464,8 +486,14 @@ tr.row-excluded td .badge { text-decoration: none; }
       </tbody>
       <tfoot>
         <tr><td colspan="4">Received</td><td></td><td class="r" style="color:var(--success)"><?= fmt_money((float)$totalReceived, $currSymbol) ?></td></tr>
+        <?php if (money_is_pos($totalVaultRet)): ?>
+        <tr><td colspan="4">Vault Returns</td><td></td><td class="r" style="color:var(--success)"><?= fmt_money((float)$totalVaultRet, $currSymbol) ?></td></tr>
+        <?php endif; ?>
         <tr><td colspan="4">Remitted</td><td></td><td class="r" style="color:var(--danger)"><?= fmt_money((float)$totalRemitted, $currSymbol) ?></td></tr>
         <tr><td colspan="4">Expenses</td><td></td><td class="r" style="color:var(--danger)"><?= fmt_money((float)$totalCashExp,  $currSymbol) ?></td></tr>
+        <?php if (money_is_pos($totalRefunded)): ?>
+        <tr><td colspan="4">Refunded</td><td></td><td class="r" style="color:var(--danger)"><?= fmt_money((float)$totalRefunded, $currSymbol) ?></td></tr>
+        <?php endif; ?>
       </tfoot>
     </table>
     <?php endif; ?>

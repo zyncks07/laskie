@@ -379,8 +379,12 @@ body {
   font-size: 10.5px;
   letter-spacing: 0;
 }
-/* attention family: solid ink */
-.badge-inactive, .badge-expense {
+/* attention family: solid ink.
+   .badge-refunded joins .badge-expense — both are cash leaving the cashier's
+   own pocket (to a supplier, to a tenant), as opposed to the outline family's
+   transfers and collections. Solid ink needs no dark-mode override: --ink and
+   --paper swap with the theme. */
+.badge-inactive, .badge-expense, .badge-refunded {
   background: var(--ink); color: var(--paper);
 }
 /* neutral / muted family */

@@ -116,7 +116,7 @@
 
 ## 4. Database schema (accounting-critical)
 
-Read [`install.sql`](install.sql) for the authoritative DDL. The live DB is current through **migration 012** (`migrations/` holds the incremental DDL; fresh installs get the same via `install.sql`). Highlights:
+Read [`install.sql`](install.sql) for the authoritative DDL. The live DB is current through **migration 013** (`migrations/` holds the incremental DDL; fresh installs get the same via `install.sql`). Highlights:
 
 ### Core entities
 - `users` — id, username, password_hash, full_name, **role** (`admin`/`accountant`/`staff`), status, email/phone
@@ -142,7 +142,7 @@ Read [`install.sql`](install.sql) for the authoritative DDL. The live DB is curr
   - `status` ∈ {`paid`, `refunded`, `partially_refunded`, `voided`} — **never** delete; always status-flip
   - `deleted_at` — **soft delete**, restorable from `admin/transactions.php`
 - `expenses` — amount, expense_date, unit_id, category_id, recorded_by, receipt_path, **soft-delete via `deleted_at`**
-- `cash_transactions` — per-user ledger; `transaction_type` ∈ {`received`, `remitted`, `expense`}; FKs back to `payments.id` / `expenses.id`
+- `cash_transactions` — per-user ledger; `transaction_type` ∈ {`received`, `remitted`, `expense`, `refunded`, `vault_return`} (`refunded` added in migration 003, `vault_return` in 006); FKs back to `payments.id` / `expenses.id`. **All five are legs of the cash-on-hand formula — a query that handles only the first three silently drops refunds and vault returns.** `received`/`vault_return` add, the rest subtract; see `getUserCashOnHand()`.
 - **`unit_charges`** — pre-billed line items per unit/period; rows with `payment_id IS NULL` are outstanding. `source` ∈ {`pre_billed`, `auto_collected`}. **`voided_at`/`voided_by`/`void_reason`** = admin write-off (migration 011); a voided charge is never outstanding and is never hard-deleted.
   > DDL shipped in `migrations/001_create_unit_charges.sql` and embedded in `install.sql`, so fresh installs work.
 - **`charge_payments`** — allocation rows: how much of a `unit_charges` row a given payment settled (migration 013). A charge may be paid off in instalments, so settlement cannot live in `unit_charges.payment_id` — one column cannot hold three payments, and the old link path overwrote `unit_charges.amount` with whatever was handed over, destroying the rest of the receivable. Outstanding is `amount − SUM(allocations whose payment is live)`. `ON DELETE CASCADE` both ways, so purging a payment or deleting a charge clears its allocations with no handler code.
@@ -252,7 +252,9 @@ Helpers Claude should reuse rather than re-implement:
 | `getChargeOutstanding($pdo, $chargeId)` / `getChargeSettled($pdo, $chargeId)` | Single-charge remainder / settled amount |
 | `getUnitPaymentStatus($pdo, $unitId, $m, $y)` | Returns `'green'`/`'amber'`/`'red'`/`'gray'`. **Currently uncalled** — `dashboard.php` computes unit status inline |
 | `getPastTenantArrears($pdo, $unitId?)` / `getCurrentTenantArrears($pdo, $unitId?)` | Outstanding per unit keyed `unit_id`, split by whether the tenant is still in place (`getTenantArrears()` is the shared core) |
-| `getUserCashOnHand($pdo, $userId)` | Authoritative per-user cash on hand (`received + vault_return − remitted − expenses − refunded`). Use for any "enough cash?" gate (e.g. refund cashier check) |
+| `getUserCashOnHand($pdo, $userId)` | Authoritative per-user **signed** ledger balance (`received + vault_return − remitted − expenses − refunded`). Can be negative — that means the business owes the user, not that they hold negative cash |
+| `splitCashPosition($balance)` | Decomposes that signed balance into `['balance','on_hand','owed']` — `on_hand = max(0,b)`, `owed = max(0,−b)`. **Use this for any display of a user's position, and for any "enough cash?" gate** (the refund cashier check gates on `on_hand`). Pure function, no DB. **Across users: split per user, THEN sum — never split an aggregate.** One staffer owed ₱5k while another holds ₱5k is ₱5k of company cash *and* a ₱5k liability, not zero; splitting the total erases both. Pinned by `tests/Unit/CashPositionTest.php` |
+| `getUserCashPosition($pdo, $userId)` | `splitCashPosition(getUserCashOnHand(...))` for one user |
 | `notifyUser($pdo, $userId, $type, $msg, $link?, $reqId?)` / `notifyAdmins(...)` | Insert in-app notification(s) for the topbar bell. Best-effort (try/catch); store **raw** text (render escapes) |
 | `jsonOk([...])` / `jsonErr($msg, $code=400)` | JSON response shorthand for `/api/` and `/payments/api_payment.php` |
 | `clean($v)` | `htmlspecialchars` wrapper — **use in every PHP echo into HTML** |
