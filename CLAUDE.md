@@ -373,13 +373,23 @@ Global helpers attached to `window`: `showToast`, `apiPost`, `confirmDelete`, `f
 On `192.168.9.18:49200`, Apache's `DocumentRoot` points at **`/home/bulik/apps/laskie/`** (this source repo), not `/var/www/laskie/` — the working copy IS the live deployment. Every Edit/Write here is visible to live traffic on the next HTTP request. There is no "deploy" step; `git pull` (or just editing) is the deploy. The stale `/var/www/laskie/` directory exists but Apache no longer reads from it.
 
 Implications for file work:
-- File permissions matter. Apache runs as `www-data`. Config files (`config/db.php`, `config/env.php`, `config/functions.php`, `.env`) are owned `bulik:www-data` mode 640. `bulik` is in the `www-data` group; `www-data` is NOT in the `bulik` group. A file that drifts to `bulik:bulik` 640 is unreadable by Apache → HTTP 500.
-- Edit/Write tools do NOT preserve file group on rewrite. After editing any `config/*.php`, run `sudo chown bulik:www-data <file>` (or the consolidated `sudo bash /home/bulik/laskie-recompress.sh` which restores perms across the tree).
-- Directories have setgid (`chmod g+s`) so new files inherit group `www-data`. If a directory ever loses setgid, future files there will silently 500 the site.
+- File permissions matter. Apache runs as `www-data` and reads the tree **through the group**: everything is `bulik:www-data`, directories are setgid so new files inherit that group. `bulik` is in the `www-data` group; `www-data` is NOT in the `bulik` group. A file that drifts to `bulik:bulik` is unreadable by Apache → HTTP 500.
+- **Group READ is all Apache needs — group WRITE is a vulnerability.** Directories are `2755`, not `2775`. If `www-data` can write, the web user can rewrite the PHP it executes, the JS/CSS browsers execute, the `.htaccess` files that protect the tree, and the shell scripts you later run as yourself.
+- `uploads/` is the one exception: owned `www-data:www-data`, dirs `2775`, files `664`, because the app genuinely writes there. **`uploads/.htaccess` is carved back out** (`bulik:www-data 644`) — it is the guard that strips PHP/CGI handlers from the upload directory, so the web user must not be able to rewrite or delete it. Any script that does `chown -R www-data uploads/` must re-apply that carve-out afterwards.
+
+**The permission policy lives in [`scripts/perms-policy.sh`](scripts/perms-policy.sh)** — one definition, used by both:
+```bash
+sudo bash scripts/fix-perms.sh     # apply it (fast, idempotent, no side effects)
+bash scripts/check-perms.sh        # verify it (read-only, no sudo, exit 1 on drift)
+```
+- After editing files here, run `check-perms.sh`; if it reports drift, run `fix-perms.sh`. Prefer these over `sudo bash /home/bulik/laskie-recompress.sh`, which now delegates to `fix-perms.sh` but also re-encodes every image under `uploads/`.
+- `umask` is `022` (set in `~/.profile` and `~/.bashrc`), so new files are born `bulik:www-data 644`. It was `002`, which made every Edit produce a group-writable file; that is what left ~1,850 files writable by the web user until 2026-09-19.
+- Secrets are `640`: `config/db.php`, `config/env.php`, `.env`. `config/functions.php` is **not** a secret — it stays `644` like the rest of the app code.
 
 ### Troubleshooting quick-refs
 - Blank page → `tail -f /var/log/apache2/laskie_error.log`
-- Upload fails → `chown -R www-data:www-data uploads/ && chmod -R 775 uploads/`
+- Upload fails → `sudo bash scripts/fix-perms.sh`. Do **not** reach for `chown -R www-data uploads/ && chmod -R 775 uploads/` (the old advice here): it hands `uploads/.htaccess` and the uploads root back to the web user, which is the regression the fixer exists to prevent. If the failure is a *new* upload category, add it to `POLICY_UPLOAD_SUBDIRS` in `scripts/perms-policy.sh` and re-run — the uploads root is deliberately not writable by `www-data`, so the app can no longer create one itself.
+- Permissions look wrong / site 500s after editing → `bash scripts/check-perms.sh` first (read-only, tells you exactly which paths drifted), then `sudo bash scripts/fix-perms.sh`
 - Login broken → verify `users` table seeded; check `system_logs` for `LOGIN_FAILED`
 
 ---
