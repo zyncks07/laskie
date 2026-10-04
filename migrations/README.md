@@ -37,3 +37,7 @@ done
 | 009 | `009_add_vault_requests_notifications.sql` | Add `vault_requests` + `notifications` for the vault-cash request/approval + in-app notification feature |
 | 010 | `010_add_payment_receipt.sql` | Add `payments.receipt_path` / `payments.receipt_url` for proof-of-payment attachments |
 | 011 | `011_add_charge_voids.sql` | Add `rent_charge_voids` + `unit_charges.voided_at/voided_by/void_reason` for admin charge waivers |
+| 012 | `012_add_distribution_receipt.sql` | Add `dividend_distributions.receipt_path` / `receipt_url` for payout proof |
+| 013 | `013_create_charge_payments.sql` | Add `charge_payments` allocation rows so a service charge can be settled in instalments |
+| 014 | `014_create_contracts.sql` | Add `contracts` + `contract_files` for the lease generator, active/expired register and signed-copy scans |
+| 015 | `015_tenant_transfers.sql` | Add `tenant_transfers`, `tenants.transferred_from_id`, and `transfer_id` / `non_cash` / `kind` tags on payments, refunds, charges and rent waivers for the tenant-transfer feature |

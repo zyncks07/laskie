@@ -150,7 +150,7 @@ foreach (buildRentChargeRows($pdo, $unitId, $occupants, $dueDay, $baseRate, $dat
         if (!money_is_pos($w['applied'])) continue;
         $ledger[] = [
             'date'        => $rc['date'],
-            'description' => 'Rent Waived — ' . date('F Y', mktime(0,0,0,$rc['period_month'],1,$rc['period_year']))
+            'description' => (($w['kind'] ?? 'waiver') === 'transfer' ? 'Balance Carried Forward — ' : 'Rent Waived — ') . date('F Y', mktime(0,0,0,$rc['period_month'],1,$rc['period_year']))
                              . ' (' . $w['reason'] . ')',
             'type'        => 'rent_waiver',
             'debit'       => '0.00',
@@ -168,6 +168,7 @@ foreach ($payments as $p) {
     $desc = $p['payment_type']==='rent'
         ? 'Payment — '.date('F Y',mktime(0,0,0,(int)$p['period_month'],1,(int)$p['period_year']))
         : ($p['service_name']??'Service').' — '.date('F Y',mktime(0,0,0,(int)$p['period_month'],1,(int)$p['period_year']));
+    if (!empty($p['transfer_id'])) $desc = 'Transfer Credit — '.date('F Y',mktime(0,0,0,(int)$p['period_month'],1,(int)$p['period_year'])).' ('.($p['notes']??'').')';
     $ledger[] = ['date'=>$p['payment_date'],'description'=>$desc,'type'=>'payment','debit'=>'0.00','credit'=>$p['amount'],'invoice_no'=>$p['invoice_no']??'','cashier'=>$p['cashier_name']??'','owner'=>isset($p['tenant_id'])?(int)$p['tenant_id']:null];
 }
 foreach ($pdfRefunds as $r) {

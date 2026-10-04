@@ -2,6 +2,7 @@
 session_start();
 require_once '../config/db.php';
 require_once '../config/functions.php';
+require_once '../config/transfer_functions.php';
 requireAdmin();
 $pageTitle = 'Tenant Management';
 $depth = '../';
@@ -221,11 +222,90 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         logActivity($pdo,'DELETE_DOC','Tenants',"Deleted tenant doc #$docId");
         jsonOk(['msg'=>'Document removed.']);
     }
+
+    // ── Tenant transfer (config/transfer_functions.php) ─────────────
+    // Preview and execute share transferPlan(), so what the dialog shows is
+    // exactly what runs; execute re-plans under row locks.
+    $transferInput = fn() => [
+        'tenant_id'      => (int)($_POST['tenant_id'] ?? 0),
+        'unit_id'        => (int)($_POST['unit_id'] ?? 0),
+        'move_date'      => (string)($_POST['move_date'] ?? ''),
+        'deposit_held'   => (string)($_POST['deposit_held'] ?? ''),
+        'deposit_action' => (string)($_POST['deposit_action'] ?? ''),
+        'cashier_id'     => (int)($_POST['cashier_id'] ?? 0),
+    ];
+
+    if ($action === 'transfer_preview') {
+        $p = transferPlan($pdo, $transferInput());
+        if (!$p['ok']) jsonErr($p['error']);
+        $b = $p['balance'];
+        jsonOk(['plan' => [
+            'old_unit' => $p['old_unit']['unit_name'], 'new_unit' => $p['new_unit']['unit_name'],
+            'mode' => $p['mode'], 'move_date' => $p['move_date'], 'old_end' => $p['old_end'], 'new_start' => $p['new_start'],
+            'new_end' => $p['new_end'], 'old_rent' => $p['old_rent'], 'new_rent' => $p['new_rent'],
+            'old_final' => $p['old_final'], 'new_first' => $p['new_first'],
+            'old_final_date' => $p['old_final_date'], 'new_first_date' => $p['new_first_date'],
+            'rent_balance' => $b['rent_balance'], 'carried' => $p['carried'],
+            'carry_charges' => $p['carry_charges'], 'stay_charges' => $p['stay_charges'],
+            'deposit_recorded' => $p['deposit_recorded'], 'deposit_default' => $p['deposit_default'],
+            'deposit_held' => $p['deposit_held'], 'deposit_required' => $p['deposit_required'],
+            'deposit_diff' => $p['deposit_diff'], 'deposit_action' => $p['deposit_action'],
+            'deposit_actions' => $p['deposit_actions'], 'deposit_amount' => $p['deposit_amount'],
+            'cashier_on_hand' => $p['cashier_on_hand'],
+            'contracts' => array_column($p['contracts'], 'contract_no'),
+        ]]);
+    }
+
+    if ($action === 'transfer_execute') {
+        $res = executeTransfer($pdo, $transferInput(), (string)($_POST['idempotency_key'] ?? ''));
+        if (!$res['ok']) jsonErr($res['error']);
+        jsonOk(['msg' => 'Tenant transferred.', 'transfer_id' => $res['transfer_id'],
+                'to_tenant_id' => $res['to_tenant_id'], 'summary' => $res['summary']]);
+    }
+
+    // Every transfer in this person's chain, newest first.
+    if ($action === 'transfer_history') {
+        $chain = transferChainIds($pdo, (int)($_POST['tenant_id'] ?? 0));
+        $ph = implode(',', array_fill(0, count($chain), '?'));
+        $q = $pdo->prepare(
+            "SELECT tt.id, tt.move_date, tt.old_end_date, tt.new_start_date, tt.mode, tt.carried_balance, tt.deposit_action,
+                    tt.deposit_amount, tt.status, tt.created_at, tt.undone_at, tt.undo_reason, tt.to_tenant_id,
+                    fu.unit_name AS from_unit, tu.unit_name AS to_unit, u.full_name AS by_name
+             FROM tenant_transfers tt
+             LEFT JOIN rental_units fu ON fu.id = tt.from_unit_id
+             LEFT JOIN rental_units tu ON tu.id = tt.to_unit_id
+             LEFT JOIN users u ON u.id = tt.created_by
+             WHERE tt.from_tenant_id IN ($ph) OR tt.to_tenant_id IN ($ph)
+             ORDER BY tt.id DESC"
+        );
+        $q->execute([...$chain, ...$chain]);
+        jsonOk(['transfers' => $q->fetchAll()]);
+    }
+
+    if ($action === 'transfer_undo') {
+        $reason = trim((string)($_POST['reason'] ?? ''));
+        if (mb_strlen($reason) < 3) jsonErr('Give a reason for undoing this transfer.');
+        $res = undoTransfer($pdo, (int)($_POST['transfer_id'] ?? 0), $reason);
+        if (!$res['ok']) jsonErr($res['error']);
+        jsonOk(['msg' => 'Transfer undone — the tenant is back on their previous unit.']);
+    }
     exit;
 }
 
-$tenants = $pdo->query("SELECT t.*, ru.unit_name FROM tenants t LEFT JOIN rental_units ru ON t.unit_id=ru.id ORDER BY t.status, t.full_name")->fetchAll();
-$units   = $pdo->query("SELECT id, unit_name, status FROM rental_units ORDER BY unit_name")->fetchAll();
+// One row per PERSON: a tenancy that was transferred onward is represented by
+// its successor (the transfer chain is shown from the "Moved from" chip).
+$tenants = $pdo->query(
+    "SELECT t.*, ru.unit_name, tt.id AS moved_xid, tt.move_date AS moved_on, pu.unit_name AS moved_from
+     FROM tenants t
+     LEFT JOIN rental_units ru ON t.unit_id = ru.id
+     LEFT JOIN tenant_transfers tt ON tt.to_tenant_id = t.id AND tt.status = 'done'
+     LEFT JOIN rental_units pu ON pu.id = tt.from_unit_id
+     WHERE NOT EXISTS (SELECT 1 FROM tenants s WHERE s.transferred_from_id = t.id)
+     ORDER BY t.status, t.full_name"
+)->fetchAll();
+$units   = $pdo->query("SELECT id, unit_name, status, monthly_rate FROM rental_units ORDER BY unit_name")->fetchAll();
+$cashiers = $pdo->query("SELECT id, full_name FROM users WHERE status='active' ORDER BY full_name")->fetchAll();
+$transfersOn = transfersEnabled($pdo);   // hidden until the post-paid billing switch
 // One grouped query feeds the document-count badge on every row's folder button.
 $docCounts = $pdo->query("SELECT tenant_id, COUNT(*) FROM tenant_docs GROUP BY tenant_id")->fetchAll(PDO::FETCH_KEY_PAIR);
 logActivity($pdo,'VIEW_TENANTS','Tenants','Viewed tenant management page');
@@ -258,6 +338,11 @@ include '../includes/header.php';
         <td>
           <div class="fw-600 cell-trunc"><?= clean($t['full_name']) ?></div>
           <?php if($t['email']): ?><div class="cell-trunc" style="font-size:11.5px;color:var(--text-muted)"><?= clean($t['email']) ?></div><?php endif; ?>
+          <?php if ($t['moved_xid']): ?>
+            <button type="button" class="tr-chip" data-id="<?= (int)$t['id'] ?>" data-name="<?= clean($t['full_name']) ?>"
+                    onclick="openTransferHistory(+this.dataset.id, this.dataset.name)"
+                    title="Transfer history"><i class="fa-solid fa-right-left me-1"></i>Moved from <?= clean($t['moved_from']) ?> · <?= fmtDate($t['moved_on'], 'M j, Y') ?></button>
+          <?php endif; ?>
         </td>
         <td><?= clean($t['unit_name'] ?? '—') ?></td>
         <td>
@@ -272,6 +357,11 @@ include '../includes/header.php';
         <td><span class="badge badge-<?= $t['status'] ?>"><?= ucfirst($t['status']) ?></span></td>
         <td class="text-center">
           <button class="btn-icon" title="Edit" onclick="editTenant(<?= $t['id'] ?>)"><i class="fa-solid fa-pen fa-xs"></i></button>
+          <?php if ($transfersOn && $t['status'] === 'active' && $t['unit_id']): ?>
+          <button class="btn-icon" title="Transfer to another unit" data-id="<?= (int)$t['id'] ?>" data-name="<?= clean($t['full_name']) ?>"
+                  data-unit="<?= (int)$t['unit_id'] ?>" data-unit-name="<?= clean($t['unit_name']) ?>"
+                  onclick="openTransfer(this.dataset)"><i class="fa-solid fa-right-left fa-xs"></i></button>
+          <?php endif; ?>
           <?php $dc = (int)($docCounts[$t['id']] ?? 0); ?>
           <button class="btn-icon" title="Documents<?= $dc ? " ($dc)" : '' ?>" data-id="<?= $t['id'] ?>" data-name="<?= clean($t['full_name']) ?>" onclick="openDocs(+this.dataset.id, this.dataset.name)"><i class="fa-solid fa-folder-open fa-xs"></i><?php if ($dc): ?><span class="doc-count"><?= $dc ?></span><?php endif; ?></button>
         </td>
@@ -385,7 +475,149 @@ include '../includes/header.php';
   </div>
 </div>
 
+<!-- Transfer modal — every figure comes from the server (transfer_preview) -->
+<div class="modal fade" id="transferModal" tabindex="-1">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="trTitle">Transfer tenant</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="trTenantId">
+        <div id="trForm">
+          <div class="row g-2">
+            <div class="col-sm-6">
+              <label class="form-label" for="trUnit">Move to unit</label>
+              <select class="form-select" id="trUnit">
+                <option value="">— Choose a unit —</option>
+                <optgroup label="Vacant">
+                  <?php foreach ($units as $u): if ($u['status'] !== 'vacant') continue; ?>
+                  <option value="<?= (int)$u['id'] ?>"><?= clean($u['unit_name']) ?> — <?= money($u['monthly_rate']) ?>/mo</option>
+                  <?php endforeach; ?>
+                </optgroup>
+                <optgroup label="Occupied (must be free by the move date)">
+                  <?php foreach ($units as $u): if ($u['status'] === 'vacant') continue; ?>
+                  <option value="<?= (int)$u['id'] ?>"><?= clean($u['unit_name']) ?> — <?= money($u['monthly_rate']) ?>/mo</option>
+                  <?php endforeach; ?>
+                </optgroup>
+              </select>
+            </div>
+            <div class="col-sm-6">
+              <label class="form-label" for="trDate">Move date</label>
+              <input type="date" class="form-control" id="trDate">
+              <div class="form-text">The day they start living in the new unit.</div>
+            </div>
+          </div>
+
+          <div id="trError" class="tr-note mt-3" style="display:none"></div>
+
+          <div id="trPreview" style="display:none">
+            <div class="tr-grid mt-3">
+              <div class="tr-box">
+                <div class="tr-box-h"><span id="trOldName">Old unit</span><span class="muted-pill">leaving</span></div>
+                <div class="tr-line"><span>Occupied through</span><strong id="trOldEnd"></strong></div>
+                <div class="tr-line"><span>Final bill</span><strong class="mono" id="trOldFinal"></strong></div>
+                <div class="tr-line"><span>Balance</span><strong class="mono" id="trBalance"></strong></div>
+              </div>
+              <div class="tr-box">
+                <div class="tr-box-h"><span id="trNewName">New unit</span><span class="ok-pill">moving in</span></div>
+                <div class="tr-line"><span>Occupied from</span><strong id="trNewStart"></strong></div>
+                <div class="tr-line"><span>Monthly rent</span><strong class="mono" id="trNewRent"></strong></div>
+                <div class="tr-line"><span>First bill</span><strong class="mono" id="trNewFirst"></strong></div>
+              </div>
+            </div>
+            <div class="tr-mode" id="trMode"></div>
+
+            <div class="tr-box mt-3">
+              <div class="tr-box-h"><span><i class="fa-solid fa-vault me-1"></i>Security deposit</span><span class="muted-pill" id="trDepRule"></span></div>
+              <div class="row g-2 align-items-end">
+                <div class="col-sm-6">
+                  <label class="form-label" for="trHeld">Deposit currently held</label>
+                  <div class="input-group"><span class="input-group-text"><?= clean(getSetting($pdo, 'currency_symbol', '₱')) ?></span>
+                    <input type="text" inputmode="decimal" class="form-control mono" id="trHeld"></div>
+                  <div class="form-text" id="trHeldHint"></div>
+                </div>
+                <div class="col-sm-6">
+                  <div class="tr-line"><span>Required for new unit</span><strong class="mono" id="trRequired"></strong></div>
+                  <div class="tr-line"><span>Difference</span><strong class="mono" id="trDiff"></strong></div>
+                </div>
+              </div>
+              <div class="tr-actions mt-2" id="trDepActions"></div>
+              <div class="mt-2" id="trCashierWrap" style="display:none">
+                <label class="form-label" for="trCashier">Cash handed back by</label>
+                <select class="form-select" id="trCashier">
+                  <option value="">— Choose cashier —</option>
+                  <?php foreach ($cashiers as $c): ?><option value="<?= (int)$c['id'] ?>"><?= clean($c['full_name']) ?></option><?php endforeach; ?>
+                </select>
+              </div>
+            </div>
+
+            <ul class="tr-list mt-3" id="trNotes"></ul>
+          </div>
+        </div>
+
+        <div id="trDone" style="display:none">
+          <div class="tr-done-h"><i class="fa-solid fa-circle-check me-2"></i><span id="trDoneTitle">Transfer complete</span></div>
+          <ul class="tr-list" id="trDoneList"></ul>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <span class="tr-state me-auto" id="trState"></span>
+        <button class="btn btn-secondary btn-sm" data-bs-dismiss="modal" id="trCancel">Cancel</button>
+        <button class="btn btn-primary btn-sm" id="trGo" disabled onclick="executeTransfer()"><i class="fa-solid fa-right-left me-1"></i>Transfer tenant</button>
+        <a class="btn btn-primary btn-sm" id="trContract" style="display:none" href="#"><i class="fa-solid fa-file-signature me-1"></i>Generate new contract</a>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Transfer history modal -->
+<div class="modal fade" id="historyModal" tabindex="-1">
+  <div class="modal-dialog modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="thTitle">Transfer history</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div id="thList"></div>
+        <div id="thUndo" class="tr-box mt-3" style="display:none">
+          <div class="tr-box-h"><span>Undo the latest transfer</span></div>
+          <p class="tr-small mb-2">Puts the tenant back on their previous unit with its original dates, and removes the charges and credits the transfer created. Only possible while nothing else has been recorded since.</p>
+          <textarea class="form-control" id="thReason" rows="2" maxlength="255" placeholder="Reason, e.g. picked the wrong unit"></textarea>
+          <button class="btn btn-danger btn-sm mt-2" id="thUndoBtn" onclick="undoTransfer()"><i class="fa-solid fa-rotate-left me-1"></i>Undo transfer</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
 <style>
+/* Transfer — token colours only */
+.tr-chip { display: inline-flex; align-items: center; margin-top: 3px; padding: 1px 8px; border: 1px solid var(--gray-300);
+  border-radius: var(--laskie-radius-pill); background: transparent; color: var(--gray-700); font-size: 10.5px; font-weight: 600; cursor: pointer; }
+.tr-chip:hover { background: var(--gray-100); }
+.tr-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.tr-box { border: 1px solid var(--gray-200); border-radius: var(--radius-lg); padding: 10px 12px; background: var(--paper); }
+.tr-box-h { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-weight: 700; font-size: 13px; margin-bottom: 6px; }
+.tr-line { display: flex; justify-content: space-between; gap: 10px; font-size: 12.5px; padding: 3px 0; }
+.tr-line span { color: var(--gray-500); }
+.tr-mode, .tr-small { font-size: 11.5px; color: var(--gray-500); margin-top: 6px; }
+.tr-note { font-size: 12.5px; padding: 9px 12px; border-radius: var(--radius); background: var(--gray-100); border: 1px solid var(--gray-200); color: var(--ink); }
+.tr-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.tr-actions label { display: inline-flex; align-items: center; gap: 6px; padding: 7px 11px; min-height: 38px; border: 1px solid var(--gray-300);
+  border-radius: var(--radius); font-size: 12.5px; cursor: pointer; }
+.tr-actions input:checked + span { font-weight: 700; }
+.tr-actions label:has(input:checked) { border-color: var(--ink); background: var(--gray-100); }
+.tr-list { margin: 0; padding-left: 18px; font-size: 12.5px; }
+.tr-list li { margin-bottom: 4px; }
+.tr-state { font-size: 11.5px; color: var(--gray-500); }
+.tr-done-h { font-weight: 700; font-size: 14px; margin-bottom: 8px; }
+.th-item { border-bottom: 1px solid var(--gray-200); padding: 8px 0; font-size: 12.5px; }
+.th-item:last-child { border-bottom: 0; }
+@media (max-width: 576px) { .tr-grid { grid-template-columns: 1fr; } }
+
 /* Documents modal — compact rows instead of a table so nothing scrolls
    sideways at 375px. Colors come from the token layer only. */
 .doc-sec-head { cursor: pointer; user-select: none; }
@@ -789,6 +1021,212 @@ function deleteDoc(id) {
       if (!res.success) return showToast(res.error,'error');
       showToast(res.msg,'success');
       loadDocs(tenantId);
+    });
+  });
+}
+
+// ─── Tenant transfer ─────────────────────────────────────────
+// Every figure in the dialog is computed by the server (transfer_preview →
+// transferPlan); the client only collects the choices. Execution re-plans
+// under row locks and carries an idempotency key so a double tap or a retry
+// can never move the tenant twice.
+var trModal, thModal, _trTimer = null, _trSeq = 0, _trBusy = false, _trKey = '', _trHeldTouched = false,
+    _trDone = false, _trName = '', _thXid = 0;
+
+document.addEventListener('DOMContentLoaded', function () {
+  trModal = new bootstrap.Modal(document.getElementById('transferModal'));
+  thModal = new bootstrap.Modal(document.getElementById('historyModal'));
+  document.getElementById('transferModal').addEventListener('hidden.bs.modal', function () { if (_trDone) location.reload(); });
+  ['trUnit', 'trDate', 'trCashier'].forEach(function (id) {
+    document.getElementById(id).addEventListener('change', function () { trSchedule(0); });
+  });
+  document.getElementById('trHeld').addEventListener('input', function () { _trHeldTouched = true; trSchedule(500); });
+  document.getElementById('trDepActions').addEventListener('change', function () { trSchedule(0); });
+});
+
+function _trEsc(s) { var d = document.createElement('div'); d.appendChild(document.createTextNode(s == null ? '' : String(s))); return d.innerHTML; }
+function _trSet(id, text) { document.getElementById(id).textContent = text; }
+
+function openTransfer(ds) {
+  _trName = ds.name; _trDone = false; _trHeldTouched = false;
+  _trKey = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : (Date.now() + '-' + Math.random().toString(36).slice(2, 12));
+  document.getElementById('trTenantId').value = ds.id;
+  _trSet('trTitle', 'Transfer ' + ds.name + ' from ' + ds.unitName);
+  var sel = document.getElementById('trUnit');
+  sel.value = '';
+  Array.from(sel.options).forEach(function (o) { o.disabled = (o.value === String(ds.unit)); });
+  document.getElementById('trDate').value = new Date().toLocaleDateString('en-CA');
+  document.getElementById('trHeld').value = '';
+  document.getElementById('trCashier').value = '';
+  document.getElementById('trForm').style.display = '';
+  document.getElementById('trDone').style.display = 'none';
+  document.getElementById('trPreview').style.display = 'none';
+  document.getElementById('trError').style.display = 'none';
+  document.getElementById('trGo').style.display = '';
+  document.getElementById('trGo').disabled = true;
+  document.getElementById('trContract').style.display = 'none';
+  _trSet('trCancel', 'Cancel');
+  _trSet('trState', 'Choose the new unit and the move date.');
+  trModal.show();
+}
+
+function _trInput() {
+  var act = document.querySelector('input[name="trDepAct"]:checked');
+  return {
+    tenant_id: document.getElementById('trTenantId').value,
+    unit_id: document.getElementById('trUnit').value,
+    move_date: document.getElementById('trDate').value,
+    deposit_held: _trHeldTouched ? document.getElementById('trHeld').value : '',
+    deposit_action: act ? act.value : '',
+    cashier_id: document.getElementById('trCashier').value
+  };
+}
+
+function trSchedule(ms) {
+  clearTimeout(_trTimer);
+  document.getElementById('trGo').disabled = true;
+  _trTimer = setTimeout(trPreview, ms);
+}
+
+function trPreview() {
+  var inp = _trInput();
+  if (!inp.unit_id || !inp.move_date) {
+    document.getElementById('trPreview').style.display = 'none';
+    _trSet('trState', 'Choose the new unit and the move date.');
+    return;
+  }
+  var seq = ++_trSeq;
+  _trSet('trState', 'Calculating…');
+  inp.action = 'transfer_preview';
+  apiPost('tenants.php', inp, function (err, res) {
+    if (seq !== _trSeq) return;   // a newer preview is on its way
+    var errBox = document.getElementById('trError');
+    if (!res.success) {
+      document.getElementById('trPreview').style.display = 'none';
+      errBox.style.display = ''; errBox.textContent = res.error || 'Could not calculate the transfer.';
+      _trSet('trState', '');
+      return;
+    }
+    errBox.style.display = 'none';
+    _trRender(res.plan);
+  });
+}
+
+function _trRender(p) {
+  var money = function (v) { return fmt(v); };
+  _trSet('trOldName', p.old_unit); _trSet('trNewName', p.new_unit);
+  _trSet('trOldEnd', fmtDate(p.old_end)); _trSet('trOldFinal', money(p.old_final) + ' on ' + fmtDate(p.old_final_date));
+  var bal = parseFloat(p.carried);
+  _trSet('trBalance', bal > 0 ? money(bal) + ' owed → carried over' : bal < 0 ? money(-bal) + ' prepaid → credited' : 'Settled');
+  _trSet('trNewStart', fmtDate(p.new_start)); _trSet('trNewRent', money(p.new_rent) + '/mo'); _trSet('trNewFirst', money(p.new_first) + ' due ' + fmtDate(p.new_first_date));
+  _trSet('trMode', 'Rent is post-paid: ' + p.old_unit + "'s final bill covers its last cycle up to " + fmtDate(p.old_end)
+    + ' and is due on the move date; ' + p.new_unit + ' bills after each cycle'
+    + (p.mode === 'cycle' ? ', starting a fresh cycle on ' + fmtDate(p.new_start) + '.' : ' — the cycle holding the move is split by days, each unit at its own rate.'));
+
+  var held = document.getElementById('trHeld');
+  if (!_trHeldTouched) held.value = parseFloat(p.deposit_held).toFixed(2);
+  _trSet('trHeldHint', parseFloat(p.deposit_recorded) > 0
+    ? 'Recorded deposit payments: ' + money(p.deposit_recorded) + '.'
+    : 'No deposit on record — assumed 2 months of the current rent. Correct it if different.');
+  _trSet('trDepRule', '2 × monthly rent');
+  _trSet('trRequired', money(p.deposit_required));
+  var diff = parseFloat(p.deposit_diff);
+  _trSet('trDiff', diff > 0 ? money(diff) + ' short' : diff < 0 ? money(-diff) + ' excess' : 'None');
+
+  var labels = {
+    topup:  'Charge ' + money(p.deposit_amount || Math.abs(diff)) + ' top-up on ' + p.new_unit,
+    none:   diff > 0 ? "Don't charge a top-up" : 'No adjustment needed',
+    credit: 'Credit ' + money(Math.abs(diff)) + ' to upcoming rent',
+    refund: 'Refund ' + money(Math.abs(diff)) + ' in cash',
+    keep:   'Keep it on deposit'
+  };
+  var box = document.getElementById('trDepActions'), html = '';
+  p.deposit_actions.forEach(function (a) {
+    html += '<label><input type="radio" name="trDepAct" value="' + a + '"' + (a === p.deposit_action ? ' checked' : '') + '><span>' + _trEsc(labels[a]) + '</span></label>';
+  });
+  box.innerHTML = html;
+  document.getElementById('trCashierWrap').style.display = p.deposit_action === 'refund' ? '' : 'none';
+
+  var notes = [];
+  (p.carry_charges || []).forEach(function (c) { notes.push('Unpaid “' + c.description + '” (' + money(c.outstanding) + ') moves to ' + p.new_unit + '.'); });
+  (p.stay_charges || []).forEach(function (c) { notes.push('Part-paid “' + c.description + '” (' + money(c.outstanding) + ' left) stays on ' + p.old_unit + ' — collect it there.'); });
+  (p.contracts || []).forEach(function (no) { notes.push('Contract ' + no + ' will be voided — you can generate the new one right after.'); });
+  notes.push('Contact details, documents and history move with the tenant — no duplicate tenant is created.');
+  if (p.deposit_action === 'refund' && p.cashier_on_hand !== null) notes.push('Cashier has ' + money(p.cashier_on_hand) + ' on hand.');
+  document.getElementById('trNotes').innerHTML = notes.map(function (n) { return '<li>' + _trEsc(n) + '</li>'; }).join('');
+
+  document.getElementById('trPreview').style.display = '';
+  document.getElementById('trGo').disabled = false;
+  _trSet('trState', '');
+}
+
+function executeTransfer() {
+  if (_trBusy) return;
+  var inp = _trInput();
+  var newName = document.getElementById('trNewName').textContent, oldName = document.getElementById('trOldName').textContent;
+  confirmDelete('Transfer ' + _trName + ' from ' + oldName + ' to ' + newName + ' on ' + fmtDate(inp.move_date) + '?\n\n'
+    + oldName + ' is closed and becomes vacant, ' + newName + ' starts billing, and the balance and deposit are adjusted as shown.', function () {
+    _trBusy = true;
+    var go = document.getElementById('trGo');
+    go.disabled = true; go.innerHTML = '<i class="fa-solid fa-spinner fa-spin me-1"></i>Transferring…';
+    inp.action = 'transfer_execute';
+    inp.idempotency_key = _trKey;
+    apiPost('tenants.php', inp, function (err, res) {
+      _trBusy = false;
+      go.innerHTML = '<i class="fa-solid fa-right-left me-1"></i>Transfer tenant';
+      if (!res.success) { go.disabled = false; return showToast(res.error || 'Transfer failed.', 'error'); }
+      _trDone = true;
+      document.getElementById('trForm').style.display = 'none';
+      document.getElementById('trDone').style.display = '';
+      _trSet('trDoneTitle', _trName + ' moved to ' + newName);
+      document.getElementById('trDoneList').innerHTML = (res.summary || []).map(function (n) { return '<li>' + _trEsc(n) + '</li>'; }).join('');
+      go.style.display = 'none';
+      var c = document.getElementById('trContract');
+      c.href = 'contract_edit.php?tenant_id=' + parseInt(res.to_tenant_id, 10);
+      c.style.display = '';
+      _trSet('trCancel', 'Done');
+      showToast(res.msg, 'success');
+    });
+  });
+}
+
+function openTransferHistory(tenantId, name) {
+  _trSet('thTitle', 'Transfer history — ' + name);
+  document.getElementById('thList').innerHTML = '<div class="tr-small"><i class="fa-solid fa-spinner fa-spin me-1"></i>Loading…</div>';
+  document.getElementById('thUndo').style.display = 'none';
+  document.getElementById('thReason').value = '';
+  thModal.show();
+  apiPost('tenants.php', { action: 'transfer_history', tenant_id: tenantId }, function (err, res) {
+    if (!res.success) { document.getElementById('thList').innerHTML = ''; return showToast(res.error || 'Could not load history.', 'error'); }
+    var list = res.transfers || [];
+    if (!list.length) { document.getElementById('thList').innerHTML = '<div class="tr-small">No transfers.</div>'; return; }
+    var actions = { topup: 'deposit top-up charged', credit: 'deposit excess credited to rent', refund: 'deposit excess refunded in cash', keep: 'deposit excess kept', none: 'no deposit change' };
+    document.getElementById('thList').innerHTML = list.map(function (t) {
+      var bal = parseFloat(t.carried_balance);
+      return '<div class="th-item"><div class="d-flex justify-content-between gap-2"><strong>' + _trEsc(t.from_unit) + ' → ' + _trEsc(t.to_unit) + '</strong>'
+        + '<span class="' + (t.status === 'done' ? 'ok-pill' : 'muted-pill') + '">' + (t.status === 'done' ? 'Done' : 'Undone') + '</span></div>'
+        + '<div class="tr-small">Moved ' + _trEsc(fmtDate(t.move_date)) + ' · old unit occupied through ' + _trEsc(fmtDate(t.old_end_date))
+        + ' · ' + (bal ? (bal > 0 ? fmt(bal) + ' owed carried' : fmt(-bal) + ' credit carried') : 'nothing carried')
+        + ' · ' + _trEsc(actions[t.deposit_action] || '') + (parseFloat(t.deposit_amount) ? ' (' + fmt(t.deposit_amount) + ')' : '')
+        + ' · by ' + _trEsc(t.by_name || '—') + '</div>'
+        + (t.status === 'undone' ? '<div class="tr-small">Undone ' + _trEsc(fmtDateTime(t.undone_at)) + ': ' + _trEsc(t.undo_reason || '') + '</div>' : '')
+        + '</div>';
+    }).join('');
+    if (list[0].status === 'done') { _thXid = parseInt(list[0].id, 10); document.getElementById('thUndo').style.display = ''; }
+  });
+}
+
+var _thBusy = false;
+function undoTransfer() {
+  if (_thBusy || !_thXid) return;
+  var reason = document.getElementById('thReason').value.trim();
+  if (reason.length < 3) return showToast('Give a reason for undoing the transfer.', 'error');
+  confirmDelete('Undo this transfer? The tenant goes back to their previous unit and dates, and the transfer\'s charges and credits are removed.', function () {
+    _thBusy = true; document.getElementById('thUndoBtn').disabled = true;
+    apiPost('tenants.php', { action: 'transfer_undo', transfer_id: _thXid, reason: reason }, function (err, res) {
+      _thBusy = false; document.getElementById('thUndoBtn').disabled = false;
+      if (!res.success) return showToast(res.error, 'error');
+      showToast(res.msg, 'success'); setTimeout(function () { location.reload(); }, 800);
     });
   });
 }

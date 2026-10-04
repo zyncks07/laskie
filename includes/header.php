@@ -124,6 +124,9 @@ if (!isset($depth)) {
     <a href="<?= $depth ?>admin/tenants.php" class="sidebar-nav-item <?= ($currentPage==='tenants')?'active':'' ?>">
       <i class="fa-solid fa-people-roof"></i> Tenants
     </a>
+    <a href="<?= $depth ?>admin/contracts.php" class="sidebar-nav-item <?= in_array($currentPage, ['contracts','contract_edit'], true)?'active':'' ?>">
+      <i class="fa-solid fa-file-signature"></i> Contracts
+    </a>
     <a href="<?= $depth ?>admin/units.php" class="sidebar-nav-item <?= ($currentPage==='units')?'active':'' ?>">
       <i class="fa-solid fa-door-open"></i> Rental Units
     </a>

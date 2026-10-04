@@ -120,7 +120,7 @@ $unitStatusData = [];
 if ($selectedYear === $curYear) {
     $usStmt = $pdo->prepare("
         SELECT ru.id, ru.unit_name, ru.monthly_rate, ru.due_day, ru.status,
-               t.full_name AS tenant_name, t.contract_start,
+               t.full_name AS tenant_name, t.contract_start, t.contract_end,
                COALESCE(cm.paid, 0) AS cur_paid
         FROM rental_units ru
         LEFT JOIN tenants t ON t.unit_id = ru.id AND t.status = 'active'
@@ -325,7 +325,8 @@ include 'includes/header.php';
             </tr>
           <?php else:
               $rate         = getRateForMonth($pdo, (int)$u['id'], (float)$u['monthly_rate'], $curMonth, $curYear);
-              $expected     = prorateFirstMonth($rate, (int)$u['due_day'], $u['contract_start'] ?? null, $curMonth, $curYear);
+              // Post-paid: this month's bill covers the cycle that just ended (CLAUDE.md §5 inv. 2).
+              $expected     = prorateOccupancyMonth($rate, (int)$u['due_day'], $u['contract_start'] ?? null, $u['contract_end'] ?? null, $curMonth, $curYear);
               // A waived month owes nothing, so it must not show as due/late.
               $expected     = money_max('0.00', money_sub($expected, $curRentVoids[(int)$u['id']] ?? '0.00'));
               $curPaid      = $u['cur_paid'];

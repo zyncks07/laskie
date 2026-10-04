@@ -23,6 +23,11 @@ use PHPUnit\Framework\Attributes\Test;
  *     outgoing tenant's genuinely unpaid period could not be waived once the
  *     incoming tenant had paid the same period
  *
+ * Rent is POST-PAID (2026-10-04): charge month M covers the cycle that ended
+ * the day before M's due date (due day 5 → Dec 5 – Jan 4 is the January bill).
+ * The dates below sit on those cycle boundaries; "the year" is every bill
+ * dated in 2026, i.e. charge months January–December.
+ *
  * ISOLATION — runs against `laskie_test` only; self-skips when absent.
  * See IsolatedDbTestCase.
  */
@@ -121,8 +126,8 @@ final class TenantHandoverTest extends IsolatedDbTestCase
     #[Test]
     public function clean_handover_bills_each_month_exactly_once(): void
     {
-        $this->addTenant('Outgoing', '2026-01-01', '2026-06-30', 'former');
-        $this->addTenant('Incoming', '2026-07-01', null,         'active');
+        $this->addTenant('Outgoing', '2025-12-05', '2026-06-04', 'former');
+        $this->addTenant('Incoming', '2026-06-05', null,         'active');
 
         $rows = $this->rentRows($this->occupants());
 
@@ -140,8 +145,8 @@ final class TenantHandoverTest extends IsolatedDbTestCase
     {
         // Exactly the shape that used to produce 18 rows / ₱153,000: the admin
         // flipped the status to 'former' and left the end date blank.
-        $this->addTenant('Outgoing', '2026-01-01', null, 'former');
-        $this->addTenant('Incoming', '2026-07-01', null, 'active');
+        $this->addTenant('Outgoing', '2025-12-05', null, 'former');
+        $this->addTenant('Incoming', '2026-06-05', null, 'active');
 
         $rows = $this->rentRows($this->occupants());
 
@@ -156,14 +161,14 @@ final class TenantHandoverTest extends IsolatedDbTestCase
             if ($r['tenant_name'] === 'Outgoing') $lastOutgoing = $r;
         }
         $this->assertNotNull($lastOutgoing);
-        $this->assertSame(6, $lastOutgoing['period_month'], 'outgoing tenant stops billing in June');
+        $this->assertSame(6, $lastOutgoing['period_month'], 'outgoing tenant\'s last bill is June (May 5 – Jun 4)');
     }
 
     #[Test]
     public function departed_tenant_with_no_successor_stops_at_their_last_payment(): void
     {
-        $tid = $this->addTenant('Outgoing', '2026-01-01', null, 'former');
-        // They paid rent through March and then left.
+        $tid = $this->addTenant('Outgoing', '2025-12-05', null, 'former');
+        // They paid the January–March bills (Dec 5 – Mar 4) and then left.
         $ins = self::$db->prepare(
             "INSERT INTO payments (invoice_no, unit_id, tenant_id, payment_type, amount,
                                    period_month, period_year, payment_date, received_by, status)
@@ -188,7 +193,7 @@ final class TenantHandoverTest extends IsolatedDbTestCase
     {
         // The backstop must only ever touch a tenancy that has ENDED — an open
         // contract on an active tenant is the normal case and bills through.
-        $this->addTenant('Sitting', '2026-01-01', null, 'active');
+        $this->addTenant('Sitting', '2025-12-05', null, 'active');
 
         $rows = $this->rentRows($this->occupants());
 
@@ -201,37 +206,40 @@ final class TenantHandoverTest extends IsolatedDbTestCase
     #[Test]
     public function mid_month_handover_splits_the_month_instead_of_billing_it_twice(): void
     {
-        $this->addTenant('Outgoing', '2026-01-01', '2026-07-15', 'former');
+        $this->addTenant('Outgoing', '2025-12-05', '2026-07-15', 'former');
         $this->addTenant('Incoming', '2026-07-16', null,         'active');
 
         $rows = $this->rentRows($this->occupants());
 
-        // July legitimately carries two rows — one per occupant — but they must
-        // sum to exactly one month's rent, not full + prorated.
+        // The August bill covers Jul 5 – Aug 4, the cycle holding the handover.
+        // It legitimately carries two rows — one per occupant — but they must
+        // sum to exactly one cycle's rent, not full + prorated.
         $perPeriod = self::rowsPerPeriod($rows);
-        $this->assertSame(2, $perPeriod['2026-7'], 'both occupants are billed for July');
-        $this->assertSame(self::RATE, self::grossPerPeriod($rows)['2026-7'],
-            'the two July charges must add up to exactly one month of rent');
+        $this->assertSame(2, $perPeriod['2026-8'], 'both occupants are billed for the shared cycle');
+        $this->assertSame(self::RATE, self::grossPerPeriod($rows)['2026-8'],
+            'the two August charges must add up to exactly one cycle of rent');
         $this->assertSame('102000.00', self::grossTotal($rows),
-            'the year still bills twelve months of rent in total');
+            'the year still bills twelve cycles of rent in total');
 
-        // 8500/31 × 15 = 4112.90 out, 8500/31 × 16 = 4387.10 in.
-        $july = array_values(array_filter($rows, fn($r) => $r['period_month'] === 7));
-        $this->assertSame('4112.90', $july[0]['gross']);
-        $this->assertSame('4387.10', $july[1]['gross']);
+        // 8500/31 × 11 (Jul 5–15) = 3016.13 out, 8500/31 × 20 (Jul 16 – Aug 4) = 5483.87 in.
+        $aug = array_values(array_filter($rows, fn($r) => $r['period_month'] === 8));
+        $this->assertSame('3016.13', $aug[0]['gross']);
+        $this->assertSame('5483.87', $aug[1]['gross']);
+        $this->assertSame('2026-07-16', $aug[0]['date'], 'the outgoing share is billed at move-out');
     }
 
     #[Test]
     public function final_month_is_prorated_by_days_occupied(): void
     {
-        $this->addTenant('Leaver', '2026-01-01', '2026-09-01', 'former');
+        $this->addTenant('Leaver', '2025-12-05', '2026-09-01', 'former');
 
         $rows = $this->rentRows($this->occupants());
         $sept = array_values(array_filter($rows, fn($r) => $r['period_month'] === 9));
 
         $this->assertCount(1, $sept);
-        // One day of a 30-day month — it used to bill the full ₱8,500.
-        $this->assertSame('283.33', $sept[0]['gross']);
+        // Last cycle Aug 5 – Sep 4 (31 days), occupied Aug 5 – Sep 1 = 28 days.
+        $this->assertSame('7677.42', $sept[0]['gross']);
+        $this->assertSame('2026-09-02', $sept[0]['date'], 'billed the day after move-out');
         $this->assertStringContainsString('prorated', $sept[0]['description']);
     }
 
@@ -240,8 +248,8 @@ final class TenantHandoverTest extends IsolatedDbTestCase
     #[Test]
     public function incoming_tenants_statement_excludes_the_departed_tenants_arrears(): void
     {
-        $outId = $this->addTenant('Outgoing', '2026-01-01', '2026-06-30', 'former');
-        $inId  = $this->addTenant('Incoming', '2026-07-01', null,         'active');
+        $outId = $this->addTenant('Outgoing', '2025-12-05', '2026-06-04', 'former');
+        $inId  = $this->addTenant('Incoming', '2026-06-05', null,         'active');
 
         // Outgoing never paid a peso: six months of rent plus a pre-billed
         // service charge left outstanding.
@@ -251,11 +259,11 @@ final class TenantHandoverTest extends IsolatedDbTestCase
              VALUES (?, ?, '2500.00', 'Unpaid utilities', '2026-06-05', 6, 2026, 'pre_billed', 1)"
         )->execute([$this->unitId, $outId]);
 
-        // Incoming pays July on time.
+        // Incoming pays their first bill (July: Jun 5 – Jul 4) on time.
         self::$db->prepare(
             "INSERT INTO payments (invoice_no, unit_id, tenant_id, payment_type, amount,
                                    period_month, period_year, payment_date, received_by, status)
-             VALUES ('INV-2026-09001', ?, ?, 'rent', ?, 7, 2026, '2026-07-04', 1, 'paid')"
+             VALUES ('INV-2026-09001', ?, ?, 'rent', ?, 7, 2026, '2026-07-05', 1, 'paid')"
         )->execute([$this->unitId, $inId, self::RATE]);
 
         $all = $this->occupants();
@@ -283,21 +291,21 @@ final class TenantHandoverTest extends IsolatedDbTestCase
     #[Test]
     public function tenant_scoped_rent_paid_ignores_the_other_tenants_payments(): void
     {
-        $outId = $this->addTenant('Outgoing', '2026-01-01', '2026-07-15', 'former');
+        $outId = $this->addTenant('Outgoing', '2025-12-05', '2026-07-15', 'former');
         $inId  = $this->addTenant('Incoming', '2026-07-16', null,         'active');
 
-        // Only the incoming tenant paid for July.
+        // Only the incoming tenant paid their share of the shared August bill.
         self::$db->prepare(
             "INSERT INTO payments (invoice_no, unit_id, tenant_id, payment_type, amount,
                                    period_month, period_year, payment_date, received_by, status)
-             VALUES ('INV-2026-09002', ?, ?, 'rent', '4387.10', 7, 2026, '2026-07-16', 1, 'paid')"
+             VALUES ('INV-2026-09002', ?, ?, 'rent', '5483.87', 8, 2026, '2026-08-05', 1, 'paid')"
         )->execute([$this->unitId, $inId]);
 
-        $this->assertSame('4387.10', getRentPaidForPeriod(self::$db, $this->unitId, 7, self::YEAR, $inId));
-        $this->assertSame('0.00',    getRentPaidForPeriod(self::$db, $this->unitId, 7, self::YEAR, $outId),
-            "the incoming tenant's payment must not settle the outgoing tenant's July");
+        $this->assertSame('5483.87', getRentPaidForPeriod(self::$db, $this->unitId, 8, self::YEAR, $inId));
+        $this->assertSame('0.00',    getRentPaidForPeriod(self::$db, $this->unitId, 8, self::YEAR, $outId),
+            "the incoming tenant's payment must not settle the outgoing tenant's share");
         // Unit-wide still reports the whole period — the default is unchanged.
-        $this->assertSame('4387.10', getRentPaidForPeriod(self::$db, $this->unitId, 7, self::YEAR));
+        $this->assertSame('5483.87', getRentPaidForPeriod(self::$db, $this->unitId, 8, self::YEAR));
     }
 
     // ── 5. the waiver cap is per tenancy ─────────────────────────
@@ -305,14 +313,14 @@ final class TenantHandoverTest extends IsolatedDbTestCase
     #[Test]
     public function outgoing_tenants_unpaid_period_stays_waivable_after_the_successor_pays(): void
     {
-        $outId = $this->addTenant('Outgoing', '2026-01-01', '2026-07-15', 'former');
+        $outId = $this->addTenant('Outgoing', '2025-12-05', '2026-07-15', 'former');
         $inId  = $this->addTenant('Incoming', '2026-07-16', null,         'active');
 
-        // Incoming settles their prorated July share; outgoing never paid theirs.
+        // Incoming settles their prorated share of the August bill; outgoing never paid theirs.
         self::$db->prepare(
             "INSERT INTO payments (invoice_no, unit_id, tenant_id, payment_type, amount,
                                    period_month, period_year, payment_date, received_by, status)
-             VALUES ('INV-2026-09003', ?, ?, 'rent', '4387.10', 7, 2026, '2026-07-16', 1, 'paid')"
+             VALUES ('INV-2026-09003', ?, ?, 'rent', '5483.87', 8, 2026, '2026-08-05', 1, 'paid')"
         )->execute([$this->unitId, $inId]);
 
         // With a unit-wide cap this was refused as "already settled".
@@ -320,7 +328,7 @@ final class TenantHandoverTest extends IsolatedDbTestCase
             'action'       => 'void_rent_charge',
             'unit_id'      => $this->unitId,
             'tenant_id'    => $outId,
-            'period_month' => 7,
+            'period_month' => 8,
             'period_year'  => self::YEAR,
             'reason'       => 'Arrears written off on move-out',
         ]);
@@ -330,24 +338,24 @@ final class TenantHandoverTest extends IsolatedDbTestCase
 
         $row = self::$db->prepare(
             "SELECT amount, tenant_id FROM rent_charge_voids
-             WHERE unit_id=? AND period_month=7 AND period_year=? AND restored_at IS NULL"
+             WHERE unit_id=? AND period_month=8 AND period_year=? AND restored_at IS NULL"
         );
         $row->execute([$this->unitId, self::YEAR]);
         $void = $row->fetch();
         $this->assertNotFalse($void, 'no waiver row was written');
         $this->assertSame($outId, (int) $void['tenant_id'], 'the waiver is booked against the outgoing tenant');
-        $this->assertSame('4112.90', from_cents(to_cents($void['amount'])),
-            'the waiver covers the outgoing tenant\'s prorated July share only');
+        $this->assertSame('3016.13', from_cents(to_cents($void['amount'])),
+            'the waiver covers the outgoing tenant\'s prorated share only');
     }
 
     #[Test]
     public function a_waiver_larger_than_its_charge_is_capped_not_credited(): void
     {
-        // The live 359-D shape: a full-month waiver was recorded against a
-        // September that move-out proration later shrank to a single day.
+        // The live 359-D shape: a full-month waiver recorded against a final
+        // bill that move-out proration shrank (Aug 5 – Sep 1 of a 31-day cycle).
         // The rendered credit must be capped, or the running balance goes
         // negative by the difference — a phantom credit.
-        $tid = $this->addTenant('Leaver', '2026-01-01', '2026-09-01', 'former');
+        $tid = $this->addTenant('Leaver', '2025-12-05', '2026-09-01', 'former');
         self::$db->prepare(
             "INSERT INTO rent_charge_voids (unit_id, tenant_id, period_month, period_year, amount, reason, voided_by)
              VALUES (?, ?, 9, 2026, ?, 'Arrears write-off', 1)"
@@ -357,10 +365,10 @@ final class TenantHandoverTest extends IsolatedDbTestCase
         $rows    = $this->rentRows($this->occupants(), $voidMap);
         $sept    = array_values(array_filter($rows, fn($r) => $r['period_month'] === 9))[0];
 
-        $this->assertSame('283.33', $sept['gross']);
-        $this->assertSame('283.33', $sept['voided'], 'the waiver is capped at the charge');
-        $this->assertSame('0.00',   $sept['net']);
-        $this->assertSame('283.33', $sept['waivers'][0]['applied'],
+        $this->assertSame('7677.42', $sept['gross']);
+        $this->assertSame('7677.42', $sept['voided'], 'the waiver is capped at the charge');
+        $this->assertSame('0.00',    $sept['net']);
+        $this->assertSame('7677.42', $sept['waivers'][0]['applied'],
             'renderers credit the applied amount, never the raw stored figure');
         $this->assertSame(self::RATE, from_cents(to_cents($sept['waivers'][0]['amount'])),
             'the stored waiver is left intact for the audit trail');

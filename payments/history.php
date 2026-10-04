@@ -243,7 +243,7 @@ if ($selUnit && $unitInfo) {
             if (!money_is_pos($w['applied'])) continue;
             $ledger[] = [
                 'date'        => $rc['date'],
-                'description' => 'Rent Waived — ' . date('F Y', mktime(0,0,0,$rc['period_month'],1,$rc['period_year']))
+                'description' => (($w['kind'] ?? 'waiver') === 'transfer' ? 'Balance Carried Forward — ' : 'Rent Waived — ') . date('F Y', mktime(0,0,0,$rc['period_month'],1,$rc['period_year']))
                                  . ' (' . $w['reason'] . ')',
                 'type'        => 'rent_waiver',
                 'debit'       => '0.00',
@@ -262,6 +262,8 @@ if ($selUnit && $unitInfo) {
         $desc = $p['payment_type'] === 'rent'
             ? 'Payment — ' . date('F Y', mktime(0,0,0,(int)$p['period_month'],1,(int)$p['period_year']))
             : ($p['service_name'] ?? 'Service') . ' — ' . date('F Y', mktime(0,0,0,(int)$p['period_month'],1,(int)$p['period_year']));
+        // Non-cash transfer credit: say where the money came from.
+        if (!empty($p['transfer_id'])) $desc = 'Transfer Credit — ' . date('F Y', mktime(0,0,0,(int)$p['period_month'],1,(int)$p['period_year'])) . ' (' . ($p['notes'] ?? '') . ')';
         $ledger[] = [
             'date'             => $p['payment_date'],
             'description'      => $desc,

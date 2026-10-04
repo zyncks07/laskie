@@ -73,6 +73,10 @@ abstract class IsolatedDbTestCase extends TestCase
 
         self::$db = $pdo;
         self::loadSchema($pdo);
+        // The rebuilt schema restarts AUTO_INCREMENT, so unit ids repeat across
+        // classes while getRateForMonth()'s per-process cache would still hold
+        // the previous class's history for them.
+        resetRateHistoryCache();
     }
 
     /**

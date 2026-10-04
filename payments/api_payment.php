@@ -12,6 +12,27 @@ header('Content-Type: application/json');
 // by config/functions.php when JSON_RESPONSE is defined.
 $action = $_POST['action'] ?? $_GET['action'] ?? '';
 
+// ── Tenant-transfer lock ──────────────────────────────────────
+// Rows a tenant transfer created (non-cash payments, transfer waivers) are one
+// half of a balanced pair; editing, voiding, deleting, refunding or restoring
+// one on its own would unbalance the two tenancies. They change only through
+// the transfer's Undo (admin/tenants.php). See config/transfer_functions.php.
+require_once '../config/transfer_functions.php';
+if (in_array($action, ['void_payment','restore_payment','delete_payment','restore_deleted_payment','purge_payment','process_refund'], true)
+    || ($action === 'save_payment' && (int)($_POST['id'] ?? 0))) {
+    $lockId = (int)($_POST[$action === 'process_refund' ? 'payment_id' : 'id'] ?? 0);
+    $lq = $pdo->prepare("SELECT transfer_id FROM payments WHERE id=?");
+    $lq->execute([$lockId]);
+    if ($msg = transferLockMessage($lq->fetch() ?: null)) jsonErr($msg);
+}
+if ($action === 'restore_rent_charge' || $action === 'restore_charge') {
+    $lq = $pdo->prepare($action === 'restore_rent_charge'
+        ? "SELECT transfer_id FROM rent_charge_voids WHERE id=?"
+        : "SELECT uc.transfer_id FROM unit_charges uc JOIN tenant_transfers tt ON tt.id = uc.transfer_id AND tt.status = 'undone' WHERE uc.id=?");
+    $lq->execute([(int)($_POST['id'] ?? 0)]);
+    if ($msg = transferLockMessage($lq->fetch() ?: null)) jsonErr($msg);
+}
+
 // ── Charge Waivers (admin write-offs) ─────────────────────────
 // Waiving is NOT a refund: no cash moves and no income changes, because a rent
 // or service charge was never revenue — only collected payments are. A waiver
@@ -174,8 +195,10 @@ if ($action === 'save_payment') {
     // the form didn't say. An unattributed payment can't be placed on a tenant's
     // statement, and after a handover there is no safe way to guess later.
     if ($tenantId === null) {
-        $periodStart = sprintf('%04d-%02d-01', $periodYear, $periodMonth);
-        $periodEnd   = date('Y-m-t', strtotime($periodStart));
+        // The occupancy cycle this period's rent bill covers (post-paid).
+        $dq = $pdo->prepare("SELECT due_day FROM rental_units WHERE id=?");
+        $dq->execute([$unitId]);
+        [$periodStart, $periodEnd] = rentCycle((int)($dq->fetchColumn() ?: 5), $periodMonth, $periodYear);
         $oq = $pdo->prepare(
             "SELECT id FROM tenants
              WHERE unit_id=? AND status IN ('active','former','inactive')
@@ -747,7 +770,7 @@ if ($action === 'monthly_summary') {
     $rows = $pdo->prepare("
         SELECT
             ru.id, ru.unit_name, ru.monthly_rate, ru.status, ru.due_day,
-            t.full_name as tenant_name, t.contract_start,
+            t.full_name as tenant_name, t.contract_start, t.contract_end,
             COALESCE(SUM(CASE WHEN p.payment_type='rent' THEN p.amount - COALESCE(r.refsum,0) ELSE 0 END), 0)    as rent_paid,
             COALESCE(SUM(CASE WHEN p.payment_type='service' THEN p.amount - COALESCE(r.refsum,0) ELSE 0 END), 0) as service_paid,
             COALESCE(SUM(p.amount - COALESCE(r.refsum,0)), 0) as total_paid,
@@ -789,7 +812,8 @@ if ($action === 'monthly_summary') {
         }
         $rate                = getRateForMonth($pdo, (int)$row['id'], (float)$row['monthly_rate'], $month, $year);
         $row['monthly_rate'] = number_format($rate, 2, '.', ''); // reflect history-adjusted rate in the display column
-        $expected     = prorateFirstMonth($rate, (int)$row['due_day'], $row['contract_start'] ?? null, $month, $year);
+        // Post-paid: the period's bill covers the cycle ending the day before its due date.
+        $expected     = prorateOccupancyMonth($rate, (int)$row['due_day'], $row['contract_start'] ?? null, $row['contract_end'] ?? null, $month, $year);
         $waived       = $rentVoids[(int)$row['id']] ?? '0.00';
         $expected     = money_max('0.00', money_sub($expected, $waived));
         $row['rent_waived']     = $waived;
@@ -1145,6 +1169,8 @@ if ($action === 'bulk_delete_payments') {
             // reasoning as the single delete_payment path — soft-deleting would
             // leave orphan 'refunded' cash rows and drag cash-on-hand negative.
             if ($p['status'] === 'refunded' || $p['status'] === 'partially_refunded') continue;
+            // Transfer-created non-cash payments only move with their transfer.
+            if (!empty($p['transfer_id'])) continue;
 
             // Same side-effects as single delete_payment — keep cash + unit_charges consistent.
             $pdo->prepare("UPDATE payments SET deleted_at=NOW() WHERE id=?")->execute([$id]);

@@ -65,7 +65,11 @@
 │
 ├── admin/                 # Admin-only pages (requireAdmin())
 │   ├── accounts.php       # User CRUD
-│   ├── tenants.php        # Tenant CRUD + Documents modal (Contract / IDs / Supporting, 20 items each)
+│   ├── tenants.php        # Tenant CRUD + Documents modal (Contract / IDs / Supporting, 20 items each) + Transfer / transfer history / undo
+│   ├── contracts.php      # Lease register: Active / Expired / Drafts / Voided, approve, void, renew, signed-copy uploads
+│   ├── contract_edit.php  # Contract generator: pre-filled, fully editable form + live preview
+│   ├── contract_print.php # On-screen paper view of one contract (Print / Download PDF)
+│   ├── contract_pdf_download.php # Contract → A4 PDF via renderHtmlToPdf()
 │   ├── units.php          # Units + unit_types + service_types + rate history
 │   ├── transactions.php   # All transactions + trash; voided payments, charge waivers — restore UI
 │   ├── requests.php       # Review/approve vault cash requests (approve auto-issues vault_return)
@@ -93,11 +97,15 @@
 ├── config/
 │   ├── db.php             # PDO connection (thin template; calls env.php + connects)
 │   ├── env.php            # .env loader → define()s DB_* constants (see §11)
-│   └── functions.php      # Helpers — see §6
+│   ├── functions.php      # Helpers — see §6
+│   ├── transfer_functions.php # Tenant transfer: dates rule, balances, execute/undo — see §4
+│   └── contract_functions.php # Lease-contract field schema + helpers — see §6
 │
 ├── includes/
 │   ├── header.php         # Sidebar + topbar layout, session boot
-│   └── footer.php         # JS includes + shared inline helpers
+│   ├── footer.php         # JS includes + shared inline helpers
+│   └── contracts/         # Contract templates (web-blocked): lease_caloocan_v1.php (HTML port),
+│                          #   document.php (A4 shell: @page footers, watermark), lease-caloocan-v1.md (source draft)
 │
 ├── assets/
 │   ├── css/app.css            # Base design system (see §7)
@@ -106,7 +114,7 @@
 │   └── vendor/                # All third-party CSS/JS (self-hosted)
 │
 └── uploads/               # User-uploaded files — writable by www-data
-    ├── contracts/   ids/   docs/          # tenant documents, by category
+    ├── contracts/   ids/   docs/          # tenant documents, by category (contracts/ also holds signed-contract scans)
     ├── receipts/    payments/             # expense + payment proof
     ├── remittance/  avatars/
     └── dividends/                          # dividend-distribution proof
@@ -116,7 +124,7 @@
 
 ## 4. Database schema (accounting-critical)
 
-Read [`install.sql`](install.sql) for the authoritative DDL. The live DB is current through **migration 013** (`migrations/` holds the incremental DDL; fresh installs get the same via `install.sql`). Highlights:
+Read [`install.sql`](install.sql) for the authoritative DDL. The live DB is current through **migration 015** (`migrations/` holds the incremental DDL; fresh installs get the same via `install.sql`). Highlights:
 
 ### Core entities
 - `users` — id, username, password_hash, full_name, **role** (`admin`/`accountant`/`staff`), status, email/phone
@@ -153,6 +161,46 @@ Read [`install.sql`](install.sql) for the authoritative DDL. The live DB is curr
 - `unit_rate_history` — every rent increase. **Read via `getRateForMonth()` — never read `rental_units.monthly_rate` directly when computing historical balances.**
 - `system_logs` — append-only audit. Use `logActivity()` for free-text, `logChange()` for before/after JSON diffs.
 
+### Lease contracts (migration 014)
+- `contracts` — one generated lease. **A contract is a document, not a billing input**: approving one never
+  writes to `tenants` (rent stays virtual off `contract_start/contract_end`, §5 inv. 7/12). The register only
+  *warns* when a contract and the tenant record disagree (`contractTenantMismatches()`).
+  - Lifecycle `status` ∈ {`draft`,`approved`,`cancelled`}. A draft is editable and hard-deletable, with no number.
+    **Approved is an immutable snapshot** (`fields_json`) — saving over it is refused; correct it by voiding
+    (reason required, row kept) and *Copy into a new draft*. Two approved contracts on one unit may not overlap.
+  - `contract_no` (`LSE-YYYY-####`) is drawn **at approval** by `generateContractNo()` from the same monotonic
+    `settings` counter scheme as invoices (§5 inv. 8, key `contract_seq_LSE_YYYY`). A voided contract keeps its number.
+  - Active / Upcoming / Expiring (≤ 60 days, the 2-month notice window) / Expired are **derived from the dates**
+    by `contractDisplayState()` — nothing stores them, no cron.
+  - `template_key` + `template_version` pick the renderer (`includes/contracts/lease_caloocan_v{N}.php`), so a new
+    template version never changes how an already-approved contract prints.
+    **v2 (current, 2026-10-04) is post-paid with no advance rent** (move-in = 2 months deposit + ₱3,000 utilities;
+    `CONTRACT_ADVANCE_MONTHS`); v1 (pre-paid, 1 month advance) stays renderable. The 23 imported placeholder contracts
+    were moved to v2 the same day because they had never been printed or signed.
+- `contract_files` — signed-copy scans (images/PDF), approved contracts only, cap 30. Uploaded through
+  `handleUpload()` with the sharper `CONTRACT_SCAN_COMPRESSION` profile (2400 px / q75). Hard-deleted like `tenant_docs`.
+- Company-wide generator defaults live in `settings` as `contract_default_<field>`.
+
+### Tenant transfers (migration 015)
+- `tenant_transfers` — one row per move of an existing tenant to another unit (`admin/tenants.php` → Transfer).
+  A tenants row **is** a tenancy, so a transfer closes the old row (`contract_end`, `former`) and inserts a linked
+  successor (`tenants.transferred_from_id`); documents move to the successor. The Tenants list shows the person once
+  (rows that have a successor are hidden; the chain is behind the "Moved from" chip).
+- **Move dates** (`transferDates()`): the old tenancy ends the day before the move, the new one starts on it. Rent is
+  post-paid (inv. 2), so the old unit's final bill (its last cycle, prorated if the move is mid-cycle) is dated the
+  move date and — if unpaid — carried to the new unit; the new unit's first bill falls on its next due date. The cycle
+  holding the move always bills exactly one cycle between the two. (A pre-paid "clean cycle switch" existed briefly
+  on 2026-10-04 and was replaced before any transfer ran; transfers are gated by `settings.transfers_enabled`.)
+- **Money between the two tenancies** uses only primitives every report already handles, each tagged `transfer_id`:
+  prepaid rent / deposit credit = a **non-cash pair** (`refunds.non_cash=1` on the old side + a `payments` row with
+  `transfer_id`, `received_by` NULL, on the new side — **neither has a `cash_transactions` row**); unpaid rent =
+  `rent_charge_voids.kind='transfer'` on the old periods + one pre-billed **Arrears** charge on the new tenancy;
+  fully-unpaid service charges are re-pointed; deposit top-up = pre-billed **Security Deposit** charge (2 × rent rule).
+  A cash deposit refund is the only leg that moves cash (cashier-gated like `process_refund`).
+- Transfer-created rows are **locked** in `payments/api_payment.php` (edit/void/delete/refund/restore/purge refuse
+  them); they change only through **Undo** (`undoTransfer()`), which is allowed only while nothing new has been
+  recorded on either tenancy and no cash was handed back. `snapshot_json` lists every row the transfer touched.
+
 ### Dividends ("The Vault")
 - `dividend_recipients`, `dividend_distributions`, `dividend_returns` — money flowing out to (and back from) owners/investors.
 - `dividend_distributions.receipt_path` / `receipt_url` — optional proof of the payout (signed acknowledgement, bank-transfer screenshot, PDF slip) attached from the Distribute Dividend / Edit Distribution modals on `admin/vault.php`. Same shape and upload pipeline as `expenses.receipt_path/receipt_url` and `payments.receipt_path/receipt_url`; uploads land in `uploads/dividends/`. Added in `migrations/012_add_distribution_receipt.sql`. External URLs are validated `^https?://` **server-side on the way in**, because the Distribution Records table is server-rendered.
@@ -171,7 +219,14 @@ Read [`install.sql`](install.sql) for the authoritative DDL. The live DB is curr
 These are the rules that keep the books consistent. Any change in this area requires extra care.
 
 1. **Never read `rental_units.monthly_rate` for past months.** Use `getRateForMonth($pdo, $unitId, $base, $month, $year)` so rate increases don't retroactively re-bill paid months.
-2. **Prorate first month when contract starts after `due_day`.** Use `prorateFirstMonth()`. The formula is `rate / days_in_month × days_occupied`.
+2. **Rent is POST-PAID, billed per cycle.** Charge month M is due on `rentDueDate(due_day, M)` and covers the cycle
+   that just ended: `rentCycle()` = `[due(M−1), due(M) − 1]` — with due day 5, the **January bill is Dec 5 – Jan 4**.
+   A tenancy pays `rate(M) × days of the cycle occupied ÷ cycle length` (`prorateOccupancyMonth()`; a full cycle is
+   exactly the rate). The first bill falls one cycle after move-in; the bill for the cycle a tenancy **ends inside**
+   is dated the day after move-out (`chargeDate()`). "Owed" means charge date ≤ today, so a cycle is never billed
+   before it ends. Migrated tenancies start 2025-12-05 for this reason (2025 arrears are opening `unit_charges`).
+   Changed 2026-10-04 from a calendar-month, pre-paid-style model; the old `prorateFirstMonth()` /
+   `prorateLastMonth()` no longer exist — do not reintroduce calendar-month proration.
 3. **Every collected payment creates a `cash_transactions` row** with `transaction_type='received'` and `reference_payment_id` set. If you record a payment without also creating its cash entry, the cash-on-hand report will drift.
 4. **Service payments must touch `unit_charges`.** Either link to an existing pre-billed row (`UPDATE`, attach `payment_id`) or create a new `auto_collected` row. See `payments/api_payment.php` action `save_payment`.
 5. **Soft delete, never hard delete** for `payments` and `expenses`. Hard deletes break the audit trail and unbalance cash reports.
@@ -182,7 +237,7 @@ These are the rules that keep the books consistent. Any change in this area requ
 10. **All audit-relevant mutations call `logActivity()` or `logChange()`** with module, action, and details. Don't skip this for "small" admin edits.
 11. **Soft-delete restore goes through `admin/transactions.php`** — do not expose restore links elsewhere.
 12. **Tenancy windows are closed and non-overlapping; a Statement of Account belongs to ONE tenancy.**
-    Rent is virtual and generated month-by-month from `contract_start` → `contract_end`, so a departed
+    Rent is virtual and generated cycle-by-cycle from `contract_start` → `contract_end`, so a departed
     tenant with a blank `contract_end` accrues rent forever *and* double-bills every month the successor
     is billed (measured: 18 rows / ₱153,000 on a unit that should bill ₱102,000). `admin/tenants.php`
     therefore **rejects** an overlapping window on the same unit and **requires** `contract_end` when a
@@ -193,13 +248,16 @@ These are the rules that keep the books consistent. Any change in this area requ
     tenant's arrears at the head of the next tenant's statement. Past-tenant arrears surface on the
     dashboard and collection grid via `getPastTenantArrears()` and are reported **alongside** the period
     balance, never folded into it.
-13. **Both ends of a tenancy prorate.** `prorateFirstMonth()` handles move-in (full month if the start is
-    on or before `due_day`), `prorateLastMonth()` handles move-out by days occupied, and
-    **`prorateOccupancyMonth()` is the one to call** — it composes both over a single day span when a
-    tenancy starts and ends in the same month. `contract_end` is **inclusive** (the last day of
-    occupancy). A mid-month handover must bill `prorated_out + prorated_in == one month`, never
-    `full + prorated`. `getGrossRentCharge()` uses the same helper so the waiver cap can never disagree
-    with the rendered charge.
+13. **Both ends of a tenancy prorate by cycle days, through ONE helper.** `prorateOccupancyMonth()` is the
+    only place a rent amount is computed — `buildRentChargeRows()`, `getGrossRentCharge()` (waiver cap),
+    the dashboard unit status, the collection grid and transfers all call it, so they can never disagree.
+    `contract_end` is **inclusive** (the last day of occupancy). A handover on day X bills
+    `out + in == one cycle`, never `full + prorated`. `buildRentChargeRows()` filters rows by **charge date**
+    within `[dateFrom, dateTo]`; the reporting range never trims the occupancy.
+14a. **A non-cash transfer entry never gets a cash row.** A `payments` row with `transfer_id` and a `refunds` row with
+    `non_cash=1` are the two halves of money moving between a person's tenancies (`config/transfer_functions.php`).
+    Adding a `cash_transactions` row for either would inflate a cashier's cash-on-hand with money nobody handed over.
+    This is the one exception to invariant 3. Never edit one half alone — undo the transfer.
 14. **A waiver is credited at `applied`, never `amount`.** A stored `rent_charge_voids` row can exceed the
     charge it offsets once move-out proration shrinks a final month (or rate history moves).
     `buildRentChargeRows()` caps each waiver into a per-waiver `applied` field; renderers must credit that.
@@ -232,15 +290,14 @@ Helpers Claude should reuse rather than re-implement:
 | `logActivity($pdo, $action, $module, $details)` | Append free-text audit row |
 | `logChange($pdo, $action, $module, $before, $after)` | Append JSON before/after diff |
 | `generateInvoiceNo($pdo)` | Get next `INV-YYYY-#####` |
-| `handleUpload($field, $subDir)` | File upload with whitelist + 30 MB cap. Auto-compresses image uploads via `compressImage()`. Returns `['path'=>..., 'error'=>...]` |
+| `handleUpload($field, $subDir)` | File upload with whitelist + 30 MB cap. Auto-compresses image uploads via `compressImage()` — optional last arg `$compressOpts` overrides the profile per context (signed contracts use `CONTRACT_SCAN_COMPRESSION`). Returns `['path'=>..., 'error'=>...]` |
 | `compressImage($absPath, $opts)` | Re-encode JPEG/PNG/WebP in place (long-edge cap + quality). Non-images and GIFs are no-ops. Returns `['compressed'=>bool, 'original_size'=>, 'new_size'=>, 'new_path'=>, 'reason'=>]` |
 | `getRateForMonth($pdo, $unitId, $base, $m, $y)` | **Use this**, not `rental_units.monthly_rate`, for historical billing |
-| `prorateFirstMonth($rate, $dueDay, $contractStart, $m, $y)` | Move-in proration (full month if start ≤ `due_day`) |
-| `prorateLastMonth($rate, $contractEnd, $m, $y)` | Move-out proration by days occupied (`contract_end` inclusive) |
-| `prorateOccupancyMonth($rate, $dueDay, $cStart, $cEnd, $m, $y)` | **Use this** — composes both ends over one day span |
+| `rentDueDate($dueDay, $m, $y)` / `rentCycle($dueDay, $m, $y)` / `rentCycleMonthFor($dueDay, $date)` | Post-paid cycle: due date of charge month M; `[start, end]` it covers; the charge month whose cycle holds a date |
+| `prorateOccupancyMonth($rate, $dueDay, $cStart, $cEnd, $m, $y)` | **The** rent amount for charge month M: rate × cycle days occupied ÷ cycle length |
 | `occupancyEndDate($pdo, $occupant, $laterOccupants)` | Effective last day of a tenancy; backstop for a blank `contract_end` |
 | `resolveOccupancyEnds($pdo, $occupants)` | Fill `contract_end` on a sorted occupant list so a subset bills like the whole |
-| `chargeDate($dueDay, $contractStart, $m, $y)` | Returns correct charge date (proration-aware) |
+| `chargeDate($dueDay, $m, $y, ?$contractEnd)` | Due date of charge month M; the day after move-out for the cycle a tenancy ends inside |
 | `buildRentChargeRows($pdo, $unitId, $occupants, $dueDay, $baseRate, $from, $to, $voidMap)` | **The** rent-charge generator (SoA screen + PDF). Returns per-month `gross`/`voided`/`net` + attached waivers |
 | `getRentVoidMap($pdo, $unitId, $from, $to, $tenantId?)` | Active rent waivers for a unit over a range, keyed `"Y-n"` |
 | `getRentVoidTotals($pdo, $m, $y)` | **Batched** waiver totals for one period keyed by `unit_id` — use in per-unit loops (dashboard, collection grid) |
@@ -260,6 +317,27 @@ Helpers Claude should reuse rather than re-implement:
 | `clean($v)` | `htmlspecialchars` wrapper — **use in every PHP echo into HTML** |
 | `nullOrStr($v)` | Trim → null-if-empty (for nullable VARCHAR columns) |
 | `getSetting($pdo, $key, $default = '')` | Read from `settings` table |
+
+**Transfers (`config/transfer_functions.php`)** — `transferDates()` (move-month rule, pure), `tenancyBalance()` (signed
+balance of one tenancy — `getTenantArrears()` only reports positives), `transferDepositHeld()` (rent deposits across the
+transfer chain), `transferPlan()` (everything the dialog shows; also re-run under locks by `executeTransfer()`),
+`undoTransfer()`, `transferChainIds()`, `transferLockMessage()`.
+`resetRateHistoryCache()` (in `functions.php`) clears `getRateForMonth()`'s per-process cache — the isolated test harness
+calls it after every schema rebuild because AUTO_INCREMENT restarts and unit ids repeat.
+
+**Contracts (`config/contract_functions.php`)** — `require_once` after `functions.php`:
+
+| Function / const | Purpose |
+|---|---|
+| `CONTRACT_FIELDS` / `CONTRACT_SECTIONS` | **The** field schema: drives the generator form, the server whitelist, approval validation and the template. Add a field here, not in the page |
+| `contractNormalizeFields($input)` | Whitelist + trim/cap + money/date canonicalisation; **always recomputes** advance / deposit / move-in total (never trust POSTed) |
+| `contractApplyAutoWords($fields, $autoRent, $autoTerm)` | Keeps rent-in-words / term-in-words in step with the figures, or flags a hand-typed mismatch |
+| `contractApprovalErrors($fields)` | What still blocks approval (drafts may be incomplete) |
+| `contractApprove($pdo, $id)` | Atomic approve: validate, overlap check, `generateContractNo()`, lock snapshot, `logChange` |
+| `contractPrefill($pdo, $tenantId, $unitId)` | Pre-fill every field with a per-field source tag (tenant / unit / rate history via `getRateForMonth()` / last contract / defaults) |
+| `contractDisplayState($row, $today)` / `contractStateMeta($state)` | Derived active/upcoming/expiring/expired + its pill |
+| `contractAmountWords()` / `ordinalDay()` / `contractTermWords()` / `contractDefaultEnd()` | Words & dates for the document (end date inclusive) |
+| `renderContractDocument($fields, $meta, $mode)` | Full HTML doc — `screen` / `embed` (live preview) / `pdf` (chromium) |
 
 ---
 
@@ -339,6 +417,8 @@ Global helpers attached to `window`: `showToast`, `apiPost`, `confirmDelete`, `f
 | Request cash from the Vault (`cash.php` → `requests_api.php create_request`) | ✓ | ✓ | ✓ |
 | Approve/reject cash requests (`admin/requests.php`; approve auto-issues the `vault_return`) | ✓ | ✗ | ✗ |
 | Process a payment refund — admin picks the cashier; refund is hard-gated on that cashier's cash-on-hand | ✓ | ✗ | ✗ |
+| Contracts — generate, approve, void, download PDF, upload signed copies (`admin/contract*.php`) | ✓ | ✗ | ✗ |
+| Transfer a tenant to another unit / undo a transfer (`admin/tenants.php`) | ✓ | ✗ | ✗ |
 
 ### Already in place
 - Prepared statements only — no string-interpolated SQL anywhere in the codebase

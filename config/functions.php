@@ -566,6 +566,9 @@ function _imageHasAlpha($im, int $w, int $h): bool {
 // $maxBytes (optional):    override the default 30 MB size cap
 // $verifyImage (optional): when true, validates the file actually IS an image
 //                          via getimagesize() — defeats renamed-extension tricks
+// $compressOpts (optional): compressImage() options for this upload context
+//                          (e.g. a sharper profile for signed-contract scans);
+//                          null keeps the global receipt-sized defaults
 // Images (JPEG/PNG/WebP) are auto-compressed in place via compressImage();
 // non-image uploads (PDF/DOC/ZIP) are left untouched.
 function handleUpload(
@@ -573,7 +576,8 @@ function handleUpload(
     string $subDir,
     ?array $allowedExts = null,
     ?int   $maxBytes = null,
-    bool   $verifyImage = false
+    bool   $verifyImage = false,
+    ?array $compressOpts = null
 ): array {
     if (!isset($_FILES[$fieldName]) || $_FILES[$fieldName]['error'] === UPLOAD_ERR_NO_FILE) {
         return ['path' => null, 'error' => null];
@@ -637,7 +641,7 @@ function handleUpload(
     // Compress JPEG/PNG/WebP in place. Non-image types (PDF/DOC/ZIP) are a no-op.
     // If compression rewrites the file with a new extension (PNG → JPG), the
     // returned URL reflects the new path so callers store the correct value.
-    $c = compressImage($absPath);
+    $c = compressImage($absPath, $compressOpts ?? []);
     if ($c['compressed'] && $c['new_path']) {
         $filename = basename($c['new_path']);
     }
@@ -649,12 +653,24 @@ function handleUpload(
 // Returns the effective monthly rate for a unit in a given month/year
 // by finding the most recent unit_rate_history row on or before that month.
 // Falls back to $baseRate (rental_units.monthly_rate) if no history exists.
+// Per-process cache behind getRateForMonth(), keyed by unit id. A web request
+// never outlives it, but a long-running process that rebuilds the schema (the
+// isolated test harness) reuses unit ids — it must call resetRateHistoryCache().
+function &rateHistoryCache(): array {
+    static $hist = [];
+    return $hist;
+}
+function resetRateHistoryCache(): void {
+    $hist = &rateHistoryCache();
+    $hist = [];
+}
+
 function getRateForMonth(PDO $pdo, int $unitId, float $baseRate, int $month, int $year): float {
     // A unit's whole rate history is loaded once per request and resolved in
     // PHP. The rent generator asks once per month per tenancy, and the arrears
     // helpers run it across every tenant on the dashboard — one query per month
     // was hundreds of identical single-row lookups per page load.
-    static $hist = [];
+    $hist = &rateHistoryCache();
     if (!array_key_exists($unitId, $hist)) {
         try {
             $stmt = $pdo->prepare(
@@ -676,73 +692,71 @@ function getRateForMonth(PDO $pdo, int $unitId, float $baseRate, int $month, int
     return $rate !== null ? $rate : $baseRate;
 }
 
-// ─── Proration Helper ────────────────────────────────────────
-// Returns the prorated charge for a month when contract_start falls after
-// the due day, otherwise returns the full monthly rate.
-// Formula: (rate / days_in_month) × (days_in_month − move_in_day + 1)
-// Returns canonical "0.00" string from cents math (exact, no float drift).
-function prorateFirstMonth($monthlyRate, int $dueDay, ?string $contractStart, int $month, int $year): string {
-    $rate = to_cents($monthlyRate);
-    if (!$contractStart || $rate <= 0) return from_cents($rate);
-    $cs = new DateTime($contractStart);
-    if ((int)$cs->format('Y') !== $year || (int)$cs->format('n') !== $month) return from_cents($rate);
-    $csDay = (int)$cs->format('j');
-    if ($csDay <= $dueDay) return from_cents($rate);
-    $daysInMonth  = (int)(new DateTime("$year-$month-01"))->format('t');
-    $daysOccupied = $daysInMonth - $csDay + 1;
-    // Single-round formula: round((rate × days_occupied) / days_in_month) at cents.
-    // Computed in cents to keep both ops exact; one HALF_UP at the end.
-    $numerator = $rate * $daysOccupied;
-    $rounded   = $numerator >= 0
-        ? (int)floor($numerator / $daysInMonth + 0.5)
-        : -(int)floor(-$numerator / $daysInMonth + 0.5);
-    return from_cents($rounded);
-}
-
-// ─── Move-out Proration ──────────────────────────────────────
-// Mirror of prorateFirstMonth() for the far end of a tenancy: a tenant who
-// vacates mid-month owes only the days they occupied. contract_end is
-// INCLUSIVE (the last day of occupancy) — that is how buildRentChargeRows()
-// and the SoA occupant query have always read it — so leaving on the last day
-// of the month yields the full rate and needs no special case.
+// ─── Rent Billing Cycle (POST-PAID) ──────────────────────────
+// Laskie bills rent AFTER each month of occupancy (decided 2026-10-04; see
+// CLAUDE.md §5 inv. 2 and 13). "Charge month" M is due on rentDueDate(D, M) and
+// covers the cycle that has just ended:
 //
-// There is deliberately no due_day interaction here. due_day governs when rent
-// falls due, which shapes the *first* month (move in on or before the due day
-// and the whole month is owed); it says nothing about the final month.
-function prorateLastMonth($monthlyRate, ?string $contractEnd, int $month, int $year): string {
-    $rate = to_cents($monthlyRate);
-    if (!$contractEnd || $rate <= 0) return from_cents($rate);
-    $ce = new DateTime($contractEnd);
-    if ((int)$ce->format('Y') !== $year || (int)$ce->format('n') !== $month) return from_cents($rate);
-    $daysInMonth  = (int)(new DateTime("$year-$month-01"))->format('t');
-    $daysOccupied = min((int)$ce->format('j'), $daysInMonth);
-    return prorateDays($rate, $daysOccupied, $daysInMonth);
+//     cycle(M) = [ rentDueDate(M−1), rentDueDate(M) − 1 day ]
+//
+// With due day 5 the January 2026 bill (due Jan 5) covers Dec 5 – Jan 4. A
+// tenancy is charged for the days of each cycle it occupies — a full cycle is
+// exactly the rate, a partial one rate × days ÷ cycle length — so moving in or
+// out on any day, or handing a unit over mid-cycle, always bills one cycle in
+// total. Rate history is keyed on the charge month M, as before.
+
+// Due date of charge month M: the due day, clamped to the month's length.
+function rentDueDate(int $dueDay, int $month, int $year): string {
+    $dim = (int)date('t', mktime(0, 0, 0, $month, 1, $year));
+    return sprintf('%04d-%02d-%02d', $year, $month, max(1, min($dueDay ?: 1, $dim)));
 }
 
-// Charge for an explicit day span within a month, in cents, with a single
-// HALF_UP at the end. Shared by prorateLastMonth() and the same-month
-// start+end composition in buildRentChargeRows(), so every proration in the
-// app rounds identically.
-function prorateDays(int $rateCents, int $daysOccupied, int $daysInMonth): string {
-    if ($daysInMonth <= 0 || $daysOccupied <= 0) return '0.00';
-    if ($daysOccupied >= $daysInMonth)           return from_cents($rateCents);
+// [start, end] (inclusive) of the occupancy cycle billed in charge month M.
+function rentCycle(int $dueDay, int $month, int $year): array {
+    $pm = $month - 1; $py = $year;
+    if ($pm < 1) { $pm = 12; $py--; }
+    return [rentDueDate($dueDay, $pm, $py),
+            date('Y-m-d', strtotime(rentDueDate($dueDay, $month, $year) . ' -1 day'))];
+}
+
+// [month, year] of the charge month whose cycle contains $date.
+function rentCycleMonthFor(int $dueDay, string $date): array {
+    $y = (int)substr($date, 0, 4); $m = (int)substr($date, 5, 2);
+    if ($date >= rentDueDate($dueDay, $m, $y)) {
+        $m++;
+        if ($m > 12) { $m = 1; $y++; }
+    }
+    return [$m, $y];
+}
+
+// Inclusive day count between two ISO dates.
+function rentDaySpan(string $from, string $to): int {
+    return (int)(new DateTime($from))->diff(new DateTime($to))->days + 1;
+}
+
+// Charge for an explicit day span within a cycle, in cents, with a single
+// HALF_UP at the end, so every proration in the app rounds identically.
+function prorateDays(int $rateCents, int $daysOccupied, int $daysInCycle): string {
+    if ($daysInCycle <= 0 || $daysOccupied <= 0) return '0.00';
+    if ($daysOccupied >= $daysInCycle)           return from_cents($rateCents);
     $numerator = $rateCents * $daysOccupied;
     $rounded   = $numerator >= 0
-        ? (int)floor($numerator / $daysInMonth + 0.5)
-        : -(int)floor(-$numerator / $daysInMonth + 0.5);
+        ? (int)floor($numerator / $daysInCycle + 0.5)
+        : -(int)floor(-$numerator / $daysInCycle + 0.5);
     return from_cents($rounded);
 }
 
-// Returns the correct charge date: contract_start when prorating, otherwise due day.
-function chargeDate(int $dueDay, ?string $contractStart, int $month, int $year): string {
-    if ($contractStart) {
-        $cs = new DateTime($contractStart);
-        if ((int)$cs->format('Y') === $year && (int)$cs->format('n') === $month && (int)$cs->format('j') > $dueDay) {
-            return $contractStart;
+// Date a rent charge falls due: the due date of its charge month — except the
+// cycle a tenancy ENDS inside, which is billed at move-out (the day after the
+// last day of occupancy) so it is settled before the keys are handed back.
+function chargeDate(int $dueDay, int $month, int $year, ?string $contractEnd = null): string {
+    if ($contractEnd) {
+        [$cs, $ce] = rentCycle($dueDay, $month, $year);
+        if ($contractEnd >= $cs && $contractEnd < $ce) {
+            return date('Y-m-d', strtotime($contractEnd . ' +1 day'));
         }
     }
-    $daysInMonth = (int)(new DateTime("$year-$month-01"))->format('t');
-    return sprintf('%04d-%02d-%02d', $year, $month, min($dueDay, $daysInMonth));
+    return rentDueDate($dueDay, $month, $year);
 }
 
 // ─── Service Charge Settlement (charge_payments) ─────────────
@@ -858,16 +872,16 @@ function waivableRent($gross, $netPaid, $alreadyVoided): string {
 // Recomputes the gross (pre-waiver) rent charge for one unit/period server-side.
 // Never trust a client-posted amount — the void API re-derives it through here.
 // Returns ['gross'=>string, 'tenant_id'=>?int, 'tenant_name'=>?string].
-// Parity note: like the SoA ledger, only the FIRST month is prorated; a contract
-// ending mid-month still bills in full, so the cap matches what the SoA shows.
+// Parity note: computed with prorateOccupancyMonth() over the charge month's
+// cycle, exactly as the SoA ledger does, so the cap matches what it shows.
 function getGrossRentCharge(PDO $pdo, int $unitId, int $month, int $year, ?int $tenantId = null): array {
     $uq = $pdo->prepare("SELECT monthly_rate, due_day FROM rental_units WHERE id=?");
     $uq->execute([$unitId]);
     $unit = $uq->fetch();
     if (!$unit) return ['gross' => '0.00', 'tenant_id' => null, 'tenant_name' => null];
 
-    $periodStart = sprintf('%04d-%02d-01', $year, $month);
-    $periodEnd   = date('Y-m-t', strtotime($periodStart));
+    // The occupancy cycle billed in this charge month (post-paid).
+    [$periodStart, $periodEnd] = rentCycle((int)$unit['due_day'], $month, $year);
 
     // Every tenancy of the unit, ends resolved — the same list the SoA builds
     // from, so this recompute can never disagree with the rendered charge.
@@ -990,6 +1004,15 @@ function getRentVoidedForPeriod(PDO $pdo, int $unitId, int $month, int $year, ?i
 // two charges for one period.
 //
 // $laterOccupants: the occupants sorted after this one by contract_start.
+// Due day of an occupant's unit (rows from some callers don't carry it).
+function occupantDueDay(PDO $pdo, array $occupant): int {
+    if (isset($occupant['due_day'])) return (int)$occupant['due_day'] ?: 5;
+    if (empty($occupant['unit_id'])) return 5;
+    $q = $pdo->prepare("SELECT due_day FROM rental_units WHERE id=?");
+    $q->execute([(int)$occupant['unit_id']]);
+    return (int)($q->fetchColumn() ?: 5);
+}
+
 function occupancyEndDate(PDO $pdo, array $occupant, array $laterOccupants): ?string {
     $contractEnd = $occupant['contract_end'] ?? null;
     if ($contractEnd)                                  return $contractEnd;
@@ -1013,14 +1036,17 @@ function occupancyEndDate(PDO $pdo, array $occupant, array $laterOccupants): ?st
         );
         $q->execute([(int)$occupant['id']]);
         if ($last = $q->fetch()) {
-            $candidates[] = date('Y-m-t', mktime(0, 0, 0, (int)$last['period_month'], 1, (int)$last['period_year']));
+            // A paid charge month covers its cycle, which ends the day before
+            // that month's due date (post-paid).
+            $candidates[] = rentCycle(occupantDueDay($pdo, $occupant), (int)$last['period_month'], (int)$last['period_year'])[1];
         }
     }
 
     if (!$candidates) {
-        return !empty($occupant['contract_start'])
-            ? date('Y-m-t', strtotime($occupant['contract_start']))
-            : null;
+        if (empty($occupant['contract_start'])) return null;
+        $d = occupantDueDay($pdo, $occupant);
+        [$m, $y] = rentCycleMonthFor($d, $occupant['contract_start']);
+        return rentCycle($d, $m, $y)[1];   // end of the first cycle
     }
     return min($candidates);
 }
@@ -1113,17 +1139,15 @@ function getTenantArrears(PDO $pdo, bool $pastOnly = true, ?int $unitId = null):
         $uid   = (int)$t['unit_id'];
         $tid   = (int)$t['id'];
         $start = $t['contract_start'] ?: null;
-        $end   = occupancyEndDate($pdo, $t, []) ?: $today;
-        if (!$start) continue;
-        // Nothing is owed for months that have not happened yet.
-        if ($end > $today) $end = $today;
-        if ($start > $end) continue;
+        if (!$start || $start > $today) continue;
 
         // Net rent charged over the tenancy (waivers already deducted), less
         // rent actually paid, plus any service charge left outstanding.
         $owed = '0.00';
+        // Charges DUE by today (post-paid: a bill falls due after its cycle);
+        // the occupancy end comes from the tenancy itself.
         foreach (buildRentChargeRows($pdo, $uid, [$t], (int)$t['due_day'], (float)$t['monthly_rate'],
-                                     $start, $end, $voidsBy[$tid] ?? []) as $rc) {
+                                     $start, $today, $voidsBy[$tid] ?? []) as $rc) {
             $owed = money_add($owed, $rc['net']);
         }
         $owed = money_sub($owed, from_cents(to_cents($paidBy[$tid] ?? 0)));
@@ -1144,31 +1168,19 @@ function getCurrentTenantArrears(PDO $pdo, ?int $unitId = null): array {
     return getTenantArrears($pdo, false, $unitId);
 }
 
-// The rent owed for one month of an occupancy, prorating whichever end of the
-// tenancy falls inside it. When the tenancy both starts and ends in the same
-// month the two must compose over a single day span — applying each factor
-// independently would charge for days twice over.
+// The charge for charge month M of a tenancy [contractStart, contractEnd]
+// (end inclusive, NULL = open): rate × days of cycle(M) occupied ÷ cycle
+// length. No overlap → 0. The ONE place a rent amount is computed — the SoA,
+// arrears, waiver caps, dashboard, collection grid and transfers all call it.
 function prorateOccupancyMonth($monthlyRate, int $dueDay, ?string $contractStart,
                                ?string $contractEnd, int $month, int $year): string {
-    $startsHere = $contractStart
-        && (int)date('Y', strtotime($contractStart)) === $year
-        && (int)date('n', strtotime($contractStart)) === $month;
-    $endsHere = $contractEnd
-        && (int)date('Y', strtotime($contractEnd)) === $year
-        && (int)date('n', strtotime($contractEnd)) === $month;
-
-    if ($startsHere && $endsHere) {
-        $daysInMonth = (int)date('t', mktime(0, 0, 0, $month, 1, $year));
-        $startDay    = (int)date('j', strtotime($contractStart));
-        // Same rule as prorateFirstMonth(): moving in on or before the due day
-        // means the month is owed from day 1.
-        if ($startDay <= $dueDay) $startDay = 1;
-        $endDay = min((int)date('j', strtotime($contractEnd)), $daysInMonth);
-        return prorateDays(to_cents($monthlyRate), $endDay - $startDay + 1, $daysInMonth);
-    }
-    if ($startsHere) return prorateFirstMonth($monthlyRate, $dueDay, $contractStart, $month, $year);
-    if ($endsHere)   return prorateLastMonth($monthlyRate, $contractEnd, $month, $year);
-    return from_cents(to_cents($monthlyRate));
+    $rate = to_cents($monthlyRate);
+    if ($rate <= 0) return '0.00';
+    [$cs, $ce] = rentCycle($dueDay, $month, $year);
+    $from = ($contractStart && $contractStart > $cs) ? $contractStart : $cs;
+    $to   = ($contractEnd   && $contractEnd   < $ce) ? $contractEnd   : $ce;
+    if ($from > $to) return '0.00';
+    return prorateDays($rate, rentDaySpan($from, $to), rentDaySpan($cs, $ce));
 }
 
 // Generates the virtual monthly rent charges for a unit over a date range —
@@ -1198,28 +1210,34 @@ function buildRentChargeRows(PDO $pdo, int $unitId, array $occupants, int $dueDa
         $contractStart = $occupant['contract_start'] ?? null;
         $contractEnd   = occupancyEndDate($pdo, $occupant, array_slice($occupants, $i + 1));
 
-        $chargeFrom = $dateFrom;
-        if ($contractStart && $contractStart > $chargeFrom) $chargeFrom = $contractStart;
-        $chargeTo = $dateTo;
-        if ($contractEnd && $contractEnd < $chargeTo) $chargeTo = $contractEnd;
-        if ($chargeFrom > $chargeTo) continue;
+        // Charge months whose cycle the tenancy touches: from the cycle holding
+        // the start to the cycle holding the end (post-paid — the last one is
+        // billed at move-out). Rows are kept when their CHARGE DATE falls in
+        // [dateFrom, dateTo]; the reporting range never trims the occupancy.
+        [$fm, $fy] = rentCycleMonthFor($dueDay, max($contractStart ?: $dateFrom, '1970-01-01'));
+        $first = $fy * 12 + $fm - 1;
+        [$tm, $ty] = rentCycleMonthFor($dueDay, $contractEnd && $contractEnd < $dateTo ? $contractEnd : $dateTo);
+        $last  = $ty * 12 + $tm - 1;
+        // Nothing before the report range can be dated inside it.
+        $first = max($first, (int)substr($dateFrom, 0, 4) * 12 + (int)substr($dateFrom, 5, 2) - 2);
 
-        $iter = new DateTime($chargeFrom);
-        $iter->modify('first day of this month');
-        $endDt = new DateTime($chargeTo);
-
-        while ($iter <= $endDt) {
-            $m    = (int)$iter->format('n');
-            $y    = (int)$iter->format('Y');
+        for ($k = $first; $k <= $last; $k++) {
+            $y = intdiv($k, 12); $m = $k % 12 + 1;
+            $date = chargeDate($dueDay, $m, $y, $contractEnd);
+            if ($date < $dateFrom || $date > $dateTo) continue;
             $rate = getRateForMonth($pdo, $unitId, $baseRate, $m, $y);
-            if ($rate <= 0) { $iter->modify('+1 month'); continue; }
+            if ($rate <= 0) continue;
             $gross = prorateOccupancyMonth($rate, $dueDay, $contractStart, $contractEnd, $m, $y);
-            if (!money_is_pos($gross)) { $iter->modify('+1 month'); continue; }
-            $desc  = 'Rent — ' . $iter->format('F Y');
-            if (money_lt($gross, $rate)) $desc .= ' (prorated)';
+            if (!money_is_pos($gross)) continue;
+            [$cs, $ce] = rentCycle($dueDay, $m, $y);
+            $from = ($contractStart && $contractStart > $cs) ? $contractStart : $cs;
+            $to   = ($contractEnd   && $contractEnd   < $ce) ? $contractEnd   : $ce;
+            $desc = 'Rent — ' . date('F Y', mktime(0, 0, 0, $m, 1, $y))
+                  . ' (' . date('M j', strtotime($from)) . ' – ' . date('M j', strtotime($to)) . ')';
+            if (money_lt($gross, $rate)) $desc .= ' prorated';
             if ($multiOccupant)          $desc .= ' [' . $occupant['full_name'] . ']';
             $rows[] = [
-                'date'         => chargeDate($dueDay, $contractStart, $m, $y),
+                'date'         => $date,
                 'period_month' => $m,
                 'period_year'  => $y,
                 'tenant_id'    => isset($occupant['id']) ? (int)$occupant['id'] : null,
@@ -1230,7 +1248,6 @@ function buildRentChargeRows(PDO $pdo, int $unitId, array $occupants, int $dueDa
                 'net'          => $gross,
                 'waivers'      => [],
             ];
-            $iter->modify('+1 month');
         }
     }
 
@@ -1443,7 +1460,10 @@ function renderHtmlToPdf(string $html): string {
 
         $cmd = sprintf(
             '%s --headless --disable-gpu --no-sandbox --disable-dev-shm-usage'
-            . ' --print-to-pdf=%s --print-to-pdf-no-header %s 2>/dev/null',
+            // --no-pdf-header-footer is the current Chromium spelling; the old
+            // --print-to-pdf-no-header stays for older builds. Without it, a
+            // page with real @page margins gets Chromium's date/title header.
+            . ' --print-to-pdf=%s --print-to-pdf-no-header --no-pdf-header-footer %s 2>/dev/null',
             escapeshellarg($chromium),
             escapeshellarg($tmpPdf),
             escapeshellarg('file://' . $tmpHtml)

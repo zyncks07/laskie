@@ -74,9 +74,12 @@ CREATE TABLE IF NOT EXISTS tenants (
     contract_end DATE,
     status ENUM('active','inactive','former') DEFAULT 'active',
     notes TEXT,
+    -- Tenant transfer (migration 015): the tenancy this one continues from.
+    transferred_from_id INT DEFAULT NULL,
     created_by INT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_t_transferred_from (transferred_from_id),
     FOREIGN KEY (unit_id) REFERENCES rental_units(id) ON DELETE SET NULL
 );
 
@@ -126,8 +129,11 @@ CREATE TABLE IF NOT EXISTS payments (
     -- Client-generated UUID to make save_payment INSERT replay-safe.
     -- A duplicate submit (double-click / network retry) returns the existing row instead of inserting again.
     idempotency_key VARCHAR(64) DEFAULT NULL,
+    -- Set on a NON-CASH payment created by a tenant transfer (no cash row).
+    transfer_id INT DEFAULT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     UNIQUE KEY idempotency_key (idempotency_key),
+    INDEX idx_pay_transfer (transfer_id),
     INDEX idx_pay_unit_period (unit_id, period_year, period_month),
     INDEX idx_pay_date (payment_date),
     FOREIGN KEY (unit_id) REFERENCES rental_units(id) ON DELETE SET NULL,
@@ -146,7 +152,10 @@ CREATE TABLE IF NOT EXISTS refunds (
     reason TEXT DEFAULT NULL,
     refunded_by INT NOT NULL,
     refunded_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    transfer_id INT DEFAULT NULL,
+    non_cash TINYINT(1) NOT NULL DEFAULT 0,
     KEY payment_id  (payment_id),
+    INDEX idx_ref_transfer (transfer_id),
     KEY refunded_by (refunded_by),
     FOREIGN KEY (payment_id)  REFERENCES payments(id) ON DELETE CASCADE,
     FOREIGN KEY (refunded_by) REFERENCES users(id)
@@ -190,8 +199,10 @@ CREATE TABLE IF NOT EXISTS unit_charges (
     voided_at DATETIME DEFAULT NULL,
     voided_by INT DEFAULT NULL,
     void_reason VARCHAR(255) DEFAULT NULL,
+    transfer_id INT DEFAULT NULL,
     created_by INT DEFAULT NULL,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_uc_transfer (transfer_id),
     KEY unit_id         (unit_id),
     KEY tenant_id       (tenant_id),
     KEY service_type_id (service_type_id),
@@ -248,6 +259,9 @@ CREATE TABLE IF NOT EXISTS rent_charge_voids (
     voided_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     restored_at DATETIME DEFAULT NULL,
     restored_by INT DEFAULT NULL,
+    transfer_id INT DEFAULT NULL,
+    kind ENUM('waiver','transfer') NOT NULL DEFAULT 'waiver',
+    INDEX idx_rcv_transfer (transfer_id),
     INDEX idx_rcv_unit_period (unit_id, period_year, period_month, restored_at),
     INDEX idx_rcv_period      (period_year, period_month, restored_at),
     KEY tenant_id (tenant_id),
@@ -382,6 +396,101 @@ CREATE TABLE IF NOT EXISTS notifications (
     INDEX idx_n_created_at (created_at),
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
     FOREIGN KEY (vault_request_id) REFERENCES vault_requests(id) ON DELETE CASCADE
+);
+
+-- Lease contracts (migration 014). A contract is a document, not a billing
+-- input: approving one never changes tenants.contract_start / contract_end.
+-- draft -> approved (immutable, numbered from settings contract_seq_YYYY) -> cancelled.
+-- Active / expiring / expired are derived from the dates at render time.
+CREATE TABLE IF NOT EXISTS contracts (
+    id               INT AUTO_INCREMENT PRIMARY KEY,
+    contract_no      VARCHAR(30)  DEFAULT NULL,
+    template_key     VARCHAR(60)  NOT NULL DEFAULT 'lease-caloocan',
+    template_version VARCHAR(10)  NOT NULL DEFAULT '1',
+    tenant_id        INT          DEFAULT NULL,
+    unit_id          INT          DEFAULT NULL,
+    lessee_name      VARCHAR(120) NOT NULL DEFAULT '',
+    unit_label       VARCHAR(120) NOT NULL DEFAULT '',
+    start_date       DATE         DEFAULT NULL,
+    end_date         DATE         DEFAULT NULL,
+    monthly_rent     DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+    fields_json      LONGTEXT     NOT NULL,
+    status           ENUM('draft','approved','cancelled') NOT NULL DEFAULT 'draft',
+    created_by       INT          DEFAULT NULL,
+    created_at       DATETIME     DEFAULT CURRENT_TIMESTAMP,
+    updated_by       INT          DEFAULT NULL,
+    updated_at       DATETIME     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    approved_by      INT          DEFAULT NULL,
+    approved_at      DATETIME     DEFAULT NULL,
+    cancelled_by     INT          DEFAULT NULL,
+    cancelled_at     DATETIME     DEFAULT NULL,
+    cancel_reason    VARCHAR(255) DEFAULT NULL,
+    UNIQUE KEY uniq_contract_no (contract_no),
+    KEY idx_ct_status_end (status, end_date),
+    KEY idx_ct_tenant (tenant_id),
+    KEY idx_ct_unit   (unit_id),
+    CONSTRAINT fk_ct_tenant    FOREIGN KEY (tenant_id)    REFERENCES tenants(id)      ON DELETE SET NULL,
+    CONSTRAINT fk_ct_unit      FOREIGN KEY (unit_id)      REFERENCES rental_units(id) ON DELETE SET NULL,
+    CONSTRAINT fk_ct_created   FOREIGN KEY (created_by)   REFERENCES users(id)        ON DELETE SET NULL,
+    CONSTRAINT fk_ct_updated   FOREIGN KEY (updated_by)   REFERENCES users(id)        ON DELETE SET NULL,
+    CONSTRAINT fk_ct_approved  FOREIGN KEY (approved_by)  REFERENCES users(id)        ON DELETE SET NULL,
+    CONSTRAINT fk_ct_cancelled FOREIGN KEY (cancelled_by) REFERENCES users(id)        ON DELETE SET NULL
+);
+
+-- Signed-copy scans of a contract (images auto-compressed by handleUpload()).
+CREATE TABLE IF NOT EXISTS contract_files (
+    id          INT AUTO_INCREMENT PRIMARY KEY,
+    contract_id INT          NOT NULL,
+    file_path   VARCHAR(500) NOT NULL,
+    doc_name    VARCHAR(200) NOT NULL DEFAULT '',
+    uploaded_by INT          DEFAULT NULL,
+    created_at  DATETIME     DEFAULT CURRENT_TIMESTAMP,
+    KEY idx_cf_contract (contract_id),
+    CONSTRAINT fk_cf_contract FOREIGN KEY (contract_id) REFERENCES contracts(id) ON DELETE CASCADE,
+    CONSTRAINT fk_cf_uploader FOREIGN KEY (uploaded_by) REFERENCES users(id)     ON DELETE SET NULL
+);
+
+-- Tenant transfers (migration 015). One row per move of an existing tenant to
+-- another unit. snapshot_json records every row the transfer created or changed
+-- so it can be undone as a whole. Money moves through non-cash payment/refund
+-- pairs (no cash_transactions row), transfer-kind rent waivers and pre-billed
+-- charges, all tagged with transfer_id.
+CREATE TABLE IF NOT EXISTS tenant_transfers (
+    id               INT AUTO_INCREMENT PRIMARY KEY,
+    from_tenant_id   INT          DEFAULT NULL,
+    to_tenant_id     INT          DEFAULT NULL,
+    from_unit_id     INT          DEFAULT NULL,
+    to_unit_id       INT          DEFAULT NULL,
+    move_date        DATE         NOT NULL,
+    old_end_date     DATE         NOT NULL,
+    new_start_date   DATE         NOT NULL,
+    mode             ENUM('cycle','split') NOT NULL,
+    old_rent         DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+    new_rent         DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+    carried_balance  DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+    deposit_held     DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+    deposit_required DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+    deposit_action   ENUM('none','topup','credit','refund','keep') NOT NULL DEFAULT 'none',
+    deposit_amount   DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+    cashier_id       INT          DEFAULT NULL,
+    snapshot_json    LONGTEXT     NOT NULL,
+    idempotency_key  VARCHAR(64)  DEFAULT NULL,
+    status           ENUM('done','undone') NOT NULL DEFAULT 'done',
+    created_by       INT          DEFAULT NULL,
+    created_at       DATETIME     DEFAULT CURRENT_TIMESTAMP,
+    undone_by        INT          DEFAULT NULL,
+    undone_at        DATETIME     DEFAULT NULL,
+    undo_reason      VARCHAR(255) DEFAULT NULL,
+    UNIQUE KEY uniq_tt_idem (idempotency_key),
+    KEY idx_tt_from (from_tenant_id),
+    KEY idx_tt_to   (to_tenant_id),
+    CONSTRAINT fk_tt_from_tenant FOREIGN KEY (from_tenant_id) REFERENCES tenants(id)      ON DELETE SET NULL,
+    CONSTRAINT fk_tt_to_tenant   FOREIGN KEY (to_tenant_id)   REFERENCES tenants(id)      ON DELETE SET NULL,
+    CONSTRAINT fk_tt_from_unit   FOREIGN KEY (from_unit_id)   REFERENCES rental_units(id) ON DELETE SET NULL,
+    CONSTRAINT fk_tt_to_unit     FOREIGN KEY (to_unit_id)     REFERENCES rental_units(id) ON DELETE SET NULL,
+    CONSTRAINT fk_tt_cashier     FOREIGN KEY (cashier_id)     REFERENCES users(id)        ON DELETE SET NULL,
+    CONSTRAINT fk_tt_created     FOREIGN KEY (created_by)     REFERENCES users(id)        ON DELETE SET NULL,
+    CONSTRAINT fk_tt_undone      FOREIGN KEY (undone_by)      REFERENCES users(id)        ON DELETE SET NULL
 );
 
 -- System Settings
