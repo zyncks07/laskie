@@ -325,7 +325,7 @@ include '../includes/header.php';
             <button class="btn-icon danger" title="Delete draft" onclick="deleteDraft(<?= (int)$r['id'] ?>)"><i class="fa-solid fa-trash fa-xs"></i></button>
           <?php else: ?>
             <a class="btn-icon" title="View" href="contract_print.php?id=<?= (int)$r['id'] ?>" target="_blank" rel="noopener"><i class="fa-solid fa-eye fa-xs"></i></a>
-            <a class="btn-icon" title="Download PDF" href="contract_pdf_download.php?id=<?= (int)$r['id'] ?>"><i class="fa-solid fa-file-pdf fa-xs"></i></a>
+            <a class="btn-icon" title="Download PDF" href="contract_pdf_download.php?id=<?= (int)$r['id'] ?>" data-pdf-download="Generating contract PDF"><i class="fa-solid fa-file-pdf fa-xs"></i></a>
             <?php if ($r['status'] === 'approved'): ?>
               <button class="btn-icon" title="Renew — new draft starting <?= $r['end_date'] ? clean(fmtDate(date('Y-m-d', strtotime($r['end_date'] . ' +1 day')), 'M j, Y')) : 'after this one' ?>" onclick="duplicateContract(<?= (int)$r['id'] ?>,'renew')"><i class="fa-solid fa-rotate fa-xs"></i></button>
               <button class="btn-icon danger" title="Void" data-id="<?= (int)$r['id'] ?>" data-no="<?= clean($r['contract_no']) ?>" onclick="openVoid(+this.dataset.id, this.dataset.no)"><i class="fa-solid fa-ban fa-xs"></i></button>

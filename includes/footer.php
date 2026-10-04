@@ -10,6 +10,7 @@
 <?= vendorJsTag($depth, 'chart.umd.min.js') ?>
 <?php endif; ?>
 <script src="<?= $depth ?>assets/js/app.js"></script>
+<script src="<?= $depth ?>assets/js/pdf-download.js?v=<?= (int)@filemtime(__DIR__ . '/../assets/js/pdf-download.js') ?>"></script>
 
 <script>
 function openSidebar() {

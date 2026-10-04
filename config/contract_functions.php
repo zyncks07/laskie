@@ -13,10 +13,14 @@
 require_once __DIR__ . '/transfer_functions.php';   // transferChainIds() for prefill
 
 const CONTRACT_TEMPLATE_KEY     = 'lease-caloocan';
-// v2 (2026-10-04): post-paid rent, no advance. v1 stays renderable for the record.
-const CONTRACT_TEMPLATE_VERSION = '2';
+// v2 (2026-10-04): post-paid rent, no advance.
+// v3 (2026-10-05): property city is any NCR city (CONTRACT_NCR_CITIES); no
+// TCT / floor area / rooms / occupant cap; association dues, DST and the
+// attorney's-fee minimum are no longer contract terms. v1 and v2 stay
+// renderable for the contracts approved on them.
+const CONTRACT_TEMPLATE_VERSION = '3';
 // Months of advance rent each template version collects on signing.
-const CONTRACT_ADVANCE_MONTHS = ['1' => 1, '2' => 0];
+const CONTRACT_ADVANCE_MONTHS = ['1' => 1, '2' => 0, '3' => 0];
 const CONTRACT_NO_PREFIX        = 'LSE';
 // "Expiring" window. Matches the template's two-month notice to vacate
 // (Section 18), so a contract turns amber exactly when notice is due.
@@ -32,6 +36,29 @@ const CONTRACT_UPLOAD_SUBDIR    = 'contracts';
 const CONTRACT_UTILITY_DEPOSITS = ['Electricity' => '2000.00', 'Water' => '1000.00'];
 // RA 9653 rent-control ceiling the template refers to (Section 4).
 const CONTRACT_RENT_CONTROL_CAP = '10000.00';
+// Property-city choices (the 16 NCR cities; Caloocan split North / South) →
+// [address phrase, city name]. The address phrase follows "Barangay N," in the
+// property description; the city name is used for the place of signing, local
+// ordinances, the Lupon and court venue.
+const CONTRACT_NCR_CITIES = [
+    'Caloocan City (North)' => ['North Caloocan, Caloocan City', 'Caloocan City'],
+    'Caloocan City (South)' => ['South Caloocan, Caloocan City', 'Caloocan City'],
+    'Las Piñas City'        => ['Las Piñas City',   'Las Piñas City'],
+    'Makati City'           => ['Makati City',      'Makati City'],
+    'Malabon City'          => ['Malabon City',     'Malabon City'],
+    'Mandaluyong City'      => ['Mandaluyong City', 'Mandaluyong City'],
+    'Manila'                => ['Manila',           'Manila'],
+    'Marikina City'         => ['Marikina City',    'Marikina City'],
+    'Muntinlupa City'       => ['Muntinlupa City',  'Muntinlupa City'],
+    'Navotas City'          => ['Navotas City',     'Navotas City'],
+    'Parañaque City'        => ['Parañaque City',   'Parañaque City'],
+    'Pasay City'            => ['Pasay City',       'Pasay City'],
+    'Pasig City'            => ['Pasig City',       'Pasig City'],
+    'Quezon City'           => ['Quezon City',      'Quezon City'],
+    'San Juan City'         => ['San Juan City',    'San Juan City'],
+    'Taguig City'           => ['Taguig City',      'Taguig City'],
+    'Valenzuela City'       => ['Valenzuela City',  'Valenzuela City'],
+];
 
 /**
  * The single field schema. It drives the generator form, the server-side
@@ -54,7 +81,6 @@ const CONTRACT_SECTIONS = [
     'property'  => ['Property & Unit',    'fa-building'],
     'term'      => ['Term',               'fa-hourglass-half'],
     'money'     => ['Rent & Deposits',    'fa-peso-sign'],
-    'rules'     => ['House-rule Options', 'fa-scale-balanced'],
     'witnesses' => ['Witnesses',          'fa-signature'],
 ];
 
@@ -86,13 +112,13 @@ const CONTRACT_FIELDS = [
     'building_address'   => ['label' => 'Building address',    'section' => 'property', 'type' => 'text', 'max' => 200, 'req' => true, 'def' => true,
                              'hint' => 'Street and house/building no.'],
     'barangay_no'        => ['label' => 'Barangay no.',        'section' => 'property', 'type' => 'text', 'max' => 20,  'req' => true, 'def' => true],
-    'caloocan_side'      => ['label' => 'Caloocan side',       'section' => 'property', 'type' => 'select', 'opts' => ['North', 'South'], 'req' => true, 'def' => true],
-    'title_ref'          => ['label' => 'TCT / Tax Dec. no.',  'section' => 'property', 'type' => 'text', 'max' => 80,  'req' => true, 'def' => true],
     'unit_no'            => ['label' => 'Unit no.',            'section' => 'property', 'type' => 'text', 'max' => 40,  'req' => true],
-    'floor_area_sqm'     => ['label' => 'Floor area (sq. m.)', 'section' => 'property', 'type' => 'text', 'max' => 20,  'req' => true],
-    'bedrooms'           => ['label' => 'Bedrooms',            'section' => 'property', 'type' => 'text', 'max' => 10,  'req' => true],
-    'toilet_baths'       => ['label' => 'Toilet & bath',       'section' => 'property', 'type' => 'text', 'max' => 10,  'req' => true],
-    'max_occupants'      => ['label' => 'Max occupants',       'section' => 'property', 'type' => 'text', 'max' => 10,  'req' => true],
+    // opts must equal array_keys(CONTRACT_NCR_CITIES) — a const can't call
+    // array_keys(); pinned by ContractHelpersTest.
+    'city'               => ['label' => 'City',                'section' => 'property', 'type' => 'select', 'req' => true, 'def' => true,
+                             'opts' => ['Caloocan City (North)', 'Caloocan City (South)', 'Las Piñas City', 'Makati City', 'Malabon City',
+                                        'Mandaluyong City', 'Manila', 'Marikina City', 'Muntinlupa City', 'Navotas City', 'Parañaque City',
+                                        'Pasay City', 'Pasig City', 'Quezon City', 'San Juan City', 'Taguig City', 'Valenzuela City']],
     // Term
     'start_date'         => ['label' => 'Start date',          'section' => 'term', 'type' => 'date', 'req' => true],
     'end_date'           => ['label' => 'End date',            'section' => 'term', 'type' => 'date', 'req' => true,
@@ -113,12 +139,6 @@ const CONTRACT_FIELDS = [
     'advance_rent'       => ['label' => 'Advance rent (1 mo.)',      'section' => 'money', 'type' => 'computed'],
     'security_deposit'   => ['label' => 'Security deposit (2 mo.)',  'section' => 'money', 'type' => 'computed'],
     'move_in_total'      => ['label' => 'Total due on signing',      'section' => 'money', 'type' => 'computed'],
-    // Rules
-    'association_dues_payer' => ['label' => 'Association dues paid by', 'section' => 'rules', 'type' => 'select',
-                                 'opts' => ['the LESSOR', 'the LESSEE'], 'req' => true, 'def' => true],
-    'dst_payer'          => ['label' => 'Documentary stamp tax', 'section' => 'rules', 'type' => 'select',
-                             'opts' => ['shared equally by the Parties', 'paid by the LESSEE', 'paid by the LESSOR'], 'req' => true, 'def' => true],
-    'attorneys_fee_min'  => ['label' => "Attorney's fee minimum", 'section' => 'rules', 'type' => 'money', 'req' => true, 'def' => true],
     // Witnesses
     'witness1_name'      => ['label' => 'Witness 1',           'section' => 'witnesses', 'type' => 'text', 'max' => 120, 'def' => true],
     'witness2_name'      => ['label' => 'Witness 2',           'section' => 'witnesses', 'type' => 'text', 'max' => 120, 'def' => true],
@@ -128,12 +148,9 @@ const CONTRACT_FIELDS = [
 // value. Business choices, so every one of them stays editable in the form.
 const CONTRACT_BUILTIN_DEFAULTS = [
     'lessee_nationality'     => 'Filipino',
-    'caloocan_side'          => 'North',
+    'city'                   => 'Caloocan City (North)',
     'late_penalty_pct'       => 'one percent (1%)',
     'bounced_check_fee'      => '500.00',
-    'association_dues_payer' => 'the LESSOR',
-    'dst_payer'              => 'shared equally by the Parties',
-    'attorneys_fee_min'      => '10000.00',
 ];
 
 // ─── Number words ────────────────────────────────────────────
@@ -247,6 +264,11 @@ function contractComputeMoney($monthlyRent, string $version = CONTRACT_TEMPLATE_
 // canonicalises money to "0.00" strings and dates to ISO (invalid → ''),
 // clamps selects to their options, then recomputes the derived money.
 function contractNormalizeFields(array $input, string $version = CONTRACT_TEMPLATE_VERSION): array {
+    // v1/v2 stored the Caloocan side alone; a copy or renewal of one of those
+    // carries it into the v3 city choice.
+    if (!isset($input['city']) && in_array($input['caloocan_side'] ?? '', ['North', 'South'], true)) {
+        $input['city'] = 'Caloocan City (' . $input['caloocan_side'] . ')';
+    }
     $out = [];
     foreach (CONTRACT_FIELDS as $key => $f) {
         if ($f['type'] === 'computed') continue;
@@ -442,7 +464,7 @@ function contractPrefill(PDO $pdo, ?int $tenantId, ?int $unitId): array {
     }
 
     // ── Previous contracts: this tenant's last approved one (renewal) and the
-    // unit's last one (physical details rarely change between tenants).
+    // unit's last one (the building's location doesn't change between tenants).
     $prevTenant = null;
     if ($tenant) {
         $q = $pdo->prepare("SELECT * FROM contracts WHERE tenant_id=? AND status='approved' ORDER BY end_date DESC, id DESC LIMIT 1");
@@ -478,12 +500,12 @@ function contractPrefill(PDO $pdo, ?int $tenantId, ?int $unitId): array {
     // ── Unit
     if ($unit) {
         $set('unit_no', $unit['unit_name'], 'unit');
-        if ($unit['floor_area'] !== null && (float)$unit['floor_area'] > 0) {
-            $set('floor_area_sqm', rtrim(rtrim(number_format((float)$unit['floor_area'], 2, '.', ''), '0'), '.'), 'unit');
-        }
         $set('rent_due_day', ordinalDay((int)($unit['due_day'] ?: 5)), 'unit');
     }
-    foreach (['floor_area_sqm','bedrooms','toilet_baths','max_occupants'] as $k) {
+    if (!isset($prevUnitFields['city']) && in_array($prevUnitFields['caloocan_side'] ?? '', ['North', 'South'], true)) {
+        $prevUnitFields['city'] = 'Caloocan City (' . $prevUnitFields['caloocan_side'] . ')';
+    }
+    foreach (['building_address','barangay_no','city'] as $k) {
         $set($k, $prevUnitFields[$k] ?? null, 'last contract');
     }
 
@@ -639,13 +661,15 @@ function contractMeta(PDO $pdo, ?array $row): array {
 // Decoded fields of a stored contract. Every key the template expects is
 // guaranteed present (a row from an older build still renders), but stored
 // values win over re-normalisation so an APPROVED snapshot is reproduced
-// exactly even if the schema's options or defaults change later.
+// exactly even if the schema's options or defaults change later. Stored keys
+// the current schema no longer has (v2's caloocan_side, title_ref, … ) are
+// kept too, so an older template version still finds them.
 function contractFields(array $row): array {
     $raw = json_decode((string)($row['fields_json'] ?? ''), true);
     $raw = is_array($raw) ? $raw : [];
     $out = contractNormalizeFields($raw, (string)($row['template_version'] ?? CONTRACT_TEMPLATE_VERSION));
-    foreach ($out as $k => $_) {
-        if (isset($raw[$k]) && is_string($raw[$k])) $out[$k] = $raw[$k];
+    foreach ($raw as $k => $val) {
+        if (is_string($val) && ($k[0] ?? '_') !== '_') $out[$k] = $val;
     }
     return $out;
 }

@@ -164,7 +164,7 @@ include '../includes/header.php';
 <div class="page-header">
   <div>
     <h1 class="page-title"><i class="fa-solid fa-wand-magic-sparkles me-2 text-primary-custom"></i><?= $contract ? 'Edit Draft #' . (int)$contract['id'] : 'New Contract' ?></h1>
-    <div class="ct-sub">Contract of Lease — Caloocan City · template v<?= clean(CONTRACT_TEMPLATE_VERSION) ?></div>
+    <div class="ct-sub">Contract of Lease — Metro Manila · template v<?= clean(CONTRACT_TEMPLATE_VERSION) ?></div>
   </div>
   <a class="btn btn-secondary btn-sm" href="contracts.php"><i class="fa-solid fa-arrow-left me-1"></i>Contracts</a>
 </div>
@@ -563,8 +563,7 @@ function saveContract(approve) {
 }
 function savePdf() {
   _save(false, function (res) {
-    showToast('Saved — downloading the draft PDF…', 'success');
-    location.href = 'contract_pdf_download.php?id=' + parseInt(res.id, 10);
+    downloadPdf('contract_pdf_download.php?id=' + parseInt(res.id, 10), 'Draft saved \u2014 generating PDF');
   });
 }
 </script>

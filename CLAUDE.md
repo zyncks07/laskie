@@ -177,9 +177,16 @@ Read [`install.sql`](install.sql) for the authoritative DDL. The live DB is curr
     by `contractDisplayState()` — nothing stores them, no cron.
   - `template_key` + `template_version` pick the renderer (`includes/contracts/lease_caloocan_v{N}.php`), so a new
     template version never changes how an already-approved contract prints.
-    **v2 (current, 2026-10-04) is post-paid with no advance rent** (move-in = 2 months deposit + ₱3,000 utilities;
-    `CONTRACT_ADVANCE_MONTHS`); v1 (pre-paid, 1 month advance) stays renderable. The 23 imported placeholder contracts
-    were moved to v2 the same day because they had never been printed or signed.
+    **v3 (current, 2026-10-05)** = v2's post-paid terms with the property city chosen from `CONTRACT_NCR_CITIES`
+    (16 NCR cities, Caloocan split North/South) and no TCT / floor area / rooms / occupant cap / association dues /
+    DST / attorney's-fee minimum (tracked manually, outside the system). **v2 (2026-10-04) is post-paid with no advance
+    rent** (move-in = 2 months deposit + ₱3,000 utilities; `CONTRACT_ADVANCE_MONTHS`); v1 (pre-paid, 1 month advance)
+    stays renderable. The 23 imported placeholder contracts (never printed or signed) were moved to v2 on 2026-10-04
+    and to v3 on 2026-10-05 (`fields_json._template_moved`; their city is stored blank and prints as a fill-in line). `contractFields()` keeps stored keys the current schema dropped, so an older template still
+    finds them.
+    The print layout lives in `includes/contracts/document.php` and is shared by every version: a compact A4 layout
+    (10pt serif, 13–15 mm margins, light rules — 5 pages vs. 8, changed 2026-10-05 to save paper and ink), so a
+    layout change reprints every contract; only wording changes need a new template version.
 - `contract_files` — signed-copy scans (images/PDF), approved contracts only, cap 30. Uploaded through
   `handleUpload()` with the sharper `CONTRACT_SCAN_COMPRESSION` profile (2400 px / q75). Hard-deleted like `tenant_docs`.
 - Company-wide generator defaults live in `settings` as `contract_default_<field>`.
@@ -420,6 +427,10 @@ The **monochrome "Magix" redesign** drives the entire UI. `laskie-tokens.css` is
 ## 8. JS conventions (`assets/js/app.js`)
 
 Global helpers attached to `window`: `showToast`, `apiPost`, `confirmDelete`, `fmt`, `fmtDate`, `serializeForm`, `printSection`, `statusDot`, `updateQueryParam`, `copyText`, `showLoading`/`hideLoading`, `markFormDirty`, `syncPeriodSelectors`, `validateFileSize`, `dtDefaults`.
+
+`assets/js/pdf-download.js` (loaded by `footer.php` and the contract paper view, dependency-free) adds `downloadPdf(url, title)`:
+a "Generating … PDF" dialog that fetches a chromium-rendered PDF, blocks repeat clicks, then starts the download (or shows the
+server's error). Opt a link in with `data-pdf-download="Generating contract PDF"` — it still works as a plain link without JS.
 
 **Patterns to follow:**
 - All API calls go through `apiPost(url, data, cb)`. Don't write raw `fetch` calls in page scripts.

@@ -75,12 +75,10 @@ final class ContractLifecycleTest extends IsolatedDbTestCase
             'contract_date' => '2026-10-04', 'lessor_name' => 'Laskie Rental Properties', 'lessor_address' => '359 Sample St.',
             'lessee_name' => 'Contract Test Tenant', 'lessee_nationality' => 'Filipino', 'lessee_civil_status' => 'single',
             'lessee_address' => '12 Rizal Ave.', 'lessee_id' => 'PhilSys 1234', 'building_address' => '359 Sample St.',
-            'barangay_no' => '176', 'caloocan_side' => 'North', 'title_ref' => 'TCT 1', 'unit_no' => 'CT-UNIT-A',
-            'floor_area_sqm' => '28', 'bedrooms' => '1', 'toilet_baths' => '1', 'max_occupants' => '3',
+            'barangay_no' => '176', 'city' => 'Caloocan City (North)', 'unit_no' => 'CT-UNIT-A',
             'start_date' => '2026-10-05', 'end_date' => '2027-10-04', 'monthly_rent' => '8000',
             'rent_due_day' => '5th', 'payment_methods' => 'GCash', 'late_penalty_pct' => 'one percent (1%)',
-            'bounced_check_fee' => '500', 'association_dues_payer' => 'the LESSOR',
-            'dst_payer' => 'shared equally by the Parties', 'attorneys_fee_min' => '10000',
+            'bounced_check_fee' => '500',
         ], $over);
     }
 
@@ -187,11 +185,11 @@ final class ContractLifecycleTest extends IsolatedDbTestCase
     #[Test]
     public function incomplete_draft_cannot_be_approved(): void
     {
-        $res = $this->edit($this->savePost($this->fields(['lessee_id' => '', 'title_ref' => ''])));
+        $res = $this->edit($this->savePost($this->fields(['lessee_id' => '', 'barangay_no' => ''])));
         $ok = $this->register(['action' => 'approve', 'id' => (string) $res['id']]);
         $this->assertFalse($ok['success'] ?? true);
         $this->assertStringContainsString('ID type & number is required', $ok['error']);
-        $this->assertStringContainsString('TCT / Tax Dec. no. is required', $ok['error']);
+        $this->assertStringContainsString('Barangay no. is required', $ok['error']);
     }
 
     #[Test]

@@ -11,6 +11,11 @@
 // The document is a print artefact (ink on paper), so it carries its own
 // small set of custom properties rather than laskie-tokens.css, which is
 // not loaded in the PDF context — same approach as payments/soa_pdf.php.
+//
+// Compact layout (2026-10-05): 10pt serif, tight margins and spacing, no
+// heavy rules — sized to save paper and ink. Shared by every template
+// version, so it applies to all contracts, existing and new. The on-screen
+// .paper padding mirrors the @page margins so the preview paginates alike.
 
 $status    = (string)($meta['status'] ?? 'draft');
 $watermark = $status === 'cancelled' ? 'VOID' : ($status === 'approved' ? '' : 'DRAFT');
@@ -30,12 +35,13 @@ $cssStr    = fn(string $s) => '"' . str_replace(['\\', '"', "\n"], ['\\\\', '\\"
 :root{
   --doc-ink:#111111; --doc-ink-2:#3a3a3a; --doc-mute:#6b6b6b; --doc-rule:#b9b9b9;
   --doc-hair:#dddddd; --doc-paper:#ffffff; --doc-desk:#e9e9e9; --doc-fill:#f1f1f1;
+  --doc-overlay:rgba(0,0,0,.42); --doc-radius:10px; --doc-shadow:0 8px 28px rgba(0,0,0,.18);
   --doc-serif:"Liberation Serif","Times New Roman",Times,Georgia,serif;
   --doc-sans:"DM Sans","Liberation Sans",Arial,sans-serif;
   --doc-mono:"DM Mono","Liberation Mono",monospace;
 }
 @page{
-  size:A4; margin:20mm 19mm 22mm 19mm;
+  size:A4; margin:13mm 15mm 15mm 15mm;
   @bottom-left  { content: <?= $cssStr($footNo) ?>; font:7.5pt var(--doc-sans); color:#6b6b6b; }
   @bottom-center{ content: "Page " counter(page) " of " counter(pages); font:7.5pt var(--doc-sans); color:#6b6b6b; }
   @bottom-right { content: "Initials:  LESSOR ________   LESSEE ________"; font:7.5pt var(--doc-sans); color:#6b6b6b; white-space:pre; }
@@ -43,50 +49,50 @@ $cssStr    = fn(string $s) => '"' . str_replace(['\\', '"', "\n"], ['\\\\', '\\"
 *{box-sizing:border-box;}
 html,body{margin:0;padding:0;}
 body{
-  font-family:var(--doc-serif); font-size:11pt; line-height:1.5; color:var(--doc-ink);
+  font-family:var(--doc-serif); font-size:10pt; line-height:1.34; color:var(--doc-ink);
   background:var(--doc-paper); -webkit-print-color-adjust:exact; print-color-adjust:exact;
 }
 .paper{ text-align:justify; hyphens:auto; -webkit-hyphens:auto; }
-p{ margin:0 0 7pt; orphans:3; widows:3; }
+p{ margin:0 0 3.5pt; orphans:2; widows:2; }
 strong{ font-weight:700; }
 
 /* ── Masthead ─────────────────────────────────────────── */
-.doc-head{ border-bottom:3px double var(--doc-ink); padding-bottom:10pt; margin-bottom:14pt; text-align:center; }
+.doc-head{ border-bottom:1.5px solid var(--doc-ink); padding-bottom:5pt; margin-bottom:7pt; text-align:center; }
 .doc-head-top{ display:flex; justify-content:space-between; align-items:flex-start; gap:12pt; text-align:left; }
-.doc-company{ font:600 8.5pt var(--doc-sans); letter-spacing:.2em; text-transform:uppercase; color:var(--doc-ink-2); padding-top:2pt; }
-.doc-ref{ font:8.5pt var(--doc-sans); color:var(--doc-ink-2); text-align:right; line-height:1.55; }
-.doc-ref .lbl{ color:var(--doc-mute); text-transform:uppercase; letter-spacing:.08em; font-size:7.5pt; margin-right:4pt; }
+.doc-company{ font:600 8pt var(--doc-sans); letter-spacing:.2em; text-transform:uppercase; color:var(--doc-ink-2); padding-top:1pt; }
+.doc-ref{ font:8pt var(--doc-sans); color:var(--doc-ink-2); text-align:right; line-height:1.4; }
+.doc-ref .lbl{ color:var(--doc-mute); text-transform:uppercase; letter-spacing:.08em; font-size:7pt; margin-right:4pt; }
 .doc-ref .mono{ font-family:var(--doc-mono); }
-.doc-title{ font:700 23pt var(--doc-serif); letter-spacing:.24em; text-transform:uppercase; margin:16pt 0 2pt; }
-.doc-sub{ font:italic 10pt var(--doc-serif); color:var(--doc-mute); }
+.doc-title{ font:700 16pt var(--doc-serif); letter-spacing:.22em; text-transform:uppercase; margin:2pt 0 0; }
+.doc-sub{ font:italic 9pt var(--doc-serif); color:var(--doc-mute); }
 
 /* ── Body ─────────────────────────────────────────────── */
-.lead{ margin-top:10pt; }
-.party{ padding-left:14pt; }
-.party .name{ font-variant:small-caps; letter-spacing:.02em; font-size:11.5pt; }
-.and{ text-align:center; color:var(--doc-mute); font-style:italic; margin:4pt 0 8pt; }
+.lead{ margin-top:5pt; }
+.party{ padding-left:12pt; }
+.party .name{ font-variant:small-caps; letter-spacing:.02em; font-size:10.5pt; }
+.and{ text-align:center; color:var(--doc-mute); font-style:italic; margin:1pt 0 3pt; }
 h2{
-  font:700 9.5pt var(--doc-sans); letter-spacing:.14em; text-transform:uppercase;
-  margin:18pt 0 9pt; padding-bottom:4pt; border-bottom:1px solid var(--doc-ink);
+  font:700 8.5pt var(--doc-sans); letter-spacing:.14em; text-transform:uppercase;
+  margin:9pt 0 4pt; padding-bottom:2pt; border-bottom:.75pt solid var(--doc-ink);
   break-after:avoid; page-break-after:avoid; text-align:left;
 }
-.sec{ margin-top:8pt; }
+.sec{ margin-top:4pt; }
 .sec-t{ font-weight:700; }
 .sec, .sec + ol, .sec + table{ break-inside:auto; }
 .sec:has(+ ol), .sec:has(+ table){ break-after:avoid; page-break-after:avoid; }
-ol{ margin:0 0 8pt; padding-left:22pt; }
-ol li{ margin-bottom:4pt; padding-left:3pt; }
-ol.clauses{ padding-left:20pt; }
+ol{ margin:0 0 4pt; padding-left:20pt; }
+ol li{ margin-bottom:1.5pt; padding-left:2pt; }
+ol.clauses{ padding-left:18pt; }
 ol.sub{ list-style:decimal; }
 ol.sub li::marker{ font-weight:700; }
 
 /* ── Tables ───────────────────────────────────────────── */
-.tbl{ width:100%; border-collapse:collapse; margin:4pt 0 10pt; font-size:10pt; break-inside:avoid; page-break-inside:avoid; text-align:left; }
-.tbl-narrow{ width:62%; margin-left:auto; margin-right:auto; }
-.tbl th{ font:600 7.5pt var(--doc-sans); letter-spacing:.1em; text-transform:uppercase; color:var(--doc-ink-2);
-         border-bottom:1.2px solid var(--doc-ink); padding:4pt 6pt; text-align:left; }
-.tbl td{ padding:4.5pt 6pt; border-bottom:.6px solid var(--doc-rule); vertical-align:top; }
-.tbl tfoot td{ font-weight:700; border-top:1.2px solid var(--doc-ink); border-bottom:3px double var(--doc-ink); }
+.tbl{ width:100%; border-collapse:collapse; margin:2pt 0 5pt; font-size:9.5pt; line-height:1.3; break-inside:avoid; page-break-inside:avoid; text-align:left; }
+.tbl-narrow{ width:52%; margin-left:auto; margin-right:auto; }
+.tbl th{ font:600 7pt var(--doc-sans); letter-spacing:.1em; text-transform:uppercase; color:var(--doc-ink-2);
+         border-bottom:.9px solid var(--doc-ink); padding:1.5pt 5pt; text-align:left; }
+.tbl td{ padding:1.5pt 5pt; border-bottom:.5px solid var(--doc-rule); vertical-align:top; }
+.tbl tfoot td{ font-weight:700; border-top:.9px solid var(--doc-ink); border-bottom:.9px solid var(--doc-ink); }
 .tbl .r{ text-align:right; }
 .amt{ font-variant-numeric:tabular-nums; white-space:nowrap; }
 
@@ -95,22 +101,23 @@ ol.sub li::marker{ font-weight:700; }
 .val{ }
 
 /* ── Signatures ───────────────────────────────────────── */
-.sign-block{ break-inside:avoid; page-break-inside:avoid; margin-top:8pt; }
-.sign-block .note{ font:italic 9.5pt var(--doc-serif); color:var(--doc-mute); }
-.sig-grid{ display:grid; grid-template-columns:1fr 1fr; gap:14mm; margin:10pt 0 14pt; }
-.sig-role{ font:600 7.5pt var(--doc-sans); letter-spacing:.16em; text-transform:uppercase; color:var(--doc-mute); }
-.sig-line{ height:15mm; border-bottom:.9pt solid var(--doc-ink); }
-.sig-name{ font-weight:700; font-variant:small-caps; margin-top:4pt; text-align:left; }
-.sig-meta{ font-size:9.5pt; color:var(--doc-ink-2); text-align:left; }
-.witness-lead{ margin-top:14pt; }
-.sig-ph{ font-weight:400; font-variant:normal; font-style:italic; font-size:9pt; color:var(--doc-mute); }
+.sign-block{ break-inside:avoid; page-break-inside:avoid; margin-top:4pt; }
+.sign-block .note{ font:italic 9pt var(--doc-serif); color:var(--doc-mute); }
+.sig-grid{ display:grid; grid-template-columns:1fr 1fr; gap:14mm; margin:4pt 0 6pt; }
+.sig-role{ font:600 7pt var(--doc-sans); letter-spacing:.16em; text-transform:uppercase; color:var(--doc-mute); }
+.sig-line{ height:12mm; border-bottom:.8pt solid var(--doc-ink); }
+.sig-name{ font-weight:700; font-variant:small-caps; margin-top:2pt; text-align:left; }
+.sig-meta{ font-size:9pt; color:var(--doc-ink-2); text-align:left; }
+.witness-lead{ margin-top:6pt; }
+.sig-ph{ font-weight:400; font-variant:normal; font-style:italic; font-size:8.5pt; color:var(--doc-mute); }
 .keep{ break-inside:avoid; page-break-inside:avoid; }
 
 /* ── Annexes ──────────────────────────────────────────── */
 .annexes{ break-inside:avoid; page-break-inside:avoid; }
 .annexes dl{ margin:0; }
-.annexes dt{ font-weight:700; margin-top:6pt; }
-.annexes dd{ margin:1pt 0 0 14pt; font-size:10pt; color:var(--doc-ink-2); }
+.annexes{ margin-top:4pt; }
+.annexes dt{ font-weight:700; margin-top:3pt; }
+.annexes dd{ margin:0 0 0 12pt; font-size:9pt; color:var(--doc-ink-2); }
 
 /* ── Watermark (repeats on every printed page: fixed) ─── */
 .watermark{
@@ -124,13 +131,13 @@ ol.sub li::marker{ font-weight:700; }
 /* ── On-screen paper preview ──────────────────────────── */
 @media screen{
   body{ background:var(--doc-desk); }
-  .paper{ background:var(--doc-paper); width:210mm; max-width:100%; margin:0 auto 28px; padding:20mm 19mm 22mm;
+  .paper{ background:var(--doc-paper); width:210mm; max-width:100%; margin:0 auto 28px; padding:13mm 15mm 15mm;
           box-shadow:0 1px 3px rgba(0,0,0,.12), 0 8px 28px rgba(0,0,0,.08); }
   .watermark{ position:fixed; }
 }
 @media screen and (max-width:820px){
-  .paper{ padding:12mm 7mm 14mm; font-size:10.5pt; }
-  .doc-title{ font-size:17pt; letter-spacing:.16em; }
+  .paper{ padding:10mm 6mm 12mm; font-size:10pt; }
+  .doc-title{ font-size:14pt; letter-spacing:.16em; }
   .tbl-narrow{ width:100%; }
   .sig-grid{ grid-template-columns:1fr; gap:6mm; }
   .doc-head-top{ flex-direction:column; }
@@ -172,7 +179,7 @@ ol.sub li::marker{ font-weight:700; }
     <a class="tbtn" href="contracts.php">&larr; Contracts</a>
     <button class="tbtn" type="button" onclick="window.print()">Print</button>
     <?php if (!empty($meta['id'])): ?>
-    <a class="tbtn solid" href="contract_pdf_download.php?id=<?= (int)$meta['id'] ?>">Download PDF</a>
+    <a class="tbtn solid" href="contract_pdf_download.php?id=<?= (int)$meta['id'] ?>" data-pdf-download="Generating contract PDF">Download PDF</a>
     <?php endif; ?>
   </div>
 </div>
@@ -181,5 +188,8 @@ ol.sub li::marker{ font-weight:700; }
 <main class="paper">
 <?= renderContractBody($fields, $meta) ?>
 </main>
+<?php if ($mode === 'screen'): ?>
+<script src="../assets/js/pdf-download.js?v=<?= (int)@filemtime(__DIR__ . '/../../assets/js/pdf-download.js') ?>"></script>
+<?php endif; ?>
 </body>
 </html>

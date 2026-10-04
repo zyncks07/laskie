@@ -103,7 +103,7 @@ final class ContractHelpersTest extends TestCase
     #[Test]
     public function move_in_money_follows_the_template_version(): void
     {
-        // v2 (post-paid, current): no advance — 2 months deposit + ₱3,000.
+        // v2 / v3 (post-paid, current): no advance — 2 months deposit + ₱3,000.
         $this->assertSame(
             ['advance_rent' => '0.00', 'security_deposit' => '16000.00', 'move_in_total' => '19000.00'],
             contractComputeMoney('8000')
@@ -131,7 +131,7 @@ final class ContractHelpersTest extends TestCase
             'move_in_total'    => '2.00',
             'evil_extra'       => '<script>',
             'start_date'       => '2026-13-01',   // invalid → blank
-            'caloocan_side'    => 'East',         // not an option → default
+            'city'             => 'Cavite City',  // not an NCR option → default
         ]);
         $this->assertArrayNotHasKey('evil_extra', $f);
         $this->assertSame('Juan Dela Cruz', $f['lessee_name']);
@@ -139,9 +139,38 @@ final class ContractHelpersTest extends TestCase
         $this->assertSame('16000.00', $f['security_deposit']);
         $this->assertSame('19000.00', $f['move_in_total']);
         $this->assertSame('', $f['start_date']);
-        $this->assertSame('North', $f['caloocan_side']);
+        $this->assertSame('Caloocan City (North)', $f['city']);
         // Every schema key is present, so the template never hits an undefined index.
         $this->assertSame([], array_diff(array_keys(CONTRACT_FIELDS), array_keys($f)));
+    }
+
+    #[Test]
+    public function city_options_match_the_ncr_city_map(): void
+    {
+        $this->assertSame(array_keys(CONTRACT_NCR_CITIES), CONTRACT_FIELDS['city']['opts']);
+    }
+
+    #[Test]
+    public function a_v2_caloocan_side_carries_into_the_v3_city(): void
+    {
+        $this->assertSame('Caloocan City (South)', contractNormalizeFields(['caloocan_side' => 'South'])['city']);
+        // An explicit city wins over the legacy key.
+        $this->assertSame('Pasig City', contractNormalizeFields(['caloocan_side' => 'South', 'city' => 'Pasig City'])['city']);
+    }
+
+    #[Test]
+    public function stored_fields_the_schema_dropped_still_reach_an_older_template(): void
+    {
+        // An approved v2 snapshot keeps its TCT / floor area even though v3's
+        // schema no longer has them; internal "_" keys are not fields.
+        $f = contractFields(['template_version' => '2', 'fields_json' => json_encode([
+            'unit_no' => '359-K', 'caloocan_side' => 'North', 'title_ref' => 'TCT 123', 'floor_area_sqm' => '28',
+            '_imported' => 'note',
+        ])]);
+        $this->assertSame('TCT 123', $f['title_ref']);
+        $this->assertSame('28', $f['floor_area_sqm']);
+        $this->assertSame('North', $f['caloocan_side']);
+        $this->assertArrayNotHasKey('_imported', $f);
     }
 
     #[Test]
