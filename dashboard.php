@@ -270,6 +270,20 @@ include 'includes/header.php';
    without overflowing (§3.5) */
 #unitStatusTable td:last-child { min-width: 124px; }
 
+/* Unit Status fills its column down to the next row (the chart beside it
+   sets the row's height), its table scrolling inside. Desktop only — stacked
+   on smaller screens it keeps the fixed 600px scroll. */
+@media (min-width: 992px) {
+  /* min-height = the old fixed 600px table, so a short chart beside it
+     (month-to-date) never squeezes the list; a tall one stretches it. */
+  .db-us-card { flex: 1 1 0; min-height: 760px; }
+  .db-us-card > .card-body,
+  .db-us-card .dataTables_wrapper,
+  .db-us-card .dataTables_scroll { display: flex; flex-direction: column; flex: 1 1 0; min-height: 0; }
+  .db-us-card .dataTables_wrapper > :not(.dataTables_scroll),
+  .db-us-card .dataTables_scrollHead { flex: none; }
+  .db-us-card .dataTables_scrollBody { flex: 1 1 0; max-height: none !important; }
+}
 .db-chart              { position: relative; height: 220px; }
 .db-card-fill          { display: flex; flex-direction: column; }
 .db-chart-grow         { position: relative; flex: 1; min-height: 220px; }
@@ -523,7 +537,7 @@ include 'includes/header.php';
       // The cycle most units bill this month, for the header (due day 5 for all today).
       $hdr = null; foreach ($usRows as $r) { if (isset($r['cs'])) { $hdr = $r; break; } }
     ?>
-    <div class="card db-card">
+    <div class="card db-card db-card-fill db-us-card">
       <div class="card-header us-head">
         <span class="card-header-title"><i class="fa-solid fa-building me-1"></i><?= date('F Y') ?> Rent — Unit Status</span>
         <span class="us-sub">
@@ -986,13 +1000,17 @@ function _renderUnitChart(data) {
     },
     options: {
       indexAxis: 'y', responsive: true, maintainAspectRatio: false,
+      // Horizontal bars: 'index' mode must search along Y (the unit rows).
+      // Left at the default X axis it matched by bar LENGTH, so hovering one
+      // unit showed whichever other unit's bar ended nearest the pointer.
+      interaction: { mode: 'index', axis: 'y', intersect: false },
       animation: { duration: 380, easing: 'easeOutQuart' },
       layout: { padding: { right: 78, top: 4 } },
       plugins: {
         legend: { position: 'top', align: 'start', labels: Object.assign(_monoLegend(T), { sort: function (a, b) { return a.datasetIndex - b.datasetIndex; } }) },
         laskieRowLabels: { text: function (i) { var n = rows[i].net; return { text: _compact(n) + ' net', bold: n < 0 }; } },
         tooltip: _monoTooltip(T, {
-          mode: 'index', intersect: false,
+          mode: 'index', axis: 'y', intersect: false,
           callbacks: {
             label: function (c) { return ' ' + c.dataset.label + ': ' + _phpFmt(c.parsed.x); },
             afterBody: function (items) {
