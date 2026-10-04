@@ -41,3 +41,4 @@ done
 | 013 | `013_create_charge_payments.sql` | Add `charge_payments` allocation rows so a service charge can be settled in instalments |
 | 014 | `014_create_contracts.sql` | Add `contracts` + `contract_files` for the lease generator, active/expired register and signed-copy scans |
 | 015 | `015_tenant_transfers.sql` | Add `tenant_transfers`, `tenants.transferred_from_id`, and `transfer_id` / `non_cash` / `kind` tags on payments, refunds, charges and rent waivers for the tenant-transfer feature |
+| 016 | `016_create_demand_letters.sql` | Add `demand_letters` (numbered DL-YYYY-#### notices from the dashboard Balance Tracker, with a snapshot of what each demanded) |

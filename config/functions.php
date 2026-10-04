@@ -932,7 +932,13 @@ function getRentVoidMap(PDO $pdo, int $unitId, string $dateFrom, string $dateTo,
     $toTs   = strtotime($dateTo);
     if ($fromTs === false || $toTs === false) return [];
     $fromKey = (int)date('Y', $fromTs) * 100 + (int)date('n', $fromTs);
-    $toKey   = (int)date('Y', $toTs)   * 100 + (int)date('n', $toTs);
+    // One period PAST the range: a final move-out bill is dated the day after
+    // move-out, which can fall in the month BEFORE its charge period (moved out
+    // Sep 20 → the October bill is dated Sep 21). Keyed only by the range, that
+    // bill lost its waiver. Extra waivers are harmless — buildRentChargeRows()
+    // attaches a waiver only to a charge it actually generated.
+    $toNext  = strtotime('first day of next month', $toTs);
+    $toKey   = (int)date('Y', $toNext) * 100 + (int)date('n', $toNext);
 
     // unit_id equality already selects via idx_rcv_unit_period; the period
     // arithmetic only filters the handful of waiver rows that survive it.
@@ -1066,6 +1072,26 @@ function resolveOccupancyEnds(PDO $pdo, array $occupants): array {
     return $occupants;
 }
 
+// Who occupied a unit during charge period M (the post-paid cycle that bill
+// covers), for a payment or charge posted without a tenant. A row with no tenant
+// can't be placed on anyone's statement, and after a handover there is no safe
+// way to guess later. Null when the unit was vacant all cycle.
+function resolvePeriodTenant(PDO $pdo, int $unitId, int $month, int $year): ?int {
+    $dq = $pdo->prepare("SELECT due_day FROM rental_units WHERE id=?");
+    $dq->execute([$unitId]);
+    [$periodStart, $periodEnd] = rentCycle((int)($dq->fetchColumn() ?: 5), $month, $year);
+    $oq = $pdo->prepare(
+        "SELECT id FROM tenants
+         WHERE unit_id=? AND status IN ('active','former','inactive')
+           AND (contract_start IS NULL OR contract_start <= ?)
+           AND (contract_end   IS NULL OR contract_end   >= ?)
+         ORDER BY status='active' DESC, COALESCE(contract_start,'1970-01-01') DESC
+         LIMIT 1"
+    );
+    $oq->execute([$unitId, $periodEnd, $periodStart]);
+    return (int)($oq->fetchColumn() ?: 0) ?: null;
+}
+
 // Outstanding balance owed per unit, keyed by unit_id, computed the same way
 // the SoA computes a tenancy's closing balance: net rent charged (waivers
 // deducted) − rent paid + service charges still outstanding.
@@ -1078,11 +1104,15 @@ function resolveOccupancyEnds(PDO $pdo, array $occupants): array {
 // An open-ended active tenancy is bounded at today — future months are not yet
 // owed. Pass $unitId to compute a single unit.
 function getTenantArrears(PDO $pdo, bool $pastOnly = true, ?int $unitId = null): array {
-    $sql = "SELECT t.id, t.full_name, t.unit_id, t.status, t.contract_start, t.contract_end,
-                   ru.monthly_rate, ru.due_day
+    // Each tenancy's figure IS its tenantStatement() balance — the one the
+    // Balance Tracker and every Statement of Account close on. This used to be
+    // its own copy of the arithmetic and drifted: it counted service charges
+    // dated after today, which no statement shows yet.
+    require_once __DIR__ . '/balance_functions.php';
+    $sql = "SELECT t.*, ru.monthly_rate AS unit_rate, ru.due_day
             FROM tenants t
             JOIN rental_units ru ON ru.id = t.unit_id
-            WHERE t.status " . ($pastOnly ? "<> 'active'" : "= 'active'");
+            WHERE t.status " . ($pastOnly ? "IN ('former','inactive')" : "= 'active'");
     $args = [];
     if ($unitId !== null) { $sql .= " AND t.unit_id = ?"; $args[] = $unitId; }
     $sql .= " ORDER BY t.unit_id, COALESCE(t.contract_start,'1970-01-01')";
@@ -1091,69 +1121,12 @@ function getTenantArrears(PDO $pdo, bool $pastOnly = true, ?int $unitId = null):
     $tenants = $q->fetchAll();
     if (!$tenants) return [];
 
-    // Everything the loop needs is fetched in three grouped queries rather than
-    // three per tenant — this runs on every dashboard and collection-grid load.
-    $ids   = array_map(fn($t) => (int)$t['id'], $tenants);
-    $ph    = implode(',', array_fill(0, count($ids), '?'));
-
-    $pq = $pdo->prepare(
-        "SELECT p.tenant_id, COALESCE(SUM(p.amount - COALESCE(r.refsum,0)),0) AS paid
-         FROM payments p
-         LEFT JOIN (SELECT payment_id, SUM(amount) AS refsum FROM refunds GROUP BY payment_id) r
-                ON r.payment_id = p.id
-         WHERE p.tenant_id IN ($ph) AND p.payment_type='rent'
-           AND p.deleted_at IS NULL AND p.status != 'voided'
-         GROUP BY p.tenant_id"
-    );
-    $pq->execute($ids);
-    $paidBy = array_column($pq->fetchAll(), 'paid', 'tenant_id');
-
-    // Outstanding = charge total less what live payments have settled, so a
-    // charge paid down in instalments contributes only its remainder.
-    $cq = $pdo->prepare(
-        "SELECT uc.tenant_id,
-                COALESCE(SUM(GREATEST(uc.amount - " . chargeSettledSql('uc') . ", 0)), 0) AS owed
-         FROM unit_charges uc
-         WHERE uc.tenant_id IN ($ph) AND uc.voided_at IS NULL
-         GROUP BY uc.tenant_id"
-    );
-    $cq->execute($ids);
-    $svcBy = array_column($cq->fetchAll(), 'owed', 'tenant_id');
-
-    $vq = $pdo->prepare(
-        "SELECT rcv.*, u.full_name AS voided_by_name
-         FROM rent_charge_voids rcv
-         LEFT JOIN users u ON rcv.voided_by = u.id
-         WHERE rcv.tenant_id IN ($ph) AND rcv.restored_at IS NULL
-         ORDER BY rcv.period_year, rcv.period_month, rcv.voided_at, rcv.id"
-    );
-    $vq->execute($ids);
-    $voidsBy = [];
-    foreach ($vq->fetchAll() as $v) {
-        $voidsBy[(int)$v['tenant_id']][(int)$v['period_year'] . '-' . (int)$v['period_month']][] = $v;
-    }
-
     $today = date('Y-m-d');
+    $pre   = tenantStatementPrefetch($pdo, $today);
     $out   = [];
     foreach ($tenants as $t) {
-        $uid   = (int)$t['unit_id'];
-        $tid   = (int)$t['id'];
-        $start = $t['contract_start'] ?: null;
-        if (!$start || $start > $today) continue;
-
-        // Net rent charged over the tenancy (waivers already deducted), less
-        // rent actually paid, plus any service charge left outstanding.
-        $owed = '0.00';
-        // Charges DUE by today (post-paid: a bill falls due after its cycle);
-        // the occupancy end comes from the tenancy itself.
-        foreach (buildRentChargeRows($pdo, $uid, [$t], (int)$t['due_day'], (float)$t['monthly_rate'],
-                                     $start, $today, $voidsBy[$tid] ?? []) as $rc) {
-            $owed = money_add($owed, $rc['net']);
-        }
-        $owed = money_sub($owed, from_cents(to_cents($paidBy[$tid] ?? 0)));
-        $owed = money_add($owed, from_cents(to_cents($svcBy[$tid]  ?? 0)));
-
-        if (money_is_pos($owed)) $out[$uid] = money_add($out[$uid] ?? '0.00', $owed);
+        $owed = tenantStatement($pdo, $t, $today, $pre)['balance'];
+        if (money_is_pos($owed)) $out[(int)$t['unit_id']] = money_add($out[(int)$t['unit_id']] ?? '0.00', $owed);
     }
     return $out;
 }
@@ -1181,6 +1154,71 @@ function prorateOccupancyMonth($monthlyRate, int $dueDay, ?string $contractStart
     $to   = ($contractEnd   && $contractEnd   < $ce) ? $contractEnd   : $ce;
     if ($from > $to) return '0.00';
     return prorateDays($rate, rentDaySpan($from, $to), rentDaySpan($cs, $ce));
+}
+
+// Default start of a Statement of Account: the tenancy's first day, else Jan 1
+// (unit ledgers, tenancies with no start). The end defaults to TODAY, never the
+// contract end — rent is post-paid, so the final bill is dated the day after
+// move-out. Shared by the SoA page, the preview and the PDF so a link that omits
+// the range opens all three on the same statement (they used to differ: the
+// preview started at Jan 1 and hid every earlier bill).
+function soaDefaultFrom(?array $tenant): string {
+    return ($tenant && !empty($tenant['contract_start'])) ? $tenant['contract_start'] : date('Y-01-01');
+}
+
+// Opening balance ("Balance brought forward") of a Statement of Account: the
+// net of every ledger row dated BEFORE $dateFrom, under the same rules the SoA
+// screen and preview use for the rows they list — rent bills by charge date net
+// of their waivers, payments by payment date net of their refunds, service
+// charges by charge date (a voided one nets to zero). Keyed by owner: tenant id,
+// '' for unattributed rows. Opening + the rows in range is therefore the whole
+// tenancy's balance whatever range is picked (CLAUDE.md §5 invariant 16); a
+// statement without it showed only the in-range Dr − Cr, so any range starting
+// mid-tenancy disagreed with the Balance Tracker and the dashboard receivables.
+function soaOpeningBalances(PDO $pdo, int $unitId, array $occupants, int $dueDay, float $baseRate,
+                            ?int $scopeTenantId, string $dateFrom): array {
+    if (!$occupants) return [];
+    $starts = array_filter(array_column($occupants, 'contract_start'));
+    // No bill is dated before its tenancy starts; a tenancy with no start falls
+    // back to the 10-year cap the statement pages already apply.
+    $floor  = count($starts) === count($occupants) ? min($starts) : date('Y-m-d', strtotime($dateFrom . ' -10 years'));
+    $before = date('Y-m-d', strtotime($dateFrom . ' -1 day'));
+    if ($floor > $before) return [];
+
+    $open = [];
+    $add  = function ($owner, $amt) use (&$open) {
+        $k = $owner === null ? '' : (int)$owner;
+        $open[$k] = money_add($open[$k] ?? '0.00', from_cents(to_cents($amt)));
+    };
+
+    $voids = getRentVoidMap($pdo, $unitId, $floor, $before, $scopeTenantId);
+    foreach (buildRentChargeRows($pdo, $unitId, $occupants, $dueDay, $baseRate, $floor, $before, $voids) as $rc) {
+        $add($rc['tenant_id'], $rc['net']);
+    }
+
+    // Recorded rows: the scoped tenancies' own rows, plus unattributed rows on
+    // the unit dated inside the window (the SoA lists those too).
+    $ids   = $scopeTenantId !== null ? [$scopeTenantId] : array_map(fn($o) => (int)$o['id'], $occupants);
+    $ph    = implode(',', array_fill(0, count($ids), '?'));
+    $pq = $pdo->prepare(
+        "SELECT p.tenant_id, SUM(p.amount - COALESCE((SELECT SUM(r.amount) FROM refunds r WHERE r.payment_id = p.id), 0)) AS amt
+         FROM payments p
+         WHERE p.unit_id = ? AND p.payment_date < ? AND p.deleted_at IS NULL AND p.status != 'voided'
+           AND (p.tenant_id IN ($ph) OR (p.tenant_id IS NULL AND p.payment_date >= ?))
+         GROUP BY p.tenant_id");
+    $pq->execute(array_merge([$unitId, $dateFrom], $ids, [$floor]));
+    foreach ($pq->fetchAll() as $r) $add($r['tenant_id'], money_sub('0.00', $r['amt']));
+
+    $cq = $pdo->prepare(
+        "SELECT uc.tenant_id, SUM(uc.amount) AS amt
+         FROM unit_charges uc
+         WHERE uc.unit_id = ? AND uc.charge_date < ? AND uc.voided_at IS NULL
+           AND (uc.tenant_id IN ($ph) OR (uc.tenant_id IS NULL AND uc.charge_date >= ?))
+         GROUP BY uc.tenant_id");
+    $cq->execute(array_merge([$unitId, $dateFrom], $ids, [$floor]));
+    foreach ($cq->fetchAll() as $r) $add($r['tenant_id'], $r['amt']);
+
+    return array_filter($open, fn($v) => to_cents($v) !== 0);
 }
 
 // Generates the virtual monthly rent charges for a unit over a date range —
@@ -1487,6 +1525,16 @@ function renderHtmlToPdf(string $html): string {
 // can load them when rendering from a temp file://.
 function pdfAssetsBaseUrl(): string {
     return 'file://' . realpath(__DIR__ . '/../assets/vendor') . '/';
+}
+
+// ─── Reconciliation hook ─────────────────────────────────────
+// scripts/reconcile.php renders pages with RECON_MODE defined and reads back the
+// figures each page actually displayed. Outside that harness this prints
+// nothing, so live output is byte-for-byte unchanged.
+function reconEmit(string $page, array $data): void {
+    if (!defined('RECON_MODE') || !RECON_MODE) return;
+    echo '<script type="application/json" class="laskie-recon" data-page="' . htmlspecialchars($page, ENT_QUOTES) . '">'
+       . json_encode($data, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG) . '</script>';
 }
 
 // ─── Get App Setting ─────────────────────────────────────────

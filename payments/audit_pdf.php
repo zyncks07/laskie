@@ -523,5 +523,7 @@ tr.row-excluded td .badge { text-decoration: none; }
   </div>
 
 </div><!-- .report -->
+<?php reconEmit('audit', ['year' => $year, 'month' => $month, 'rent_paid' => (string)$totalRentPaid,
+    'service_paid' => (string)$totalServicePaid, 'expenses' => (string)$totalExpenses]); ?>
 </body>
 </html>

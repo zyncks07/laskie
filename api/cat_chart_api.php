@@ -23,11 +23,13 @@ if ($periodType === 'month') {
     $title = "Full Year $year";
 }
 
-$catQ = $pdo->prepare("SELECT ec.name, COALESCE(SUM(e.amount),0) AS total
-    FROM expense_categories ec
-    LEFT JOIN expenses e ON e.category_id = ec.id
-        AND e.expense_date >= ? AND e.expense_date < ? AND e.deleted_at IS NULL
-    GROUP BY ec.id ORDER BY total DESC");
+// Category is optional on an expense, so uncategorised spending gets its own
+// bar — dropping it made the chart total disagree with every other page.
+$catQ = $pdo->prepare("SELECT COALESCE(ec.name, 'Uncategorized') AS name, SUM(e.amount) AS total
+    FROM expenses e
+    LEFT JOIN expense_categories ec ON ec.id = e.category_id
+    WHERE e.expense_date >= ? AND e.expense_date < ? AND e.deleted_at IS NULL
+    GROUP BY ec.id, ec.name ORDER BY total DESC");
 $catQ->execute([$start, $end]);
 $rows = $catQ->fetchAll();
 

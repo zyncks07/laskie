@@ -55,7 +55,7 @@
 /var/www/laskie/
 ├── index.php              # Login (sign-in form, session bootstrap, audit log)
 ├── logout.php
-├── dashboard.php          # Annual P&L, unit status grid, charts
+├── dashboard.php          # Annual P&L, Balance Tracker (active tenants, demand letters), unit status grid, charts
 ├── expenses.php           # Expense entry + listing
 ├── cash.php               # Cash on hand per user
 ├── my_summary.php         # Per-user activity summary
@@ -70,6 +70,7 @@
 │   ├── contract_edit.php  # Contract generator: pre-filled, fully editable form + live preview
 │   ├── contract_print.php # On-screen paper view of one contract (Print / Download PDF)
 │   ├── contract_pdf_download.php # Contract → A4 PDF via renderHtmlToPdf()
+│   ├── demand_letter.php  # Issue (POST) / reprint (GET ?id=) a DL-YYYY-#### demand letter PDF
 │   ├── units.php          # Units + unit_types + service_types + rate history
 │   ├── transactions.php   # All transactions + trash; voided payments, charge waivers — restore UI
 │   ├── requests.php       # Review/approve vault cash requests (approve auto-issues vault_return)
@@ -99,11 +100,13 @@
 │   ├── env.php            # .env loader → define()s DB_* constants (see §11)
 │   ├── functions.php      # Helpers — see §6
 │   ├── transfer_functions.php # Tenant transfer: dates rule, balances, execute/undo — see §4
+│   ├── balance_functions.php  # Balance Tracker statements + demand letters — see §4
 │   └── contract_functions.php # Lease-contract field schema + helpers — see §6
 │
 ├── includes/
 │   ├── header.php         # Sidebar + topbar layout, session boot
 │   ├── footer.php         # JS includes + shared inline helpers
+│   ├── demand/letter.php  # Demand letter template (Caloocan form; pay / pay-and-vacate)
 │   └── contracts/         # Contract templates (web-blocked): lease_caloocan_v1.php (HTML port),
 │                          #   document.php (A4 shell: @page footers, watermark), lease-caloocan-v1.md (source draft)
 │
@@ -124,7 +127,7 @@
 
 ## 4. Database schema (accounting-critical)
 
-Read [`install.sql`](install.sql) for the authoritative DDL. The live DB is current through **migration 015** (`migrations/` holds the incremental DDL; fresh installs get the same via `install.sql`). Highlights:
+Read [`install.sql`](install.sql) for the authoritative DDL. The live DB is current through **migration 016** (`migrations/` holds the incremental DDL; fresh installs get the same via `install.sql`). Highlights:
 
 ### Core entities
 - `users` — id, username, password_hash, full_name, **role** (`admin`/`accountant`/`staff`), status, email/phone
@@ -201,6 +204,18 @@ Read [`install.sql`](install.sql) for the authoritative DDL. The live DB is curr
   them); they change only through **Undo** (`undoTransfer()`), which is allowed only while nothing new has been
   recorded on either tenancy and no cash was handed back. `snapshot_json` lists every row the transfer touched.
 
+### Balance Tracker & demand letters (migration 016)
+- Dashboard card listing **active tenancies only** (former tenants' arrears stay in the hero strip): balance,
+  rent behind in months, last real payment (non-cash transfer entries excluded), SoA link. Built by
+  `activeTenantBalances()` → `tenantStatement()` (batched queries; post-paid: only bills dated ≤ today count).
+  Unpaid bills are itemised **FIFO** (payments applied oldest-first), so they always sum to the rent owed.
+- "Needs intervention" = rent owed ≥ `BALANCE_FLAG_MONTHS` (2) × current rent. Flagged rows get the **admin-only**
+  demand-letter button → `admin/demand_letter.php` (POST + CSRF): "Demand to Pay" or "Final Demand to Pay and
+  Vacate" (Rule 70 §2), 5–60 days (default 15). `demand_letters` stores each letter with a snapshot of exactly what it
+  demanded; `ref_no` DL-YYYY-#### from a monotonic settings counter (same scheme as §5 inv. 8). Number, record and
+  PDF render happen in one transaction — a failed render rolls the number back. RA 9653 §9 is cited only for
+  rent-controlled units with ≥ 3 months' arrears; the dialog warns below that.
+
 ### Dividends ("The Vault")
 - `dividend_recipients`, `dividend_distributions`, `dividend_returns` — money flowing out to (and back from) owners/investors.
 - `dividend_distributions.receipt_path` / `receipt_url` — optional proof of the payout (signed acknowledgement, bank-transfer screenshot, PDF slip) attached from the Distribute Dividend / Edit Distribution modals on `admin/vault.php`. Same shape and upload pipeline as `expenses.receipt_path/receipt_url` and `payments.receipt_path/receipt_url`; uploads land in `uploads/dividends/`. Added in `migrations/012_add_distribution_receipt.sql`. External URLs are validated `^https?://` **server-side on the way in**, because the Distribution Records table is server-rendered.
@@ -273,6 +288,17 @@ These are the rules that keep the books consistent. Any change in this area requ
     credit and settling it again would credit the tenant twice. Overpaying a charge is **refused** with the
     outstanding figure; a partly-paid charge stays editable but can never be reduced below what is settled,
     and can never be waived.
+16. **Every page that shows a tenant's balance closes on the same figure — `tenantStatement()`'s.** The SoA
+    page, preview/PDF, Balance Tracker and dashboard receivables used to compute it separately and drifted
+    (no opening balance on a mid-tenancy range, preview defaulting to Jan 1, arrears counting future-dated
+    charges, chart totals dropping General/uncategorised spending). Now:
+    - a statement range starting mid-tenancy opens with a **"Balance brought forward"** line from
+      **`soaOpeningBalances()`** (one per occupancy in the unit ledger) — never just in-range Dr − Cr;
+    - a blank SoA start defaults through **`soaDefaultFrom()`** on every statement entry point;
+    - `getTenantArrears()` **is** `tenantStatement()` per tenancy (batched via `tenantStatementPrefetch()`);
+    - payments and charges posted without a tenant are attributed with **`resolvePeriodTenant()`**.
+    Any new page that shows a balance or a total must emit it via **`reconEmit()`** and be added to
+    `scripts/reconcile.php`; run it after touching money code (see §10). Pinned by `ReconciliationTest`.
 
 ---
 
@@ -308,7 +334,11 @@ Helpers Claude should reuse rather than re-implement:
 | `chargeSettledSql($ucAlias = 'uc')` | Correlated-subquery SQL for "settled by live payments" — **the** definition, use it in every set-based outstanding query |
 | `getChargeOutstanding($pdo, $chargeId)` / `getChargeSettled($pdo, $chargeId)` | Single-charge remainder / settled amount |
 | `getUnitPaymentStatus($pdo, $unitId, $m, $y)` | Returns `'green'`/`'amber'`/`'red'`/`'gray'`. **Currently uncalled** — `dashboard.php` computes unit status inline |
-| `getPastTenantArrears($pdo, $unitId?)` / `getCurrentTenantArrears($pdo, $unitId?)` | Outstanding per unit keyed `unit_id`, split by whether the tenant is still in place (`getTenantArrears()` is the shared core) |
+| `getPastTenantArrears($pdo, $unitId?)` / `getCurrentTenantArrears($pdo, $unitId?)` | Outstanding per unit keyed `unit_id`, split by whether the tenant is still in place. `getTenantArrears()` sums each tenancy's positive `tenantStatement()` balance — no arithmetic of its own (§5 inv. 16) |
+| `soaOpeningBalances($pdo, $unitId, $occupants, $dueDay, $baseRate, $scopeTenantId, $from)` | "Balance brought forward" per owner (tenant id, `''` unattributed): every SoA row dated before `$from`, same rules as the listed rows. Used by `history.php` + `soa_pdf.php` |
+| `soaDefaultFrom($tenant)` | Default SoA start: tenancy start, else Jan 1. End defaults to today |
+| `resolvePeriodTenant($pdo, $unitId, $m, $y)` | Occupant of charge period M's cycle — attribution for a payment/charge posted without a tenant |
+| `reconEmit($page, $data)` | Emits the figures a page displayed as JSON, **only** when `RECON_MODE` is defined (reconcile harness + `callPage()` tests). No-op in production |
 | `getUserCashOnHand($pdo, $userId)` | Authoritative per-user **signed** ledger balance (`received + vault_return − remitted − expenses − refunded`). Can be negative — that means the business owes the user, not that they hold negative cash |
 | `splitCashPosition($balance)` | Decomposes that signed balance into `['balance','on_hand','owed']` — `on_hand = max(0,b)`, `owed = max(0,−b)`. **Use this for any display of a user's position, and for any "enough cash?" gate** (the refund cashier check gates on `on_hand`). Pure function, no DB. **Across users: split per user, THEN sum — never split an aggregate.** One staffer owed ₱5k while another holds ₱5k is ₱5k of company cash *and* a ₱5k liability, not zero; splitting the total erases both. Pinned by `tests/Unit/CashPositionTest.php` |
 | `getUserCashPosition($pdo, $userId)` | `splitCashPosition(getUserCashOnHand(...))` for one user |
@@ -419,6 +449,8 @@ Global helpers attached to `window`: `showToast`, `apiPost`, `confirmDelete`, `f
 | Process a payment refund — admin picks the cashier; refund is hard-gated on that cashier's cash-on-hand | ✓ | ✗ | ✗ |
 | Contracts — generate, approve, void, download PDF, upload signed copies (`admin/contract*.php`) | ✓ | ✗ | ✗ |
 | Transfer a tenant to another unit / undo a transfer (`admin/tenants.php`) | ✓ | ✗ | ✗ |
+| Dashboard Balance Tracker (view) | ✓ | ✓ | ✓ |
+| Issue / reprint demand letters (`admin/demand_letter.php`) | ✓ | ✗ | ✗ |
 
 ### Already in place
 - Prepared statements only — no string-interpolated SQL anywhere in the codebase
@@ -465,6 +497,17 @@ bash scripts/check-perms.sh        # verify it (read-only, no sudo, exit 1 on dr
 - After editing files here, run `check-perms.sh`; if it reports drift, run `fix-perms.sh`. Prefer these over `sudo bash /home/bulik/laskie-recompress.sh`, which now delegates to `fix-perms.sh` but also re-encodes every image under `uploads/`.
 - `umask` is `022` (set in `~/.profile` and `~/.bashrc`), so new files are born `bulik:www-data 644`. It was `002`, which made every Edit produce a group-writable file; that is what left ~1,850 files writable by the web user until 2026-09-19.
 - Secrets are `640`: `config/db.php`, `config/env.php`, `.env`. `config/functions.php` is **not** a secret — it stays `644` like the rest of the app code.
+
+### Records-mismatch check — `scripts/reconcile.php`
+```bash
+php scripts/reconcile.php --copy           # live → laskie_test (live is only SELECTed; logs/notifications skipped)
+php scripts/reconcile.php --check          # render every money page against laskie_test, compare, report
+```
+`--check` renders each statement (several ranges, tenant and unit-ledger scope), the dashboard, chart APIs,
+transactions, audit report and cash page in subprocesses pinned to `laskie_test` with `RECON_MODE` on, and
+compares the figures they emitted (`reconEmit()`) with `tenantStatement()` and SQL truth. It exits 1 on any
+mismatch. Data oddities (e.g. two rent payments tagged to one month) are **listed only** — corrections to live
+data still need the user's approval (§12). Run it after any change to money code or a statement page.
 
 ### Troubleshooting quick-refs
 - Blank page → `tail -f /var/log/apache2/laskie_error.log`

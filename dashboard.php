@@ -2,6 +2,7 @@
 session_start();
 require_once 'config/db.php';
 require_once 'config/functions.php';
+require_once 'config/balance_functions.php';
 requireLogin();
 
 $pageTitle    = 'Annual Dashboard';
@@ -153,6 +154,21 @@ if ($selectedYear === $curYear) {
     $today = (int)date('j');
 }
 
+// ─── Balance Tracker: every ACTIVE tenant's position as of today ─────
+// Former tenants are deliberately left out (their arrears show in the hero
+// strip); this list is for spotting who needs intervention now.
+$balanceRows = null;
+try {
+    $balanceRows = activeTenantBalances($pdo);
+    usort($balanceRows, fn($a, $b) => [$b['st']['flagged'], $b['st']['months_behind'], to_cents($b['st']['balance'])]
+                                    <=> [$a['st']['flagged'], $a['st']['months_behind'], to_cents($a['st']['balance'])]);
+} catch (Throwable $e) {
+    error_log('dashboard balance tracker: ' . $e->getMessage());
+}
+$btFlagged = $balanceRows ? count(array_filter($balanceRows, fn($r) => $r['st']['flagged'])) : 0;
+$btBehind  = $balanceRows ? count(array_filter($balanceRows, fn($r) => money_is_pos($r['st']['rent_owed']))) : 0;
+$btOwed    = $balanceRows ? money_sum(array_map(fn($r) => money_max('0.00', $r['st']['balance']), $balanceRows) ?: ['0.00']) : '0.00';
+
 logActivity($pdo, 'VIEW_DASHBOARD', 'Dashboard', "Viewed annual dashboard for $selectedYear");
 include 'includes/header.php';
 ?>
@@ -166,7 +182,34 @@ include 'includes/header.php';
 .db-card .card-header  { padding: 12px 16px; border-bottom: 1px solid var(--gray-200); }
 .db-card .card-header-title { color: var(--ink); font-size: 14px; }
 .db-card .card-body    { padding: 12px 16px; }
-.db-accent             { border-left: 3px solid var(--ink); }
+
+/* ── Balance Tracker ── */
+.bt-head               { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 12px; }
+.bt-summary            { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.bt-sub                { font-size: 11.5px; color: var(--gray-500); }
+#balanceTable td       { vertical-align: middle; }
+#balanceTable .bt-name { font-weight: 600; }
+#balanceTable .bt-meta { font-size: 11px; color: var(--gray-500); }
+#balanceTable tr.bt-flag td:first-child { box-shadow: inset 3px 0 0 var(--ink); }
+#balanceTable .bt-num  { font-family: 'DM Mono', monospace; font-weight: 600; white-space: nowrap; }
+#balanceTable .bt-actions { white-space: nowrap; text-align: right; }
+#balanceTable .bt-mobile { display: none; }
+/* Phones: keep Balance, Status and the action buttons on screen; the two
+   detail columns fold into a line under the tenant's name instead. */
+@media (max-width: 575.98px) {
+  #balanceTable th:nth-child(n+3), #balanceTable td:nth-child(n+3) { display: none; }
+  #balanceTable .bt-mobile { display: block; white-space: normal; }
+  #balanceTable .bt-mobile-row { display: flex; align-items: center; justify-content: space-between; gap: 6px; margin-top: 6px; }
+  #balanceTable .bt-mobile-row .btn-icon { width: 34px; height: 34px; }
+  #balanceTable td:first-child .cell-trunc { max-width: 200px; }
+}
+#balanceTable .bt-dl   { font-size: 10.5px; color: var(--gray-600); text-decoration: none; border-bottom: 1px dashed var(--gray-400); margin-right: 6px; }
+.bt-type label         { display: flex; gap: 10px; align-items: flex-start; padding: 9px 11px; border: 1px solid var(--gray-300);
+                         border-radius: var(--radius); cursor: pointer; margin-bottom: 6px; font-size: 12.5px; }
+.bt-type label:has(input:checked) { border-color: var(--ink); background: var(--gray-100); }
+.bt-type strong        { display: block; font-size: 13px; }
+.bt-warn               { font-size: 12px; padding: 8px 11px; border-radius: var(--radius); background: var(--gray-100);
+                         border: 1px solid var(--gray-200); color: var(--ink); }
 
 /* ── Inverted KPI hero strip — the single B&W "hero" (§3.6) ── */
 .db-hero {
@@ -183,6 +226,24 @@ include 'includes/header.php';
     border-left: 1px solid rgba(128,128,128,.32);
 }
 .db-hero-cell:first-child { border-left: none; }
+/* Second strip (Month to Date): same language, one shade softer than the hero.
+   --gray-800 sits one step from --ink in BOTH themes (lighter in light mode,
+   darker in dark mode, where the hero itself inverts to near-white). */
+.db-hero-soft { background: var(--gray-800); border-color: var(--gray-800); box-shadow: var(--laskie-shadow-card); }
+.db-hero-soft .stat-value { font-size: 20px; }
+
+/* ── Unit Status ── */
+.us-head { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; }
+.us-sub  { font-size: 11.5px; color: var(--gray-500); }
+.us-sub strong { color: var(--ink); }
+#unitStatusTable .us-tenant { max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#unitStatusTable .stat-sub { font-size: 10.5px; color: var(--gray-500); white-space: normal; font-family: 'DM Sans', sans-serif; }
+@media (max-width: 575.98px) {
+  #unitStatusTable .us-tenant { max-width: 84px; }
+  #unitStatusTable td, #unitStatusTable th { padding-left: 8px !important; padding-right: 8px !important; }
+}
+
+
 .db-hero .stat-label { font-size: 11px; font-weight: 500; color: var(--paper); opacity: .62; margin-bottom: 8px; letter-spacing: .02em; }
 .db-hero .stat-value { font-size: 22px; font-weight: 700; color: var(--paper); line-height: 1.15; overflow-wrap: anywhere; }
 .db-hero .stat-value .caret { font-size: .72em; vertical-align: 1px; margin-right: 3px; opacity: .85; }
@@ -273,92 +334,245 @@ include 'includes/header.php';
 </div>
 
 <?php if ($selectedYear === $curYear): ?>
+<!-- ── Month to Date — second hero strip, one shade softer than the first ── -->
+<div class="db-hero db-hero-soft db-row">
+  <div class="db-hero-cell">
+    <div class="stat-label"><i class="fa-solid fa-calendar-day me-1"></i>Month to Date</div>
+    <div class="stat-value"><?= date('F Y') ?></div>
+    <div class="stat-sub"><?= date('M 1') ?> – <?= date('M j') ?></div>
+  </div>
+  <div class="db-hero-cell">
+    <div class="stat-label">Revenue</div>
+    <div class="stat-value num"><?= money($cmRev) ?></div>
+    <div class="stat-sub">Collected so far</div>
+  </div>
+  <div class="db-hero-cell">
+    <div class="stat-label">Expenses</div>
+    <div class="stat-value num"><?= money($cmExp) ?></div>
+    <div class="stat-sub">Spent so far</div>
+  </div>
+  <div class="db-hero-cell">
+    <div class="stat-label">Net Income</div>
+    <div class="stat-value num<?= money_gte($cmNet, '0.00') ? '' : ' fw-bold' ?>"><span class="caret" aria-hidden="true"><?= money_gte($cmNet, '0.00') ? '▲' : '▼' ?></span><?= money($cmNet) ?></div>
+    <div class="stat-sub"><?= money_is_pos($cmRev) ? round(to_cents($cmNet) / to_cents($cmRev) * 100) . '% of revenue' : 'Revenue − expenses' ?></div>
+  </div>
+</div>
+<?php endif; ?>
+
+<?php if ($balanceRows !== null): ?>
+<!-- ── Balance Tracker — active tenants only, as of today ───── -->
+<div class="card db-card db-row" id="balanceTracker">
+  <div class="card-header bt-head">
+    <span class="card-header-title"><i class="fa-solid fa-scale-unbalanced me-1"></i>Balance Tracker</span>
+    <span class="bt-summary">
+      <?php if ($btFlagged): ?><span class="attn-pill"><?= $btFlagged ?> need<?= $btFlagged === 1 ? 's' : '' ?> intervention</span><?php endif; ?>
+      <span class="muted-pill"><?= $btBehind ?> behind on rent</span>
+      <span class="bt-sub">Owed by active tenants: <strong><?= money($btOwed) ?></strong> · as of <?= date('M j, Y') ?></span>
+    </span>
+  </div>
+  <div class="card-body pt-2">
+    <div class="table-responsive">
+    <table class="table db-tbl mb-0" id="balanceTable" style="width:100%">
+      <thead><tr>
+        <th>Tenant</th><th class="text-end">Balance</th><th class="text-end">Rent behind</th>
+        <th>Last payment</th><th>Status</th><th class="text-end">Actions</th>
+      </tr></thead>
+      <tbody>
+      <?php foreach ($balanceRows as $br):
+        $bt = $br['tenant']; $bs = $br['st']; $lp = $bs['last_payment']; $ld = $br['last_demand'];
+        if ($bs['flagged'])                      { $pill = ['attn-pill', number_format($bs['months_behind'], 1) . ' mo behind']; $ord = 0; }
+        elseif (money_is_pos($bs['rent_owed']))  { $pill = ['muted-pill', 'Behind']; $ord = 1; }
+        elseif (money_is_pos($bs['svc_owed']))   { $pill = ['muted-pill', 'Charges due']; $ord = 2; }
+        elseif (money_is_neg($bs['balance']))    { $pill = ['ok-pill', 'Credit']; $ord = 3; }
+        else                                     { $pill = ['ok-pill', 'Paid up']; $ord = 4; }
+        // Straight to the printable statement preview — easier to read than the SoA screen.
+        $soa = 'payments/soa_pdf.php?' . http_build_query(['unit_id' => (int)$bt['unit_id'], 'tenant_id' => (int)$bt['id'],
+                                                           'date_from' => $bt['contract_start'] ?: date('Y-01-01'), 'date_to' => date('Y-m-d')]);
+        ob_start(); ?>
+          <?php if (isAdmin() && $ld): ?>
+            <a class="bt-dl" href="admin/demand_letter.php?id=<?= (int)$ld['id'] ?>" target="_blank" rel="noopener"
+               title="Reprint <?= clean(DEMAND_TYPES[$ld['letter_type']] ?? '') ?>"><?= clean($ld['ref_no']) ?> · <?= fmtDate($ld['created_at'], 'M j') ?></a>
+          <?php endif; ?>
+          <?php if (isAdmin() && $bs['flagged']): ?>
+            <button type="button" class="btn-icon" title="Demand letter"
+                    data-id="<?= (int)$bt['id'] ?>" data-name="<?= clean($bt['full_name']) ?>" data-unit="<?= clean($bt['unit_name']) ?>"
+                    data-total="<?= clean($bs['balance']) ?>" data-rent="<?= clean($bs['rent_owed']) ?>" data-svc="<?= clean($bs['svc_owed']) ?>"
+                    data-months="<?= (float)$bs['months_behind'] ?>" data-rc="<?= money_lte($bs['rate'], defined('CONTRACT_RENT_CONTROL_CAP') ? CONTRACT_RENT_CONTROL_CAP : '10000.00') ? 1 : 0 ?>"
+                    onclick="openDemand(this.dataset)"><i class="fa-solid fa-envelope-open-text fa-xs"></i></button>
+          <?php endif; ?>
+          <a class="btn-icon" href="<?= clean($soa) ?>" target="_blank" rel="noopener" title="Statement of Account (opens in a new tab)"><i class="fa-solid fa-file-invoice fa-xs"></i></a>
+        <?php $actions = ob_get_clean();
+      ?>
+      <tr class="<?= $bs['flagged'] ? 'bt-flag' : '' ?>">
+        <td data-order="<?= clean($bt['full_name']) ?>">
+          <div class="bt-name cell-trunc"><?= clean($bt['full_name']) ?></div>
+          <div class="bt-meta"><?= clean($bt['unit_name']) ?> · <?= money($bs['rate']) ?>/mo</div>
+          <div class="bt-meta bt-mobile">
+            <?= money_is_pos($bs['rent_owed']) ? 'Rent behind ' . money($bs['rent_owed']) . ' (' . number_format($bs['months_behind'], 1) . ' mo)' : 'Rent up to date' ?>
+            · <?= $lp ? 'Last paid ' . money($lp['amount']) . ' on ' . fmtDate($lp['payment_date'], 'M j') : 'No payments yet' ?>
+          </div>
+          <div class="bt-mobile bt-mobile-row"><span class="<?= $pill[0] ?>"><?= clean($pill[1]) ?></span><span><?= $actions ?></span></div>
+        </td>
+        <td class="text-end" data-order="<?= to_cents($bs['balance']) ?>">
+          <span class="bt-num"><?= money($bs['balance']) ?></span>
+          <?php if (money_is_pos($bs['svc_owed'])): ?><div class="bt-meta">incl. <?= money($bs['svc_owed']) ?> charges</div><?php endif; ?>
+        </td>
+        <td class="text-end" data-order="<?= (float)$bs['months_behind'] ?>">
+          <?php if (money_is_pos($bs['rent_owed'])): ?>
+            <span class="bt-num"><?= money($bs['rent_owed']) ?></span>
+            <div class="bt-meta"><?= number_format($bs['months_behind'], 1) ?> month<?= abs($bs['months_behind'] - 1) < 0.005 ? '' : 's' ?></div>
+          <?php else: ?><span class="bt-meta">—</span><?php endif; ?>
+        </td>
+        <td data-order="<?= clean($lp['payment_date'] ?? '0000-00-00') ?>">
+          <?php if ($lp): ?>
+            <span class="bt-num"><?= money($lp['amount']) ?></span>
+            <div class="bt-meta"><?= fmtDate($lp['payment_date'], 'M j, Y') ?> · <?= clean($lp['payment_type'] === 'rent' ? 'Rent' : ($lp['service_name'] ?: 'Service')) ?></div>
+          <?php else: ?><span class="bt-meta">No payments yet</span><?php endif; ?>
+        </td>
+        <td data-order="<?= $ord ?>"><span class="<?= $pill[0] ?>"><?= clean($pill[1]) ?></span></td>
+        <td class="bt-actions"><?= $actions ?></td>
+      </tr>
+      <?php endforeach; ?>
+      </tbody>
+    </table>
+    </div>
+  </div>
+</div>
+
+<?php if (isAdmin()): ?>
+<!-- Demand letter — admin only; the PDF opens in a new tab to print or save -->
+<div class="modal fade" id="demandModal" tabindex="-1">
+  <div class="modal-dialog">
+    <form class="modal-content" id="demandForm" method="POST" action="admin/demand_letter.php" target="_blank">
+      <?= csrfField() ?>
+      <input type="hidden" name="tenant_id" id="dmTenant">
+      <div class="modal-header">
+        <h5 class="modal-title" id="dmTitle">Demand letter</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="bt-warn mb-3" id="dmSummary"></div>
+        <label class="form-label">Type of letter</label>
+        <div class="bt-type">
+          <label><input type="radio" name="letter_type" value="pay" checked>
+            <span><strong>Demand to Pay</strong>Formal demand for the unpaid amount, warning of barangay conciliation and court action if unpaid.</span></label>
+          <label><input type="radio" name="letter_type" value="vacate">
+            <span><strong>Final Demand to Pay and Vacate</strong>The formal demand to pay <em>and</em> vacate required before an unlawful detainer (ejectment) case under Rule 70.</span></label>
+        </div>
+        <label class="form-label mt-2" for="dmDays">Days to comply</label>
+        <input type="number" class="form-control" name="deadline_days" id="dmDays" min="<?= DEMAND_MIN_DAYS ?>" max="<?= DEMAND_MAX_DAYS ?>" value="<?= DEMAND_DEFAULT_DAYS ?>" required>
+        <div class="form-text">Counted from the tenant's receipt of the letter (<?= DEMAND_MIN_DAYS ?>–<?= DEMAND_MAX_DAYS ?> days).</div>
+        <div class="bt-warn mt-2" id="dmRcWarn" style="display:none"></div>
+        <div class="form-text mt-2">Issuing records the letter with the next DL number. Have counsel review before relying on it in a case.</div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
+        <button type="submit" class="btn btn-primary btn-sm" id="dmGo"><i class="fa-solid fa-file-pdf me-1"></i>Generate PDF</button>
+      </div>
+    </form>
+  </div>
+</div>
+<?php endif; ?>
+<?php endif; ?>
+
+<?php if ($selectedYear === $curYear): ?>
 <!-- ── Row 2: Month summary + Unit status | Bar chart ─────── -->
 <div class="row g-2 db-row">
 
   <div class="col-lg-5 d-flex flex-column gap-2">
 
-    <!-- Month-to-date -->
-    <div class="card db-card db-accent">
-      <div class="card-header">
-        <span class="card-header-title"><i class="fa-solid fa-calendar-day me-1"></i><?= date('F Y') ?> — Month to Date</span>
-      </div>
-      <div class="card-body py-1">
-        <div class="row g-0 text-center">
-          <div class="col-4 border-end">
-            <div class="text-muted" style="font-size:11px">Revenue</div>
-            <div class="fw-bold num" style="font-size:14px"><?= money($cmRev) ?></div>
-          </div>
-          <div class="col-4 border-end">
-            <div class="text-muted" style="font-size:11px">Expenses</div>
-            <div class="fw-bold num" style="font-size:14px"><?= money($cmExp) ?></div>
-          </div>
-          <div class="col-4">
-            <div class="text-muted" style="font-size:11px">Net Income</div>
-            <div class="num <?= money_gte($cmNet, '0.00') ? 'delta-pos' : 'delta-neg' ?>" style="font-size:14px"><?= money($cmNet) ?></div>
-          </div>
-        </div>
-      </div>
-    </div>
 
-    <!-- Unit payment status -->
-    <?php if (!empty($unitStatusData)): ?>
+    <!-- Unit payment status — this month's rent bill, unit by unit -->
+    <?php if (!empty($unitStatusData)):
+      // Rent is post-paid (CLAUDE.md §5 inv. 2): this month's bill covers the
+      // cycle that just ended. Work every row out first so the header can
+      // summarise them and each row can say in words where it stands.
+      $usRows = []; $usCount = ['paid' => 0, 'open' => 0, 'vacant' => 0];
+      $todayIso = date('Y-m-d');
+      foreach ($unitStatusData as $u) {
+          if ($u['status'] === 'vacant' || empty($u['tenant_name'])) {
+              $usRows[] = ['u' => $u, 'state' => 'vacant', 'order' => 9]; $usCount['vacant']++; continue;
+          }
+          $due      = (int)$u['due_day'] ?: 5;
+          $rate     = getRateForMonth($pdo, (int)$u['id'], (float)$u['monthly_rate'], $curMonth, $curYear);
+          $billed   = prorateOccupancyMonth($rate, $due, $u['contract_start'] ?? null, $u['contract_end'] ?? null, $curMonth, $curYear);
+          $waived   = $curRentVoids[(int)$u['id']] ?? '0.00';
+          $expected = money_max('0.00', money_sub($billed, $waived));
+          $paid     = from_cents(to_cents($u['cur_paid']));
+          $left     = money_max('0.00', money_sub($expected, $paid));
+          $dueDate  = chargeDate($due, $curMonth, $curYear, $u['contract_end'] ?? null);
+          [$cs, $ce] = rentCycle($due, $curMonth, $curYear);
+          $daysPast = (int)floor((strtotime($todayIso) - strtotime($dueDate)) / 86400);
+          if (!money_is_pos($billed)) {
+              // New tenancy: its first bill falls next month.
+              $state = 'nobill'; $order = 6;
+          } elseif (!money_is_pos($left)) {
+              $state = 'paid'; $order = 7;
+          } elseif ($daysPast < 0) {
+              $state = 'upcoming'; $order = 4;
+          } elseif (money_is_pos($paid)) {
+              $state = 'partial'; $order = 2;
+          } else {
+              // 10-day grace before "overdue" (same rule as before).
+              $state = $daysPast > 10 ? 'overdue' : 'unpaid'; $order = $daysPast > 10 ? 0 : 1;
+          }
+          $usCount[$state === 'paid' || $state === 'nobill' ? 'paid' : 'open']++;
+          $usRows[] = compact('u', 'state', 'order', 'billed', 'waived', 'expected', 'paid', 'left', 'dueDate', 'cs', 'ce', 'daysPast');
+      }
+      usort($usRows, fn($a, $b) => [$a['order'], $a['u']['unit_name']] <=> [$b['order'], $b['u']['unit_name']]);
+      // The cycle most units bill this month, for the header (due day 5 for all today).
+      $hdr = null; foreach ($usRows as $r) { if (isset($r['cs'])) { $hdr = $r; break; } }
+    ?>
     <div class="card db-card">
-      <div class="card-header">
-        <span class="card-header-title"><i class="fa-solid fa-building me-1"></i><?= date('F Y') ?> — Unit Status</span>
+      <div class="card-header us-head">
+        <span class="card-header-title"><i class="fa-solid fa-building me-1"></i><?= date('F Y') ?> Rent — Unit Status</span>
+        <span class="us-sub">
+          <?php if ($hdr): ?>The <?= date('F') ?> bill covers <?= date('M j', strtotime($hdr['cs'])) ?> – <?= date('M j', strtotime($hdr['ce'])) ?>, due <?= date('M j', strtotime(rentDueDate((int)$hdr['u']['due_day'] ?: 5, $curMonth, $curYear))) ?>.<?php endif; ?>
+          <strong><?= $usCount['paid'] ?></strong> settled · <strong><?= $usCount['open'] ?></strong> to collect<?= $usCount['vacant'] ? ' · ' . $usCount['vacant'] . ' vacant' : '' ?>
+        </span>
       </div>
       <div class="card-body py-2">
-        <!-- data-order on Status column = numeric weight so DataTables can
-             group "unpaid" rows ahead of "paid" / "vacant" when sorted asc.
-             0 = late (most urgent), 1 = unpaid not late, 2 = paid, 3 = vacant -->
+        <!-- data-order on Status = urgency: overdue, unpaid, partly paid,
+             not yet due, no bill, paid, vacant. -->
         <table class="table db-tbl mb-0" id="unitStatusTable" style="width:100%">
           <thead>
-            <tr><th>Unit</th><th>Tenant</th><th>Status</th></tr>
+            <tr><th>Unit</th><th>Tenant</th><th><?= date('F') ?> bill</th></tr>
           </thead>
           <tbody>
-          <?php foreach ($unitStatusData as $u):
-            if ($u['status'] === 'vacant'): ?>
+          <?php foreach ($usRows as $r): $u = $r['u']; ?>
             <tr>
-              <td class="fw-600"><?= clean($u['unit_name']) ?></td>
+              <td class="fw-600 text-nowrap"><?= clean($u['unit_name']) ?></td>
+              <?php if ($r['state'] === 'vacant'): ?>
               <td class="text-muted">—</td>
-              <td data-order="3"><span class="muted-pill">Vacant</span></td>
-            </tr>
-          <?php else:
-              $rate         = getRateForMonth($pdo, (int)$u['id'], (float)$u['monthly_rate'], $curMonth, $curYear);
-              // Post-paid: this month's bill covers the cycle that just ended (CLAUDE.md §5 inv. 2).
-              $expected     = prorateOccupancyMonth($rate, (int)$u['due_day'], $u['contract_start'] ?? null, $u['contract_end'] ?? null, $curMonth, $curYear);
-              // A waived month owes nothing, so it must not show as due/late.
-              $expected     = money_max('0.00', money_sub($expected, $curRentVoids[(int)$u['id']] ?? '0.00'));
-              $curPaid      = $u['cur_paid'];
-              $curWaived    = $curRentVoids[(int)$u['id']] ?? '0.00';
-              // Nothing expected (fully waived, or no rate set) counts as settled.
-              $curMonthPaid = !money_is_pos($expected) || money_gte($curPaid, $expected);
-              // 10-day grace period — clamped to month-end so units with
-              // due_day=30 in February (or any short month) still trigger.
-              $daysInCurMo  = (int)date('t', mktime(0,0,0,$curMonth,1,$curYear));
-              $graceDay     = min((int)$u['due_day'] + 10, $daysInCurMo);
-              $isLate       = !$curMonthPaid && money_is_pos($expected) && $today > $graceDay;
-              $amountDue    = money_max('0.00', money_sub($expected, $curPaid));
-              $sortKey      = $curMonthPaid ? 2 : ($isLate ? 0 : 1);
-          ?>
-            <tr>
-              <td class="fw-600"><?= clean($u['unit_name']) ?></td>
-              <td style="max-width:100px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><?= clean($u['tenant_name'] ?? '—') ?></td>
-              <td data-order="<?= $sortKey ?>">
-                <?php if ($curMonthPaid): ?>
-                  <span class="ok-pill"><i class="fa-solid fa-check"></i>Paid</span>
-                  <?php if (money_is_pos($curWaived)): ?>
-                  <div class="stat-sub mt-1"><i class="fa-solid fa-file-circle-xmark me-1"></i><?= money($curWaived) ?> waived</div>
-                  <?php endif; ?>
-                <?php else: ?>
-                  <span class="attn-pill"><i class="fa-solid fa-xmark"></i><?= money($amountDue) ?></span>
-                  <?php if ($isLate): ?>
-                  <div class="stat-sub mt-1"><i class="fa-solid fa-triangle-exclamation me-1"></i>Late fee applies</div>
-                  <?php endif; ?>
-                <?php endif; ?>
+              <td data-order="9"><span class="muted-pill">Vacant</span></td>
+              <?php else:
+                $dueTxt = date('M j', strtotime($r['dueDate']));
+                // A partial cycle (move-in / move-out) is prorated — say which days.
+                $from = max($r['cs'], (string)$u['contract_start']);
+                $to   = ($u['contract_end'] && $u['contract_end'] < $r['ce']) ? $u['contract_end'] : $r['ce'];
+                $pro  = ($from !== $r['cs'] || $to !== $r['ce']) ? ' (' . date('M j', strtotime($from)) . '–' . date('j', strtotime($to)) . ', prorated)' : '';
+                switch ($r['state']) {
+                  case 'paid':     $pill = ['ok-pill', '<i class="fa-solid fa-check"></i>Paid'];
+                                   $sub  = money($r['paid']) . ' received' . (money_is_pos($r['waived']) ? ' · ' . money($r['waived']) . ' waived' : ''); break;
+                  case 'nobill':   $pill = ['muted-pill', 'No bill yet'];
+                                   $sub  = 'First bill due ' . date('M j', strtotime(rentDueDate((int)$u['due_day'] ?: 5, $curMonth === 12 ? 1 : $curMonth + 1, $curMonth === 12 ? $curYear + 1 : $curYear))); break;
+                  case 'upcoming': $pill = ['muted-pill', 'Due ' . $dueTxt];
+                                   $sub  = money($r['expected']) . ' bill' . $pro . (money_is_pos($r['paid']) ? ' · ' . money($r['paid']) . ' paid early' : ''); break;
+                  case 'partial':  $pill = ['attn-pill', 'Partly paid'];
+                                   $sub  = money($r['paid']) . ' of ' . money($r['expected']) . ' paid · ' . money($r['left']) . ' left'; break;
+                  case 'unpaid':   $pill = ['attn-pill', 'Unpaid'];
+                                   $sub  = money($r['left']) . ' owed · was due ' . $dueTxt . ($r['daysPast'] ? ' (' . $r['daysPast'] . ' day' . ($r['daysPast'] === 1 ? '' : 's') . ' ago)' : ' (today)'); break;
+                  default:         $pill = ['attn-pill', '<i class="fa-solid fa-triangle-exclamation"></i>Overdue'];
+                                   $sub  = money($r['left']) . ' owed · ' . $r['daysPast'] . ' days past ' . $dueTxt . ' · late fee applies';
+                }
+              ?>
+              <td class="us-tenant"><?= clean($u['tenant_name']) ?></td>
+              <td data-order="<?= $r['order'] ?>">
+                <span class="<?= $pill[0] ?>"><?= $pill[1] ?></span>
+                <div class="stat-sub mt-1"><?= clean($sub) ?></div>
               </td>
+              <?php endif; ?>
             </tr>
-          <?php endif; ?>
           <?php endforeach; ?>
           </tbody>
         </table>
@@ -372,7 +586,7 @@ include 'includes/header.php';
     <div class="card db-card db-card-fill h-100">
       <div class="card-header" style="display:block">
         <div style="display:flex;align-items:center;gap:8px">
-          <span class="card-header-title me-auto"><i class="fa-solid fa-chart-bar me-1"></i>Revenue vs Expenses by Unit</span>
+          <span class="card-header-title me-auto"><i class="fa-solid fa-chart-bar me-1"></i>Collected vs Spent by Unit</span>
           <select id="unitChartPeriod" class="form-select form-select-sm" style="width:auto;max-width:205px;font-size:11.5px">
             <?php foreach ($years as $ychk): $isCY = ($ychk === $curYear); ?>
             <optgroup label="<?= $ychk ?>">
@@ -411,15 +625,15 @@ include 'includes/header.php';
   <div class="col-lg-8">
     <div class="card db-card">
       <div class="card-header">
-        <span class="card-header-title"><i class="fa-solid fa-chart-line me-1"></i>Monthly Revenue & Net Income — <?= $selectedYear ?></span>
+        <span class="card-header-title"><i class="fa-solid fa-chart-line me-1"></i>Monthly Revenue, Expenses &amp; Net Income — <?= $selectedYear ?></span>
       </div>
-      <div class="card-body db-chart"><canvas id="monthlyChart"></canvas></div>
+      <div class="card-body db-chart" style="height:300px"><canvas id="monthlyChart"></canvas></div>
     </div>
   </div>
   <div class="col-lg-4">
     <div class="card db-card h-100">
       <div class="card-header" style="display:flex;align-items:center;gap:8px">
-        <span class="card-header-title me-auto"><i class="fa-solid fa-chart-pie me-1"></i>Expenses by Category</span>
+        <span class="card-header-title me-auto"><i class="fa-solid fa-chart-simple me-1"></i>Expenses by Category</span>
         <select id="catChartPeriod" class="form-select form-select-sm" style="width:auto;max-width:185px;font-size:11.5px">
           <?php foreach ($years as $ychk): $isCY = ($ychk === $curYear); ?>
           <optgroup label="<?= $ychk ?>">
@@ -439,6 +653,7 @@ include 'includes/header.php';
         <div id="catChartSpinner" style="display:none;position:absolute;inset:0;background:var(--paper);z-index:10;align-items:center;justify-content:center;border-radius:0 0 var(--laskie-radius-card) var(--laskie-radius-card)">
           <div class="spinner-border spinner-border-sm" style="color:var(--ink)" role="status"><span class="visually-hidden">Loading…</span></div>
         </div>
+        <div id="catChartEmpty" class="text-muted small text-center py-4" style="display:none">No expenses recorded in this period.</div>
         <canvas id="catChart"></canvas>
       </div>
     </div>
@@ -452,7 +667,7 @@ include 'includes/header.php';
     <div class="card db-card">
       <div class="card-header" style="display:block">
         <div style="display:flex;align-items:center;gap:8px">
-          <span class="card-header-title me-auto"><i class="fa-solid fa-chart-bar me-1"></i>Revenue vs Expenses by Unit</span>
+          <span class="card-header-title me-auto"><i class="fa-solid fa-chart-bar me-1"></i>Collected vs Spent by Unit</span>
           <select id="unitChartPeriod" class="form-select form-select-sm" style="width:auto;max-width:205px;font-size:11.5px">
             <?php foreach ($years as $ychk): $isCY = ($ychk === $curYear); ?>
             <optgroup label="<?= $ychk ?>">
@@ -486,7 +701,7 @@ include 'includes/header.php';
   <div class="col-lg-4">
     <div class="card db-card h-100">
       <div class="card-header" style="display:flex;align-items:center;gap:8px">
-        <span class="card-header-title me-auto"><i class="fa-solid fa-chart-pie me-1"></i>Expenses by Category</span>
+        <span class="card-header-title me-auto"><i class="fa-solid fa-chart-simple me-1"></i>Expenses by Category</span>
         <select id="catChartPeriod" class="form-select form-select-sm" style="width:auto;max-width:185px;font-size:11.5px">
           <?php foreach ($years as $ychk): $isCY = ($ychk === $curYear); ?>
           <optgroup label="<?= $ychk ?>">
@@ -506,6 +721,7 @@ include 'includes/header.php';
         <div id="catChartSpinner" style="display:none;position:absolute;inset:0;background:var(--paper);z-index:10;align-items:center;justify-content:center;border-radius:0 0 var(--laskie-radius-card) var(--laskie-radius-card)">
           <div class="spinner-border spinner-border-sm" style="color:var(--ink)" role="status"><span class="visually-hidden">Loading…</span></div>
         </div>
+        <div id="catChartEmpty" class="text-muted small text-center py-4" style="display:none">No expenses recorded in this period.</div>
         <canvas id="catChart"></canvas>
       </div>
     </div>
@@ -517,9 +733,9 @@ include 'includes/header.php';
   <div class="col-12">
     <div class="card db-card">
       <div class="card-header">
-        <span class="card-header-title"><i class="fa-solid fa-chart-line me-1"></i>Monthly Revenue & Net Income — <?= $selectedYear ?></span>
+        <span class="card-header-title"><i class="fa-solid fa-chart-line me-1"></i>Monthly Revenue, Expenses &amp; Net Income — <?= $selectedYear ?></span>
       </div>
-      <div class="card-body db-chart"><canvas id="monthlyChart"></canvas></div>
+      <div class="card-body db-chart" style="height:300px"><canvas id="monthlyChart"></canvas></div>
     </div>
   </div>
 </div>
@@ -597,13 +813,13 @@ include 'includes/header.php';
           <?php if (money_is_pos($orphanRev) || money_is_pos($orphanExp)):
             $orphanNet = money_sub($orphanRev, $orphanExp);
           ?>
-          <!-- Unallocated row — sums revenue/expenses whose unit_id is NULL
-               (rows that survived a unit deletion via FK ON DELETE SET NULL).
-               Without this, $totalRev/$totalExp at the top would silently
-               disagree with the per-unit body sum below. -->
+          <!-- General row — revenue/expenses with no unit_id: expenses entered as
+               "General / not unit-specific" (the usual case), plus rows that
+               survived a unit deletion (FK ON DELETE SET NULL). Without it,
+               $totalRev/$totalExp at the top would disagree with this table. -->
           <tr class="db-row-now">
-            <td class="fw-600"><i class="fa-solid fa-link-slash me-1"></i>Unallocated</td>
-            <td><span class="badge" style="background:var(--ink);color:var(--paper);font-size:10px">deleted unit</span></td>
+            <td class="fw-600">General</td>
+            <td><span class="badge badge-staff">not unit-specific</span></td>
             <td class="text-end" data-order="<?= (float)$orphanRev ?>"><?= money($orphanRev) ?></td>
             <td class="text-end" data-order="<?= (float)$orphanExp ?>"><?= money($orphanExp) ?></td>
             <td class="text-end fw-bold<?= money_gte($orphanNet, '0.00') ? '' : ' delta-neg' ?>" data-order="<?= (float)$orphanNet ?>"><?= money($orphanNet) ?></td>
@@ -694,61 +910,106 @@ function loadUnitChart(period) {
     });
 }
 
+// ── Shared helpers for the redesigned charts ─────────────────
+// Compact peso label for bar ends: ₱950 · ₱12.5k · ₱1.25M.
+function _compact(v) {
+  var a = Math.abs(v), sign = v < 0 ? '−' : '';
+  if (a >= 1e6) return sign + '₱' + (a / 1e6).toFixed(a >= 1e7 ? 1 : 2).replace(/\.?0+$/, '') + 'M';
+  if (a >= 1e3) return sign + '₱' + (a / 1e3).toFixed(a >= 1e5 ? 0 : 1).replace(/\.0$/, '') + 'k';
+  return sign + '₱' + Math.round(a);
+}
+// Writes a text label just past the end of each row of a horizontal bar chart
+// (Chart.js has no data-label support in our vendored build). opts.text(i)
+// returns the label for row i; it is drawn after the longest bar in that row.
+var _rowLabels = {
+  id: 'laskieRowLabels',
+  afterDatasetsDraw: function (chart, args, opts) {
+    if (!opts || typeof opts.text !== 'function') return;
+    var T = window.chartTheme(), ctx = chart.ctx, metas = chart.getSortedVisibleDatasetMetas();
+    ctx.save();
+    ctx.textBaseline = 'middle';
+    var n = chart.data.labels.length;
+    for (var i = 0; i < n; i++) {
+      var x = chart.chartArea.left, y = null;
+      metas.forEach(function (m) { var el = m.data[i]; if (el) { x = Math.max(x, el.x); if (y === null) y = el.y; } });
+      var t = opts.text(i);
+      if (!t || y === null) continue;
+      ctx.font = (t.bold ? '700 ' : '600 ') + '10.5px "DM Sans", sans-serif';
+      ctx.fillStyle = t.bold ? T.ink : T.tick;
+      ctx.fillText(t.text, x + 6, y);
+    }
+    ctx.restore();
+  }
+};
+// Height for a horizontal bar chart: one comfortable row per label.
+function _sizeRows(canvas, rows) {
+  var box = canvas.parentNode;
+  var px = Math.max(220, rows * 30 + 70);
+  box.style.minHeight = px + 'px';
+  if (!box.classList.contains('db-chart-grow')) box.style.height = px + 'px';
+}
+
+// ── By unit: collected vs spent, one row per unit, ranked by net ──
+// Black bar = revenue collected; thinner grey bar on top = expenses. A unit
+// that lost money shows a grey bar longer than its black one, and its net
+// label is bold with a minus sign.
 function _renderUnitChart(data) {
   if (_unitChartInst) { _unitChartInst.destroy(); _unitChartInst = null; }
   var canvas = document.getElementById('unitChart');
   if (!canvas) return;
   var T = window.chartTheme();
-  var ctx = canvas.getContext('2d');
 
-  // Update stats strip
   var net = (data.totalRev || 0) - (data.totalExp || 0);
   var ucRev = document.getElementById('ucRev'), ucExp = document.getElementById('ucExp'),
       ucNet = document.getElementById('ucNet'), ucTitle = document.getElementById('ucTitle');
   if (ucRev)   ucRev.textContent = _phpFmt(data.totalRev);
   if (ucExp)   ucExp.textContent = _phpFmt(data.totalExp);
-  if (ucNet) {
-    ucNet.textContent = (net < 0 ? '▼ ' : '▲ ') + _phpFmt(Math.abs(net));
-    ucNet.style.fontWeight = net < 0 ? '700' : '600';
-  }
+  if (ucNet) { ucNet.textContent = (net < 0 ? '▼ ' : '▲ ') + _phpFmt(Math.abs(net)); ucNet.style.fontWeight = net < 0 ? '700' : '600'; }
   if (ucTitle) ucTitle.textContent = data.title || '';
 
-  // Net income per unit = revenue − expenses (top, black); expenses = grey base
-  var netData = (data.revenue || []).map(function(r, i) { return r - (data.expenses[i] || 0); });
+  var rows = (data.labels || []).map(function (l, i) {
+    var r = data.revenue[i] || 0, e = data.expenses[i] || 0;
+    return { label: l, rev: r, exp: e, net: r - e };
+  }).sort(function (a, b) { return b.net - a.net; });
+  _sizeRows(canvas, rows.length);
 
-  _unitChartInst = new Chart(ctx, {
+  _unitChartInst = new Chart(canvas.getContext('2d'), {
     type: 'bar',
     data: {
-      labels: data.labels,
+      labels: rows.map(function (r) { return r.label; }),
       datasets: [
-        { label: 'Expenses',   data: data.expenses, backgroundColor: T.series[1], borderColor: T.paper, borderWidth: 1, borderRadius: 3, stack: 'unit' },
-        { label: 'Net Income', data: netData,        backgroundColor: T.ink,       borderColor: T.paper, borderWidth: 1, borderRadius: 3, stack: 'unit' }
+        { label: 'Collected (revenue)', data: rows.map(function (r) { return r.rev; }),
+          backgroundColor: T.ink, borderRadius: 3, barPercentage: 0.9, categoryPercentage: 0.8, grouped: false, order: 2 },
+        { label: 'Spent (expenses)', data: rows.map(function (r) { return r.exp; }),
+          backgroundColor: T.series[1], borderRadius: 3, barPercentage: 0.45, categoryPercentage: 0.8, grouped: false, order: 1 }
       ]
     },
     options: {
-      responsive: true, maintainAspectRatio: false,
-      animation: { duration: 420, easing: 'easeOutQuart' },
-      layout: { padding: { top: 8 } },
+      indexAxis: 'y', responsive: true, maintainAspectRatio: false,
+      animation: { duration: 380, easing: 'easeOutQuart' },
+      layout: { padding: { right: 78, top: 4 } },
       plugins: {
-        legend: { position: 'top', align: 'start', labels: _monoLegend(T) },
+        legend: { position: 'top', align: 'start', labels: Object.assign(_monoLegend(T), { sort: function (a, b) { return a.datasetIndex - b.datasetIndex; } }) },
+        laskieRowLabels: { text: function (i) { var n = rows[i].net; return { text: _compact(n) + ' net', bold: n < 0 }; } },
         tooltip: _monoTooltip(T, {
           mode: 'index', intersect: false,
           callbacks: {
-            label: function(c) { return ' ' + c.dataset.label + ': ' + _phpFmt(c.parsed.y); },
-            afterBody: function(items) {
-              var rev = items.reduce(function(s, c) { return s + (c.parsed.y || 0); }, 0);
-              return [' Revenue: ' + _phpFmt(rev)];
+            label: function (c) { return ' ' + c.dataset.label + ': ' + _phpFmt(c.parsed.x); },
+            afterBody: function (items) {
+              var r = rows[items[0].dataIndex];
+              return [' Net income: ' + (r.net < 0 ? '−' : '') + _phpFmt(Math.abs(r.net))];
             }
           }
         })
       },
       scales: {
-        x: { stacked: true, grid: { display: false }, border: { display: false },
-             ticks: { color: T.tick, font: { size: 11, family: 'DM Sans' }, padding: 6 } },
-        y: { stacked: true, beginAtZero: true, grid: { color: T.grid }, border: { display: false },
-             ticks: { callback: _phpFmt, color: T.tick, font: { size: 10, family: 'DM Sans' } } }
+        x: { beginAtZero: true, grid: { color: T.grid }, border: { display: false },
+             ticks: { callback: function (v) { return _compact(v); }, color: T.tick, font: { size: 10, family: 'DM Sans' } } },
+        y: { grid: { display: false }, border: { display: false },
+             ticks: { color: T.ink, font: { size: 11, family: 'DM Sans', weight: '600' } } }
       }
-    }
+    },
+    plugins: [_rowLabels]
   });
 }
 
@@ -780,66 +1041,112 @@ function loadCatChart(period) {
     });
 }
 
+// ── By category: where the money went, largest first ─────────
 function _renderCatChart(data) {
   var el = document.getElementById('catChart');
   if (!el) return;
   if (_catChartInst) { _catChartInst.destroy(); _catChartInst = null; }
   var T = window.chartTheme();
-  // grayscale ramp spread across slices (cycles if categories exceed ramp)
-  var ramp = [T.ink, T.series[2], T.series[1], T.series[3], T.series[4], T.tick, T.grid];
-  var colors = (data.labels || []).map(function(_, i) { return ramp[i % ramp.length]; });
+  var total = (data.totals || []).reduce(function (s, v) { return s + (v || 0); }, 0);
+  var rows = (data.labels || []).map(function (l, i) { return { label: l, v: data.totals[i] || 0 }; })
+                                .sort(function (a, b) { return b.v - a.v; });
+  var empty = document.getElementById('catChartEmpty');
+  if (empty) empty.style.display = rows.length ? 'none' : '';
+  _sizeRows(el, Math.max(rows.length, 3));
   _catChartInst = new Chart(el, {
-    type: 'doughnut',
-    data: { labels: data.labels,
-      datasets: [{ data: data.totals, backgroundColor: colors, hoverOffset: 8, borderWidth: 2, borderColor: T.paper }] },
+    type: 'bar',
+    data: { labels: rows.map(function (r) { return r.label; }),
+            datasets: [{ label: 'Spent', data: rows.map(function (r) { return r.v; }),
+                         backgroundColor: rows.map(function (_, i) { return i === 0 ? T.ink : T.series[2]; }),
+                         borderRadius: 3, barPercentage: 0.75 }] },
     options: {
-      responsive: true, maintainAspectRatio: false, cutout: '62%',
+      indexAxis: 'y', responsive: true, maintainAspectRatio: false,
+      layout: { padding: { right: 92, top: 4 } },
       plugins: {
-        legend: { position: 'bottom', labels: _monoLegend(T) },
-        tooltip: _monoTooltip(T, { callbacks: { label: function(c) { return ' ' + c.label + ': ' + _phpFmt(c.parsed); } } })
+        legend: { display: false },
+        laskieRowLabels: { text: function (i) {
+          var pct = total ? Math.round(rows[i].v / total * 100) : 0;
+          return { text: _compact(rows[i].v) + ' · ' + pct + '%', bold: i === 0 };
+        } },
+        tooltip: _monoTooltip(T, { callbacks: {
+          label: function (c) { var pct = total ? (c.parsed.x / total * 100).toFixed(1) : 0; return ' ' + _phpFmt(c.parsed.x) + ' (' + pct + '% of expenses)'; }
+        } })
+      },
+      scales: {
+        x: { beginAtZero: true, grid: { color: T.grid }, border: { display: false },
+             ticks: { callback: function (v) { return _compact(v); }, color: T.tick, font: { size: 10, family: 'DM Sans' } } },
+        y: { grid: { display: false }, border: { display: false },
+             ticks: { color: T.ink, font: { size: 11, family: 'DM Sans', weight: '600' } } }
       }
-    }
+    },
+    plugins: [_rowLabels]
   });
 }
 
+// ── Monthly: money in vs money out, with the result as a line ─
+// Revenue (black) and expenses (grey) side by side for each month; the dashed
+// line is net income (revenue − expenses) and drops below zero in a losing
+// month. Months that haven't happened yet are left empty, not drawn as zero.
 function buildMonthlyChart() {
   var el = document.getElementById('monthlyChart');
   if (!el) return;
   if (_monthlyChartInst) { _monthlyChartInst.destroy(); _monthlyChartInst = null; }
   var T = window.chartTheme();
-  var d = CHART_DATA;
-  // Expenses (grey base) + Net Income (black top) stacked = Revenue height
-  var monthExp = d.monthRev.map(function(r, i) { return r - d.monthNet[i]; });
+  var d = CHART_DATA, hi = MONTHLY_HIGHLIGHT_IDX;
+  var future = function (i) { return hi >= 0 && i > hi; };
+  var rev = d.monthRev.map(function (v, i) { return future(i) ? null : v; });
+  var exp = d.monthRev.map(function (v, i) { return future(i) ? null : v - d.monthNet[i]; });
+  var net = d.monthNet.map(function (v, i) { return future(i) ? null : v; });
   _monthlyChartInst = new Chart(el, {
-    type: 'bar',
     data: {
       labels: d.monthLabels,
       datasets: [
-        { label: 'Expenses',   data: monthExp,    backgroundColor: T.series[1], borderColor: T.paper, borderWidth: 1, borderRadius: 3, stack: 'monthly' },
-        { label: 'Net Income', data: d.monthNet,  backgroundColor: T.ink,       borderColor: T.paper, borderWidth: 1, borderRadius: 3, stack: 'monthly' }
+        { type: 'line', label: 'Net income (revenue − expenses)', data: net, order: 0,
+          borderColor: T.series[2], backgroundColor: T.paper, borderWidth: 2, borderDash: [5, 4],
+          pointStyle: 'rectRot', pointRadius: 4, pointHoverRadius: 6, pointBorderWidth: 2, tension: 0.25, spanGaps: false },
+        { type: 'bar', label: 'Revenue (collected)', data: rev, order: 1,
+          backgroundColor: T.ink, borderRadius: 3, barPercentage: 0.85, categoryPercentage: 0.7 },
+        { type: 'bar', label: 'Expenses', data: exp, order: 2,
+          backgroundColor: T.series[1], borderRadius: 3, barPercentage: 0.85, categoryPercentage: 0.7 }
       ]
     },
     options: {
       responsive: true, maintainAspectRatio: false,
       layout: { padding: { top: 8 } },
+      interaction: { mode: 'index', intersect: false },
       plugins: {
-        legend: { position: 'top', align: 'start', labels: _monoLegend(T) },
+        legend: { position: 'top', align: 'start', labels: Object.assign(_monoLegend(T), {
+          usePointStyle: true,
+          sort: function (a, b) { var o = [1, 2, 0]; return o.indexOf(a.datasetIndex) - o.indexOf(b.datasetIndex); },
+          generateLabels: function (chart) {
+            return Chart.defaults.plugins.legend.labels.generateLabels(chart).map(function (l) {
+              if (l.datasetIndex === 0) { l.pointStyle = 'line'; l.lineDash = [5, 4]; l.lineWidth = 2; l.strokeStyle = T.series[2]; }
+              return l;
+            });
+          }
+        }) },
         tooltip: _monoTooltip(T, {
-          mode: 'index', intersect: false,
+          itemSort: function (a, b) { return a.datasetIndex === 0 ? 1 : b.datasetIndex === 0 ? -1 : a.datasetIndex - b.datasetIndex; },
           callbacks: {
-            label: function(c) { return ' ' + c.dataset.label + ': ' + _phpFmt(c.parsed.y); },
-            afterBody: function(items) {
-              var rev = items.reduce(function(s, c) { return s + (c.parsed.y || 0); }, 0);
-              return [' Revenue: ' + _phpFmt(rev)];
+            label: function (c) {
+              if (c.parsed.y === null) return null;
+              return ' ' + c.dataset.label.replace(/ \(.*\)/, '') + ': ' + (c.parsed.y < 0 ? '−' : '') + _phpFmt(Math.abs(c.parsed.y));
+            },
+            afterBody: function (items) {
+              var r = d.monthRev[items[0].dataIndex], n = d.monthNet[items[0].dataIndex];
+              return r > 0 ? [' Margin: ' + Math.round(n / r * 100) + '%'] : [];
             }
           }
         })
       },
       scales: {
-        x: { stacked: true, grid: { display: false }, border: { display: false },
-             ticks: { color: T.tick, font: { size: 11, family: 'DM Sans' }, padding: 6 } },
-        y: { stacked: true, beginAtZero: true, grid: { color: T.grid }, border: { display: false },
-             ticks: { callback: _phpFmt, color: T.tick, font: { size: 10, family: 'DM Sans' } } }
+        y: { beginAtZero: true,
+             grid: { color: function (c) { return c.tick.value === 0 ? T.tick : T.grid; }, lineWidth: function (c) { return c.tick.value === 0 ? 1.5 : 1; } },
+             border: { display: false },
+             ticks: { callback: function (v) { return _compact(v); }, color: T.tick, font: { size: 10, family: 'DM Sans' } } },
+        x: { grid: { display: false }, border: { display: false },
+             ticks: { font: function (c) { return { size: 11, family: 'DM Sans', weight: c.index === hi ? '800' : '500' }; },
+                      color: function (c) { return future(c.index) ? T.muted : (c.index === hi ? T.ink : T.tick); }, padding: 6 } }
       }
     }
   });
@@ -892,6 +1199,18 @@ document.addEventListener('DOMContentLoaded', function() {
     });
   }
 
+  if (document.getElementById('balanceTable')) {
+    // Initial order comes from PHP (most-behind first); clicking a header re-sorts.
+    $('#balanceTable').DataTable({
+      paging: false,
+      order: [],
+      autoWidth: false,
+      columnDefs: [{ orderable: false, targets: 5 }],
+      dom: '<"d-flex justify-content-end mb-2"f>rt',
+      language: { search:'Filter:' }
+    });
+  }
+
   if (document.getElementById('unitStatusTable')) {
     // scrollY keeps the previous fixed-height feel (the column used to be
     // pinned at 680px). Search box lets the user type "vacant"/"paid"/etc.
@@ -900,7 +1219,8 @@ document.addEventListener('DOMContentLoaded', function() {
       paging: false,
       scrollY: '600px',
       scrollCollapse: true,
-      order: [[2,'asc']],
+      order: [],                     // PHP already sorts most urgent first
+      autoWidth: false,
       dom: '<"d-flex justify-content-end mb-2"f>rt',
       language: { search:'Filter:' }
     });
@@ -908,4 +1228,58 @@ document.addEventListener('DOMContentLoaded', function() {
 });
 </script>
 
+<?php if (isAdmin() && $balanceRows !== null): ?>
+<script>
+// Demand letter dialog. The form posts to admin/demand_letter.php in a new tab
+// (the PDF opens there to print or save); this page reloads afterwards so the
+// row shows the letter's number.
+var dmModal = null;
+document.addEventListener('DOMContentLoaded', function () {
+  var el = document.getElementById('demandModal');
+  if (!el) return;
+  dmModal = new bootstrap.Modal(el);
+  var form = document.getElementById('demandForm');
+  form.addEventListener('change', dmCheckRc);
+  form.addEventListener('submit', function () {
+    document.getElementById('dmGo').disabled = true;
+    setTimeout(function () { dmModal.hide(); showToast('Demand letter issued — it opened in a new tab.', 'success'); }, 300);
+    setTimeout(function () { location.reload(); }, 2500);
+  });
+});
+var _dm = {};
+function openDemand(d) {
+  _dm = d;
+  document.getElementById('dmTenant').value = d.id;
+  document.getElementById('dmTitle').textContent = 'Demand letter — ' + d.name + ' (' + d.unit + ')';
+  var months = parseFloat(d.months || 0);
+  document.getElementById('dmSummary').textContent = 'Total due ' + fmt(d.total) + ' — rent ' + fmt(d.rent)
+    + ' (' + months.toFixed(1) + ' months)' + (parseFloat(d.svc) > 0 ? ', charges ' + fmt(d.svc) : '') + '.';
+  document.querySelector('#demandForm input[value="pay"]').checked = true;
+  document.getElementById('dmDays').value = <?= DEMAND_DEFAULT_DAYS ?>;
+  document.getElementById('dmGo').disabled = false;
+  dmCheckRc();
+  dmModal.show();
+}
+// Rent-controlled units (₱10,000/mo or less): RA 9653 §9 makes arrears a ground
+// for ejectment only at three months. Warn, don't block.
+function dmCheckRc() {
+  var vacate = document.querySelector('#demandForm input[name="letter_type"]:checked').value === 'vacate';
+  var w = document.getElementById('dmRcWarn');
+  var show = vacate && _dm.rc === '1' && parseFloat(_dm.months || 0) < 3;
+  w.style.display = show ? '' : 'none';
+  w.textContent = show ? 'This unit is rent-controlled (RA 9653). Non-payment becomes a ground for ejectment only at three months of arrears — this tenant is at '
+    + parseFloat(_dm.months).toFixed(1) + '. A Demand to Pay may be the better step for now.' : '';
+}
+</script>
+<?php endif; ?>
+<?php reconEmit('dashboard', [
+    'year' => $selectedYear, 'total_rev' => (string)$totalRev, 'total_exp' => (string)$totalExp,
+    'monthly_rev' => array_values($monthlyRev), 'monthly_exp' => array_values($monthlyExp),
+    'unit_rev' => $unitRevenue, 'unit_exp' => $unitExpenses,
+    'arrears_current' => (string)($arrearsCurrent ?? ''), 'arrears_past' => (string)($arrearsPast ?? ''),
+    'tracker' => array_map(fn($r) => ['tenant_id' => (int)$r['tenant']['id'], 'unit_id' => (int)$r['tenant']['unit_id'],
+        'balance' => $r['st']['balance'], 'rent_owed' => $r['st']['rent_owed'], 'svc_owed' => $r['st']['svc_owed'], 'flagged' => $r['st']['flagged']], $balanceRows ?? []),
+    'unit_status' => array_map(fn($r) => ['unit_id' => (int)$r['u']['id'], 'state' => $r['state'], 'billed' => $r['billed'] ?? null,
+        'expected' => $r['expected'] ?? null, 'paid' => $r['paid'] ?? null, 'left' => $r['left'] ?? null], $usRows ?? []),
+]); ?>
 <?php include 'includes/footer.php'; ?>

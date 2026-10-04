@@ -493,6 +493,27 @@ CREATE TABLE IF NOT EXISTS tenant_transfers (
     CONSTRAINT fk_tt_undone      FOREIGN KEY (undone_by)      REFERENCES users(id)        ON DELETE SET NULL
 );
 
+-- Demand letters (migration 016): numbered DL-YYYY-#### notices to tenants
+-- behind on rent, with a snapshot of exactly what each letter demanded.
+CREATE TABLE IF NOT EXISTS demand_letters (
+    id             INT AUTO_INCREMENT PRIMARY KEY,
+    ref_no         VARCHAR(30)  NOT NULL,
+    tenant_id      INT          DEFAULT NULL,
+    unit_id        INT          DEFAULT NULL,
+    letter_type    ENUM('pay','vacate') NOT NULL,
+    amount_due     DECIMAL(12,2) NOT NULL,
+    months_behind  DECIMAL(5,2) NOT NULL DEFAULT 0.00,
+    deadline_days  TINYINT UNSIGNED NOT NULL,
+    snapshot_json  LONGTEXT     NOT NULL,
+    issued_by      INT          DEFAULT NULL,
+    created_at     DATETIME     DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uniq_dl_ref (ref_no),
+    KEY idx_dl_tenant (tenant_id, created_at),
+    CONSTRAINT fk_dl_tenant FOREIGN KEY (tenant_id) REFERENCES tenants(id)      ON DELETE SET NULL,
+    CONSTRAINT fk_dl_unit   FOREIGN KEY (unit_id)   REFERENCES rental_units(id) ON DELETE SET NULL,
+    CONSTRAINT fk_dl_user   FOREIGN KEY (issued_by) REFERENCES users(id)        ON DELETE SET NULL
+);
+
 -- System Settings
 CREATE TABLE IF NOT EXISTS settings (
     id INT AUTO_INCREMENT PRIMARY KEY,

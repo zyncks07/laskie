@@ -214,6 +214,50 @@ PHP;
     }
 
     /**
+     * Render a GET page against laskie_test in a subprocess with RECON_MODE on,
+     * and return the figures it emitted via reconEmit() (keyed by the page tag)
+     * plus the raw HTML. Same isolation rule as callScript(): DB_NAME is pinned
+     * before anything connects.
+     *
+     * @return array{0: array<string, array>, 1: string}
+     */
+    protected function callPage(string $relPath, array $get, ?array $sessionUser = null): array
+    {
+        $getExport  = var_export($get, true);
+        $userExport = var_export($sessionUser ?? ['id'=>1,'username'=>'admin','full_name'=>'Test Admin','role'=>'admin','avatar_path'=>null], true);
+        $db   = static::TEST_DB;
+        $root = dirname(__DIR__, 2);
+        $abs  = $root . '/' . ltrim($relPath, '/');
+        $dir  = dirname($abs);
+        $self = var_export('/' . ltrim($relPath, '/'), true);
+
+        $code = <<<PHP
+<?php
+session_start();
+define('RECON_MODE', true);
+define('DB_NAME', '{$db}');   // pins the page to the isolated test DB
+\$_SESSION['user']              = {$userExport};
+\$_SESSION['csrf_token']        = str_repeat('c', 64);
+\$_SESSION['settings_unlocked'] = time();
+\$_GET = {$getExport};
+\$_SERVER['REQUEST_METHOD'] = 'GET';
+\$_SERVER['PHP_SELF']       = {$self};
+chdir('{$dir}');
+include '{$abs}';
+PHP;
+
+        $tmp = tempnam(sys_get_temp_dir(), 'laskie_isolated_test_');
+        file_put_contents($tmp, $code);
+        $out = (string) shell_exec('php ' . escapeshellarg($tmp) . ' 2>/dev/null');
+        @unlink($tmp);
+        $blocks = [];
+        if (preg_match_all('#<script type="application/json" class="laskie-recon" data-page="([^"]+)">(.*?)</script>#s', $out, $m, PREG_SET_ORDER)) {
+            foreach ($m as $b) $blocks[$b[1]] = json_decode($b[2], true);
+        }
+        return [$blocks, $out];
+    }
+
+    /**
      * Invoke a payments/api_payment.php action against laskie_test in a
      * subprocess (jsonOk/jsonErr call exit(), which would kill the test runner).
      *

@@ -25,7 +25,11 @@ if ($periodType === 'month') {
     $title = "Full Year $year";
 }
 
-$revQ = $pdo->prepare("SELECT unit_id, COALESCE(SUM(amount),0) AS total FROM payments WHERE payment_date >= ? AND payment_date < ? AND deleted_at IS NULL AND status != 'voided' GROUP BY unit_id");
+// Net of refunds (CLAUDE.md §5 inv. 6) so this chart agrees with the hero strip.
+$revQ = $pdo->prepare("SELECT p.unit_id, COALESCE(SUM(p.amount - COALESCE(r.refsum,0)),0) AS total
+    FROM payments p
+    LEFT JOIN (SELECT payment_id, SUM(amount) AS refsum FROM refunds GROUP BY payment_id) r ON r.payment_id = p.id
+    WHERE p.payment_date >= ? AND p.payment_date < ? AND p.deleted_at IS NULL AND p.status != 'voided' GROUP BY p.unit_id");
 $revQ->execute([$start, $end]);
 $revMap = array_column($revQ->fetchAll(), 'total', 'unit_id');
 
@@ -41,6 +45,16 @@ foreach ($units as $u) {
     $labels[]   = $u['unit_name'];
     $revenue[]  = $rev;
     $expenses[] = $exp;
+}
+// Rows with no unit — "General / not unit-specific" expenses, or rows whose unit
+// was deleted. Left out, the chart understated spending against the hero strip
+// and the per-unit table (which has the same General row).
+$genRev = (float)($revMap[''] ?? 0);
+$genExp = (float)($expMap[''] ?? 0);
+if ($genRev !== 0.0 || $genExp !== 0.0) {
+    $labels[]   = 'General';
+    $revenue[]  = $genRev;
+    $expenses[] = $genExp;
 }
 
 jsonOk([

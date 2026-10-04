@@ -10,7 +10,7 @@ require_once '../config/functions.php';
 requireLogin();
 
 $unitId   = (int)($_GET['unit_id']   ?? 0);
-$dateFrom = $_GET['date_from'] ?? date('Y-01-01');
+$dateFrom = $_GET['date_from'] ?? '';   // blank: soa_pdf.php defaults it to the tenancy start
 $dateTo   = $_GET['date_to']   ?? date('Y-m-d');
 // Occupancy scope, forwarded verbatim to soa_pdf.php below. Constrained to a
 // digit string or the literal 'all' before it can reach the filename.
@@ -25,7 +25,7 @@ if (!$unitId) { http_response_code(400); die('Unit ID required.'); }
 // land in the Content-Disposition filename below. Without this, anything
 // the user pastes into the URL leaks into the downloaded file name.
 $isoDate = '/^\d{4}-\d{2}-\d{2}$/';
-if (!preg_match($isoDate, $dateFrom)) $dateFrom = date('Y-01-01');
+if (!preg_match($isoDate, $dateFrom)) $dateFrom = '';
 if (!preg_match($isoDate, $dateTo))   $dateTo   = date('Y-m-d');
 // Keep $_GET in sync so the included soa_pdf.php sees the sanitized values.
 $_GET['date_from'] = $dateFrom;

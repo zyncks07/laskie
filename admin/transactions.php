@@ -547,4 +547,7 @@ function purgeTx(txType, id) {
 }
 </script>
 JS;
+$reconByType = [];
+foreach ($transactions as $t) if ($t['status'] !== 'voided') $reconByType[$t['tx_type']] = money_add($reconByType[$t['tx_type']] ?? '0.00', $t['amount']);
+reconEmit('transactions', ['from' => $fromDate, 'to' => $toDate, 'by_type' => $reconByType, 'grand_total' => (string)$grandTotal]);
 include '../includes/footer.php'; ?>

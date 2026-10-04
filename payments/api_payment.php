@@ -194,22 +194,7 @@ if ($action === 'save_payment') {
     // Attribute the payment to whoever occupied the unit for this period when
     // the form didn't say. An unattributed payment can't be placed on a tenant's
     // statement, and after a handover there is no safe way to guess later.
-    if ($tenantId === null) {
-        // The occupancy cycle this period's rent bill covers (post-paid).
-        $dq = $pdo->prepare("SELECT due_day FROM rental_units WHERE id=?");
-        $dq->execute([$unitId]);
-        [$periodStart, $periodEnd] = rentCycle((int)($dq->fetchColumn() ?: 5), $periodMonth, $periodYear);
-        $oq = $pdo->prepare(
-            "SELECT id FROM tenants
-             WHERE unit_id=? AND status IN ('active','former','inactive')
-               AND (contract_start IS NULL OR contract_start <= ?)
-               AND (contract_end   IS NULL OR contract_end   >= ?)
-             ORDER BY status='active' DESC, COALESCE(contract_start,'1970-01-01') DESC
-             LIMIT 1"
-        );
-        $oq->execute([$unitId, $periodEnd, $periodStart]);
-        $tenantId = (int)($oq->fetchColumn() ?: 0) ?: null;
-    }
+    if ($tenantId === null) $tenantId = resolvePeriodTenant($pdo, $unitId, $periodMonth, $periodYear);
 
     // Reject an impossible charge target up front — before the upload below and
     // before any row is written — so a bad amount can't leave an orphaned file.
@@ -986,6 +971,9 @@ if ($action === 'save_charge') {
         } catch (Throwable $e) { if ($pdo->inTransaction()) $pdo->rollBack(); throw $e; }
         jsonOk(['msg' => 'Charge updated.', 'id' => $chargeId]);
     } else {
+        // Same attribution rule as save_payment: a charge with no tenant is
+        // missing from that tenant's balance everywhere but the SoA.
+        if ($tenantId === null) $tenantId = resolvePeriodTenant($pdo, $unitId, $periodMonth, $periodYear);
         $pdo->beginTransaction();
         try {
             $pdo->prepare("INSERT INTO unit_charges (unit_id,tenant_id,service_type_id,amount,description,charge_date,period_month,period_year,source,created_by) VALUES (?,?,?,?,?,?,?,?,'pre_billed',?)")

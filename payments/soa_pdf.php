@@ -9,19 +9,14 @@ require_once '../config/functions.php';
 requireLogin();
 
 $unitId   = (int)($_GET['unit_id']   ?? 0);
-$dateFrom = $_GET['date_from'] ?? date('Y-01-01');
-$dateTo   = $_GET['date_to']   ?? date('Y-m-d');
+// A blank start defaults once the tenancy is known (soaDefaultFrom), exactly
+// as on the SoA page.
+$isoDate  = fn($v) => is_string($v) && preg_match('/^\d{4}-\d{2}-\d{2}$/', $v) ? $v : null;
+$dateFrom = $isoDate($_GET['date_from'] ?? null);
+$dateTo   = $isoDate($_GET['date_to'] ?? null) ?? date('Y-m-d');
 // Occupancy scope — must mirror payments/history.php exactly, or the printed
 // statement and the on-screen one disagree. 'all' is the unit ledger.
 $tenantParam = trim((string)($_GET['tenant_id'] ?? ''));
-
-// Clamp absurd spans: the ledger is built month-by-month in PHP (a query per
-// month per occupant), so a 1000-year range would pin a worker. Cap at ~10 yrs.
-$fromTs = strtotime((string)$dateFrom);
-$toTs   = strtotime((string)$dateTo);
-if ($fromTs && $toTs && ($toTs - $fromTs) > 3652 * 86400) {
-    $dateFrom = date('Y-m-d', $toTs - 3652 * 86400);
-}
 
 if (!$unitId) die('<p style="font-family:sans-serif;padding:2rem;color:red;">Unit ID required.</p>');
 
@@ -57,6 +52,14 @@ if (!$scopeAll) {
         }
     }
     if (!$tenant && $unitTenants) $tenant = end($unitTenants);
+}
+$dateFrom = $dateFrom ?? soaDefaultFrom($tenant);
+// Clamp absurd spans: the ledger is built month-by-month in PHP (a query per
+// month per occupant), so a 1000-year range would pin a worker. Cap at ~10 yrs.
+$fromTs = strtotime($dateFrom);
+$toTs   = strtotime($dateTo);
+if ($fromTs && $toTs && ($toTs - $fromTs) > 3652 * 86400) {
+    $dateFrom = date('Y-m-d', $toTs - 3652 * 86400);
 }
 if ($tenant) {
     $occupants = [$tenant];
@@ -217,6 +220,16 @@ foreach ($pdfServiceCharges as $c) {
     }
 }
 
+// Balance brought forward — same helper and rule as the SoA page (§5 inv. 16).
+$openings = soaOpeningBalances($pdo, $unitId, $occupants, $dueDay, $baseRate, $scopeTenantId, $dateFrom);
+if (!$scopeAll && $openings) $openings = [$scopeTenantId => money_sum(array_values($openings))];
+foreach ($openings as $owner => $amt) {
+    if (to_cents($amt) === 0) continue;
+    $ledger[] = ['date' => $dateFrom, 'description' => 'Balance brought forward',
+                 'type' => 'opening', 'debit' => '0.00', 'credit' => '0.00', 'opening' => $amt,
+                 'invoice_no' => '', 'cashier' => '', 'owner' => $owner === '' ? null : (int)$owner];
+}
+
 // Occupancy grouping — the unit ledger prints each tenancy as its own block
 // with its own running balance, so no tenant's section inherits the previous
 // one's debt. A tenant-scoped statement has a single block.
@@ -231,7 +244,7 @@ usort($ledger, function($a,$b) use ($scopeAll, $occRank) {
     }
     $c = strcmp($a['date'],$b['date']);
     if ($c !== 0) return $c;
-    $order = ['charge'=>0,'rent_waiver'=>1,'service_charge'=>2,'service_waiver'=>3,'payment'=>4,'refund'=>5];
+    $order = ['opening'=>-1,'charge'=>0,'rent_waiver'=>1,'service_charge'=>2,'service_waiver'=>3,'payment'=>4,'refund'=>5];
     return ($order[$a['type']]??4) - ($order[$b['type']]??4);
 });
 // Running balance — cents math, no float drift. Resets at each handover.
@@ -244,7 +257,7 @@ foreach ($ledger as &$row) {
         $runBal = '0.00';
     }
     $prevOwner = $owner;
-    $runBal = money_add($runBal, money_sub($row['debit'], $row['credit']));
+    $runBal = money_add($runBal, money_add($row['opening'] ?? '0.00', money_sub($row['debit'], $row['credit'])));
     $row['balance'] = $runBal;
 }
 unset($row);
@@ -257,7 +270,8 @@ $totalPaidOnly     = money_sum(array_column($payments, 'amount'));
 $totalRefunded     = money_sum(array_column($pdfRefunds, 'amount'));
 $totalDebit        = money_sum(array_column($ledger,'debit'));
 $totalCredit       = money_sum(array_column($ledger,'credit'));
-$finalBal          = money_sub($totalDebit, $totalCredit);
+$totalOpening      = money_sum(array_column($ledger, 'opening') ?: ['0.00']);
+$finalBal          = money_add($totalOpening, money_sub($totalDebit, $totalCredit));
 
 // ── Company Settings ──────────────────────────────────────────
 $companyName    = getSetting($pdo,'company_name',   'Laskie Rental Properties');
@@ -327,6 +341,7 @@ table.ledger tr.pay-row td{background:#f4f4f4;}
 table.ledger tr.refund-row td{background:#f4f4f4;color:var(--muted);}
 table.ledger tr.svc-charge-row td{background:#f4f4f4;}
 table.ledger tr.waiver-row td{background:#f4f4f4;color:var(--muted);font-style:italic;}
+table.ledger tr.opening-row td{font-style:italic;border-bottom:1px solid var(--border);}
 table.ledger tfoot td{padding:10px 8px;font-weight:700;border-top:2px solid var(--border);background:#f4f4f4;font-size:12px;}
 
 /* Balance box */
@@ -367,9 +382,9 @@ table.ledger tfoot td{padding:10px 8px;font-weight:700;border-top:2px solid var(
 
   <!-- Toolbar (hidden on print) -->
   <div class="toolbar no-print">
-    <a href="history.php?unit_id=<?=$unitId?>&date_from=<?=urlencode($dateFrom)?>&date_to=<?=urlencode($dateTo)?>" class="btn btn-secondary">← Back to SOA</a>
+    <a href="history.php?unit_id=<?=$unitId?>&tenant_id=<?=urlencode($tenantParam)?>&date_from=<?=urlencode($dateFrom)?>&date_to=<?=urlencode($dateTo)?>" class="btn btn-secondary">← Back to SOA</a>
     <button onclick="window.print()" class="btn btn-secondary">🖨 Print</button>
-    <a href="soa_pdf_download.php?unit_id=<?=$unitId?>&date_from=<?=urlencode($dateFrom)?>&date_to=<?=urlencode($dateTo)?>" class="btn btn-primary">⬇ Download PDF</a>
+    <a href="soa_pdf_download.php?unit_id=<?=$unitId?>&tenant_id=<?=urlencode($tenantParam)?>&date_from=<?=urlencode($dateFrom)?>&date_to=<?=urlencode($dateTo)?>" class="btn btn-primary">⬇ Download PDF</a>
   </div>
 
   <div class="soa">
@@ -477,6 +492,7 @@ table.ledger tfoot td{padding:10px 8px;font-weight:700;border-top:2px solid var(
               'service_charge' => 'svc-charge-row',
               'refund'         => 'refund-row',
               'rent_waiver', 'service_waiver' => 'waiver-row',
+              'opening'        => 'opening-row',
               default          => 'pay-row',
           };
         ?>
@@ -533,6 +549,12 @@ table.ledger tfoot td{padding:10px 8px;font-weight:700;border-top:2px solid var(
     <!-- Balance Summary -->
     <div class="balance-section">
       <div class="balance-breakdown">
+        <?php if (to_cents($totalOpening) !== 0): ?>
+        <div class="bal-item">
+          <span class="bal-label">Brought Forward</span>
+          <span class="bal-value" style="color:<?=money_is_pos($totalOpening)?'var(--danger)':'var(--info)'?>"><?=money_is_pos($totalOpening) ? money($totalOpening) : '(' . money(money_abs($totalOpening)) . ') CR'?></span>
+        </div>
+        <?php endif; ?>
         <div class="bal-item">
           <span class="bal-label">Total Charged</span>
           <span class="bal-value" style="color:var(--danger)"><?=money($totalChargesDebit)?></span>
@@ -593,5 +615,8 @@ if (new URLSearchParams(window.location.search).get('auto') === '1') {
   window.addEventListener('load', () => setTimeout(() => window.print(), 500));
 }
 </script>
+<?php reconEmit('soa_preview', ['unit_id' => $unitId, 'scope' => $scopeAll ? 'all' : $scopeTenantId, 'from' => $dateFrom, 'to' => $dateTo,
+    'balance' => (string)$finalBal, 'debit' => (string)$totalDebit, 'credit' => (string)$totalCredit,
+    'rows' => array_map(fn($r) => ['date' => $r['date'], 'type' => $r['type'], 'debit' => (string)$r['debit'], 'credit' => (string)$r['credit'], 'owner' => $r['owner'] ?? null, 'desc' => $r['description']], $ledger)]); ?>
 </body>
 </html>

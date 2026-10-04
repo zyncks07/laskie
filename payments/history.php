@@ -15,8 +15,13 @@ $units    = $pdo->query("
     ORDER BY ru.unit_name
 ")->fetchAll();
 $selUnit  = (int)($_GET['unit_id']   ?? ($units[0]['id'] ?? 0));
-$dateFrom = $_GET['date_from'] ?? date('Y-01-01');
-$dateTo   = $_GET['date_to']   ?? date('Y-m-d');
+// Dates left blank (e.g. after switching unit) default once the tenancy is
+// known: from the tenancy's start, to TODAY. Never to the contract end — rent is
+// post-paid, so a tenant's final bill is dated the day AFTER they move out, and
+// arrears are often paid later still; both must stay on the statement.
+$isoDate  = fn($v) => is_string($v) && preg_match('/^\d{4}-\d{2}-\d{2}$/', $v) ? $v : null;
+$dateFrom = $isoDate($_GET['date_from'] ?? null);
+$dateTo   = $isoDate($_GET['date_to'] ?? null) ?? date('Y-m-d');
 // Scope selector: a tenant id narrows the statement to that one occupancy;
 // 'all' is the landlord's unit ledger (every occupant, segmented).
 $tenantParam = trim((string)($_GET['tenant_id'] ?? ''));
@@ -70,6 +75,10 @@ if ($selUnit) {
         if (!$tenant && $unitTenants) $tenant = end($unitTenants);
     }
 
+    if ($dateFrom === null) {
+        $dateFrom = soaDefaultFrom($tenant);
+    }
+
     if ($tenant) {
         // Deliberately NOT clamping the range to the contract window here.
         // buildRentChargeRows() already bounds the virtual rent charges by the
@@ -87,6 +96,7 @@ if ($selUnit) {
             (empty($o['contract_end'])   || $o['contract_end']   >= $dateFrom)));
     }
 }
+$dateFrom = $dateFrom ?? date('Y-01-01');   // no unit at all
 // Tenant filter applied to every ledger source below. Unattributed rows
 // (tenant_id IS NULL) are matched by date against the tenancy window, so a row
 // recorded before payments carried a tenant can never silently vanish.
@@ -355,6 +365,26 @@ if ($selUnit && $unitInfo) {
             ];
         }
     }
+
+    // Balance brought forward: everything dated before the range, so the
+    // closing figure is the tenancy's real balance for ANY range picked, not
+    // just the in-range Dr − Cr (CLAUDE.md §5 invariant 16). One line per
+    // occupancy in unit-ledger mode; one line on a tenant's statement.
+    $openings = soaOpeningBalances($pdo, $selUnit, $occupants, $dueDay, $baseRate, $scopeTenantId, $dateFrom);
+    if (!$scopeAll && $openings) $openings = [$scopeTenantId => money_sum(array_values($openings))];
+    foreach ($openings as $owner => $amt) {
+        if (to_cents($amt) === 0) continue;
+        $ledger[] = [
+            'date'        => $dateFrom,
+            'description' => 'Balance brought forward',
+            'type'        => 'opening',
+            'debit'       => '0.00',
+            'credit'      => '0.00',
+            'opening'     => $amt,
+            'owner'       => $owner === '' ? null : (int)$owner,
+            'encoded'     => null,
+        ];
+    }
 }
 
 // Occupancy ordering — in unit-ledger mode the ledger is grouped by tenancy so
@@ -381,7 +411,7 @@ usort($ledger, function($a,$b) use ($scopeAll, $occRank) {
     }
     $cmp = strcmp($a['date'],$b['date']);
     if ($cmp !== 0) return $cmp;
-    $order = ['charge'=>0,'rent_waiver'=>1,'service_charge'=>2,'service_waiver'=>3,'payment'=>4,'refund'=>5];
+    $order = ['opening'=>-1,'charge'=>0,'rent_waiver'=>1,'service_charge'=>2,'service_waiver'=>3,'payment'=>4,'refund'=>5];
     return ($order[$a['type']]??4) - ($order[$b['type']]??4);
 });
 
@@ -397,7 +427,7 @@ foreach ($ledger as &$row) {
         $runBal = '0.00';
     }
     $prevOwner = $owner;
-    $runBal = money_add($runBal, money_sub($row['debit'], $row['credit']));
+    $runBal = money_add($runBal, money_add($row['opening'] ?? '0.00', money_sub($row['debit'], $row['credit'])));
     $row['balance'] = $runBal;
     $segBal[$owner === null ? '' : $owner] = $runBal;
 }
@@ -407,7 +437,8 @@ $totalChargesDebit = money_sum(array_map(fn($r) => in_array($r['type'],['charge'
 $totalWaived       = money_sum(array_map(fn($r) => in_array($r['type'],['rent_waiver','service_waiver']) ? $r['credit'] : '0.00', $ledger));
 $totalDebit        = money_sum(array_column($ledger, 'debit'));
 $totalCredit       = money_sum(array_column($ledger, 'credit'));
-$finalBal          = money_sub($totalDebit, $totalCredit);
+$totalOpening      = money_sum(array_column($ledger, 'opening') ?: ['0.00']);
+$finalBal          = money_add($totalOpening, money_sub($totalDebit, $totalCredit));
 
 // Link/scope helpers shared by the PDF buttons, the filter form and the header.
 $scopeParam = $scopeAll ? 'all' : (string)$scopeTenantId;
@@ -448,7 +479,7 @@ include '../includes/header.php';
     <form method="GET" class="row g-2 align-items-end">
       <div class="col-sm-6 col-md-3">
         <label class="form-label">Rental Unit</label>
-        <select name="unit_id" class="form-select form-select-sm" onchange="this.form.submit()">
+        <select name="unit_id" class="form-select form-select-sm" onchange="onUnitChange(this)">
           <?php foreach($units as $u): ?>
           <option value="<?=$u['id']?>" <?=$u['id']==$selUnit?'selected':''?>>
             <?=clean($u['unit_name'])?> (<?=ucfirst($u['status'])?>)<?= $u['tenant_name'] ? ' — ' . clean($u['tenant_name']) : '' ?>
@@ -606,7 +637,7 @@ include '../includes/header.php';
           <?php if(money_is_pos($finalBal)): ?><span class="delta-neg"><?=money(money_abs($finalBal))?></span>
           <?php else: ?><?=money(money_abs($finalBal))?><?php endif; ?>
         </div>
-        <div class="stat-sub"><?=money_is_pos($finalBal)?'Due':(money_lt($finalBal,'0.00')?'Overpaid (CR)':'Fully settled')?></div>
+        <div class="stat-sub"><?=money_is_pos($finalBal)?'Due':(money_lt($finalBal,'0.00')?'Overpaid (CR)':'Fully settled')?><?php if (to_cents($totalOpening) !== 0): ?> · incl. <?=money_is_pos($totalOpening) ? money($totalOpening) : '(' . money(money_abs($totalOpening)) . ') CR'?> brought forward<?php endif; ?></div>
       </div>
     </div>
   </div>
@@ -651,12 +682,33 @@ include '../includes/header.php';
       <?php if (empty($ledger)): ?>
         <tr><td colspan="9" class="text-center py-4 text-muted">No records for the selected period and unit.</td></tr>
       <?php endif; ?>
-      <?php $segSeen = false; foreach($ledger as $li => $row): ?>
+      <?php
+        // Display order is NEWEST FIRST so the latest entries are at the top.
+        // $ledger itself stays oldest-first: the running balances above were
+        // computed in that order and each row keeps its own figure.
+        // Unit-ledger mode: latest occupancy first; each block opens with its
+        // banner and closing balance, then its entries newest-first.
+        $display = [];
+        if ($scopeAll) {
+            $segs = []; $cur = -1;
+            foreach ($ledger as $li => $r) {
+                if ($cur < 0 || !empty($r['segment_start'])) { $segs[++$cur] = []; }
+                $segs[$cur][] = $li;
+            }
+            foreach (array_reverse($segs) as $seg) {
+                $display[] = ['banner', $seg[0]];
+                $display[] = ['close', end($seg)];
+                foreach (array_reverse($seg) as $li) $display[] = ['row', $li];
+            }
+        } else {
+            foreach ($ledger as $li => $r) $display[] = ['row', $li];
+        }
+      ?>
+      <?php foreach ($display as [$kind, $li]): $row = $ledger[$li]; ?>
       <?php
         // Occupancy banner in unit-ledger mode: one per tenancy, so it is always
         // visible whose debt a given block of rows belongs to.
-        if ($scopeAll && (!$segSeen || !empty($row['segment_start']))):
-            $segSeen = true;
+        if ($kind === 'banner'):
             $segOwner = $row['owner'] ?? null;
             $segName  = $segOwner !== null ? ($occNames[$segOwner] ?? 'Unknown tenant') : 'Unattributed';
       ?>
@@ -665,7 +717,20 @@ include '../includes/header.php';
           <i class="fa-solid fa-user fa-xs me-1"></i>Occupancy — <?=clean($segName)?>
         </td>
       </tr>
-      <?php endif; ?>
+      <?php continue; endif; ?>
+      <?php if ($kind === 'close'): ?>
+      <tr class="soa-segment-total">
+        <td colspan="7" class="text-end" style="font-weight:600;font-size:12px;color:var(--text-muted)">
+          Closing balance — <?=clean($segName ?? '')?>
+        </td>
+        <td class="text-end fw-semibold num" style="border-bottom:1px solid var(--gray-300)">
+          <?php if(money_is_pos($row['balance'])): ?><span class="delta-neg"><?=money($row['balance'])?></span>
+          <?php elseif(money_lt($row['balance'],'0.00')): ?><span class="text-muted">(<?=money(money_abs($row['balance']))?>) CR</span>
+          <?php else: ?><span class="text-muted">Settled</span><?php endif; ?>
+        </td>
+        <td class="no-print"></td>
+      </tr>
+      <?php continue; endif; ?>
       <?php
         $isRefund  = $row['type'] === 'refund';
         $isSvcChg  = $row['type'] === 'service_charge';
@@ -674,10 +739,12 @@ include '../includes/header.php';
         $trClass   = $row['type']==='payment' ? 'tr-payment' : ($isRefund ? 'tr-refund' : ($isSvcChg ? 'tr-svc-charge' : ''));
       ?>
       <tr class="<?=$trClass?>">
-        <td data-order="<?=$row['date']?>" style="white-space:nowrap;font-size:12.5px"><?=fmtDate($row['date'],'M j, Y')?></td>
+        <td data-order="<?=$row['date'] . sprintf('-%06d', $li)?>" style="white-space:nowrap;font-size:12.5px"><?=fmtDate($row['date'],'M j, Y')?></td>
         <td data-order="<?=clean($row['encoded'] ?? '')?>" style="white-space:nowrap;font-size:12px;color:var(--text-muted)"><?=fmtDateTime($row['encoded'] ?? null)?></td>
         <td class="cell-trunc-lg" style="font-size:12.5px">
-          <?php if($row['type']==='charge'): ?>
+          <?php if($row['type']==='opening'): ?>
+            <i class="fa-solid fa-arrow-turn-down fa-xs me-1 text-muted"></i><em><?=clean($row['description'])?></em>
+          <?php elseif($row['type']==='charge'): ?>
             <i class="fa-solid fa-file-invoice fa-xs me-1 text-muted"></i><?=clean($row['description'])?>
           <?php elseif($isWaiver): ?>
             <i class="fa-solid fa-file-circle-xmark fa-xs me-1 text-muted"></i>
@@ -734,12 +801,13 @@ include '../includes/header.php';
         <td style="font-size:12px;color:var(--text-muted)"><?=clean($row['cashier']??'—')?></td>
         <td class="text-end num">
           <?php if(money_is_pos($row['debit'])): ?>
-            <strong><?=money($row['debit'])?></strong>
+            <?=money($row['debit'])?>
           <?php else: ?><span class="text-muted">—</span><?php endif; ?>
         </td>
         <td class="text-end num">
+          <?php // Payments/credits are the emphasised column, as on the SoA preview (soa_pdf.php). ?>
           <?php if(money_is_pos($row['credit'])): ?>
-            <?=money($row['credit'])?>
+            <span class="fw-semibold"><?=money($row['credit'])?></span>
           <?php else: ?><span class="text-muted">—</span><?php endif; ?>
         </td>
         <td class="text-end fw-600 num">
@@ -780,24 +848,6 @@ include '../includes/header.php';
           <?php endif; ?>
         </td>
       </tr>
-      <?php
-        // Close the occupancy when the next row belongs to a different tenancy
-        // (or there is no next row): each tenant gets their own bottom line.
-        $nextRow = $ledger[$li + 1] ?? null;
-        if ($scopeAll && ($nextRow === null || !empty($nextRow['segment_start']))):
-      ?>
-      <tr class="soa-segment-total">
-        <td colspan="7" class="text-end" style="font-weight:600;font-size:12px;color:var(--text-muted)">
-          Closing balance — <?=clean($segName ?? '')?>
-        </td>
-        <td class="text-end fw-600 num" style="border-top:1px solid var(--gray-300)">
-          <?php if(money_is_pos($row['balance'])): ?><span class="delta-neg"><?=money($row['balance'])?></span>
-          <?php elseif(money_lt($row['balance'],'0.00')): ?><span class="text-muted">(<?=money(money_abs($row['balance']))?>) CR</span>
-          <?php else: ?><span class="text-muted">Settled</span><?php endif; ?>
-        </td>
-        <td class="no-print"></td>
-      </tr>
-      <?php endif; ?>
       <?php endforeach; ?>
       </tbody>
       <tfoot>
@@ -980,7 +1030,9 @@ $(document).ready(function(){
   if (ledgerEl && !ledgerEl.dataset.segmented) {
     $('#ledgerTable').DataTable({
       pageLength: 50,
-      order: [[0,'asc']],
+      // Newest first. data-order is date + ledger position, so same-day
+      // entries reverse exactly and page 1 always holds the latest records.
+      order: [[0,'desc']],
       columnDefs: [{ targets: -1, orderable: false }],
       dom: '<"d-flex justify-content-between align-items-center mb-2"lf>rtip',
       language: { search:'Filter:', lengthMenu:'Show _MENU_' }
@@ -999,14 +1051,28 @@ $(document).ready(function(){
 // Switching tenancy resets the date range to that occupancy's contract window,
 // so the statement opens on the period it is actually for. The server clamps
 // the range again anyway — this just keeps the inputs honest.
+// The end date is always TODAY, not the contract end: rent is post-paid, so a
+// tenant's final bill is dated the day after they move out, and arrears are
+// often paid later still.
 function onTenantScopeChange(sel) {
   var opt  = sel.options[sel.selectedIndex];
   var from = document.getElementById('soaFrom');
   var to   = document.getElementById('soaTo');
   if (sel.value !== 'all') {
     if (opt.dataset.from) from.value = opt.dataset.from;
-    to.value = opt.dataset.to || new Date().toISOString().slice(0, 10);
+    to.value = new Date().toLocaleDateString('en-CA');
   }
+  sel.form.submit();
+}
+
+// A different unit means different tenancies: drop the previous selection's
+// tenant and dates so the server opens the new unit on its own tenancy window
+// (otherwise the old tenant's dates carried over and hid recent bills).
+function onUnitChange(sel) {
+  ['soaTenant', 'soaFrom', 'soaTo'].forEach(function (id) {
+    var el = document.getElementById(id);
+    if (el) el.disabled = true;   // disabled fields are not submitted
+  });
   sel.form.submit();
 }
 
@@ -1196,4 +1262,7 @@ function processRefund() {
   }
 </style>
 JS;
+reconEmit('soa', ['unit_id' => $selUnit, 'scope' => $scopeAll ? 'all' : $scopeTenantId, 'from' => $dateFrom, 'to' => $dateTo,
+    'balance' => (string)$finalBal, 'debit' => (string)$totalDebit, 'credit' => (string)$totalCredit,
+    'rows' => array_map(fn($r) => ['date' => $r['date'], 'type' => $r['type'], 'debit' => (string)$r['debit'], 'credit' => (string)$r['credit'], 'owner' => $r['owner'] ?? null, 'desc' => $r['description']], $ledger)]);
 include '../includes/footer.php'; ?>
