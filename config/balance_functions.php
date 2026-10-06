@@ -22,9 +22,13 @@ const DEMAND_TYPES         = ['pay' => 'Demand to Pay', 'vacate' => 'Final Deman
  * the oldest bill first, so the unpaid bills listed always sum to the rent
  * owed even when a payment was tagged to the wrong month.
  *
- * Returns: rate, rent_billed, rent_paid, rent_owed (signed), bills[] (unpaid),
- * charges[] (unpaid service charges), svc_owed, balance (signed),
- * months_behind, flagged, last_payment|null.
+ * Rent arrears charges (is_arrears in statementChargesSql()) are rent, not service:
+ * their unpaid part is in rent_owed / arrears_owed and itemised in bills[] (with
+ * a 'description' and no cycle), never in charges[] / svc_owed.
+ *
+ * Returns: rate, rent_billed, rent_paid, arrears_owed, rent_owed (signed),
+ * bills[] (unpaid, by due date), charges[] (unpaid service charges), svc_owed,
+ * balance (signed), months_behind, flagged, last_payment|null.
  */
 function tenantStatement(PDO $pdo, array $t, ?string $asOf = null, ?array $pre = null): array {
     $asOf = $asOf ?? date('Y-m-d');
@@ -41,7 +45,6 @@ function tenantStatement(PDO $pdo, array $t, ?string $asOf = null, ?array $pre =
         $voids = $pre !== null ? ($pre['voids'][$tid] ?? []) : getRentVoidMap($pdo, $uid, $t['contract_start'], $asOf, $tid);
         $rows  = buildRentChargeRows($pdo, $uid, [$t], $due, $base, $t['contract_start'], $asOf, $voids);
     }
-    usort($rows, fn($a, $b) => strcmp($a['date'], $b['date']));
     $billed = money_sum(array_column($rows, 'net') ?: ['0.00']);
 
     if ($pre !== null) {
@@ -55,12 +58,43 @@ function tenantStatement(PDO $pdo, array $t, ?string $asOf = null, ?array $pre =
         $paid = from_cents(to_cents($pq->fetchColumn()));
     }
 
+    if ($pre !== null) {
+        $chargeRows = $pre['charges'][$tid] ?? [];
+    } else {
+        $cq = $pdo->prepare(statementChargesSql('uc.tenant_id = ?'));
+        $cq->execute([$asOf, $tid]);
+        $chargeRows = $cq->fetchAll();
+    }
+    // Rent arrears charges join the rent bills; their 'net' is what is still
+    // outstanding on the charge itself (instalments settle via charge_payments).
+    // Rent payments clear the rent bills first — their receipts name those
+    // months — and only a rent credit left over is applied to the arrears.
+    $charges = []; $svc = '0.00'; $arrears = '0.00';
+    foreach ($chargeRows as $c) {
+        $out = money_max('0.00', money_sub($c['amount'], from_cents(to_cents($c['settled']))));
+        if (!money_is_pos($out)) continue;
+        $desc = $c['description'] ?: ($c['service_name'] ?? 'Charge');
+        if (!empty($c['is_arrears'])) {
+            $rows[] = ['date' => $c['charge_date'], 'net' => $out, 'amount' => from_cents(to_cents($c['amount'])), 'description' => $desc, 'arrears' => true];
+            $arrears = money_add($arrears, $out);
+            continue;
+        }
+        $charges[] = ['description' => $desc, 'date' => $c['charge_date'], 'unpaid' => $out];
+        $svc = money_add($svc, $out);
+    }
+    usort($rows, fn($a, $b) => [!empty($a['arrears']), $a['date']] <=> [!empty($b['arrears']), $b['date']]);
+
     $bills = []; $left = $paid;
     foreach ($rows as $r) {
         $cover  = money_min($left, $r['net']);
         $left   = money_sub($left, $cover);
         $unpaid = money_sub($r['net'], $cover);
         if (!money_is_pos($unpaid)) continue;
+        if (!empty($r['arrears'])) {
+            $bills[] = ['period' => $r['description'], 'description' => $r['description'], 'cycle_from' => null, 'cycle_to' => null,
+                        'due_date' => $r['date'], 'amount' => $r['amount'], 'unpaid' => $unpaid];
+            continue;
+        }
         [$cs, $ce] = rentCycle($due, $r['period_month'], $r['period_year']);
         $bills[] = [
             'period'       => date('F Y', mktime(0, 0, 0, $r['period_month'], 1, $r['period_year'])),
@@ -71,23 +105,9 @@ function tenantStatement(PDO $pdo, array $t, ?string $asOf = null, ?array $pre =
             'unpaid'       => $unpaid,
         ];
     }
+    usort($bills, fn($a, $b) => [$a['due_date'], empty($a['description'])] <=> [$b['due_date'], empty($b['description'])]);
 
-    if ($pre !== null) {
-        $chargeRows = $pre['charges'][$tid] ?? [];
-    } else {
-        $cq = $pdo->prepare(statementChargesSql('uc.tenant_id = ?'));
-        $cq->execute([$asOf, $tid]);
-        $chargeRows = $cq->fetchAll();
-    }
-    $charges = []; $svc = '0.00';
-    foreach ($chargeRows as $c) {
-        $out = money_max('0.00', money_sub($c['amount'], from_cents(to_cents($c['settled']))));
-        if (!money_is_pos($out)) continue;
-        $charges[] = ['description' => $c['description'] ?: ($c['service_name'] ?? 'Charge'), 'date' => $c['charge_date'], 'unpaid' => $out];
-        $svc = money_add($svc, $out);
-    }
-
-    $rentOwed = money_sub($billed, $paid);
+    $rentOwed = money_add(money_sub($billed, $paid), $arrears);
     $months   = money_is_pos($rate) ? round(to_cents($rentOwed) / to_cents($rate), 2) : 0.0;
 
     // Last money actually handed over, across a transfer chain; non-cash
@@ -112,7 +132,7 @@ function tenantStatement(PDO $pdo, array $t, ?string $asOf = null, ?array $pre =
     }
 
     return [
-        'rate' => $rate, 'rent_billed' => $billed, 'rent_paid' => $paid, 'rent_owed' => $rentOwed,
+        'rate' => $rate, 'rent_billed' => $billed, 'rent_paid' => $paid, 'arrears_owed' => $arrears, 'rent_owed' => $rentOwed,
         'bills' => $bills, 'charges' => $charges, 'svc_owed' => $svc,
         'balance' => money_add($rentOwed, $svc),
         'months_behind' => $months,
@@ -181,8 +201,13 @@ function activeTenantBalances(PDO $pdo, ?string $asOf = null): array {
 }
 
 // Unpaid-service-charge rows due by a date (first placeholder = as-of date).
+// is_arrears marks pre-billed charges that are really unpaid RENT from outside
+// the virtual rent engine — the 2025 opening balances imported at migration (no
+// service type, "Balance brought forward …") and the Arrears charge a transfer
+// carries to the new tenancy. tenantStatement() counts them as rent owed.
 function statementChargesSql(string $where): string {
-    return "SELECT uc.tenant_id, uc.description, uc.charge_date, uc.amount, " . chargeSettledSql('uc') . " AS settled, st.name AS service_name
+    return "SELECT uc.tenant_id, uc.description, uc.charge_date, uc.amount, " . chargeSettledSql('uc') . " AS settled, st.name AS service_name,
+                   (st.name = 'Arrears' OR (uc.service_type_id IS NULL AND uc.description LIKE 'Balance brought forward%')) AS is_arrears
             FROM unit_charges uc LEFT JOIN service_types st ON st.id = uc.service_type_id
             WHERE uc.voided_at IS NULL AND uc.charge_date <= ? AND $where
             ORDER BY uc.charge_date, uc.id";

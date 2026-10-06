@@ -216,6 +216,10 @@ Read [`install.sql`](install.sql) for the authoritative DDL. The live DB is curr
   rent behind in months, last real payment (non-cash transfer entries excluded), SoA link. Built by
   `activeTenantBalances()` → `tenantStatement()` (batched queries; post-paid: only bills dated ≤ today count).
   Unpaid bills are itemised **FIFO** (payments applied oldest-first), so they always sum to the rent owed.
+- **Rent owed includes rent-arrears charges**: the 2025 opening balances (`unit_charges`, no service type,
+  "Balance brought forward …") and a transfer's `Arrears` charge (`is_arrears` in `statementChargesSql()`). They
+  count toward months behind / the flag / the letter's rent lines, never `svc_owed`. Rent payments clear rent
+  bills first (receipts name those months); only a leftover rent credit is applied to the arrears.
 - "Needs intervention" = rent owed ≥ `BALANCE_FLAG_MONTHS` (2) × current rent. Flagged rows get the **admin-only**
   demand-letter button → `admin/demand_letter.php` (POST + CSRF): "Demand to Pay" or "Final Demand to Pay and
   Vacate" (Rule 70 §2), 5–60 days (default 15). `demand_letters` stores each letter with a snapshot of exactly what it

@@ -109,7 +109,8 @@ ol.acts{ margin:4pt 0 0 0; padding-left:18pt; }
   <tbody>
   <?php foreach ($ctx['bills'] as $b): ?>
     <tr>
-      <td>Rent — <?= clean($short($b['cycle_from'])) ?> to <?= clean($short($b['cycle_to'])) ?></td>
+      <td><?= !empty($b['description']) ? clean($b['description'])
+                : 'Rent — ' . clean($short($b['cycle_from'])) . ' to ' . clean($short($b['cycle_to'])) ?></td>
       <td><?= clean($short($b['due_date'])) ?></td>
       <td class="r"><?= clean(money($b['amount'])) ?></td>
       <td class="r"><?= clean(money($b['unpaid'])) ?></td>

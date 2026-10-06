@@ -435,6 +435,7 @@ include 'includes/header.php';
           <?php if (money_is_pos($bs['rent_owed'])): ?>
             <span class="bt-num"><?= money($bs['rent_owed']) ?></span>
             <div class="bt-meta"><?= number_format($bs['months_behind'], 1) ?> month<?= abs($bs['months_behind'] - 1) < 0.005 ? '' : 's' ?></div>
+            <?php if (money_is_pos($bs['arrears_owed'] ?? '0.00')): ?><div class="bt-meta">incl. <?= money($bs['arrears_owed']) ?> prior arrears</div><?php endif; ?>
           <?php else: ?><span class="bt-meta">—</span><?php endif; ?>
         </td>
         <td data-order="<?= clean($lp['payment_date'] ?? '0000-00-00') ?>">

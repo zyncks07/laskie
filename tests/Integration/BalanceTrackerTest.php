@@ -125,6 +125,59 @@ final class BalanceTrackerTest extends IsolatedDbTestCase
         $this->assertSame('6000.00', $st['bills'][0]['unpaid']);
     }
 
+    private function charge(string $amount, string $description, ?string $serviceType = null, string $date = '2026-01-01'): int
+    {
+        $stId = $serviceType === null ? null
+            : (int) self::$db->query("SELECT id FROM service_types WHERE name=" . self::$db->quote($serviceType))->fetchColumn();
+        self::$db->prepare("INSERT INTO unit_charges (unit_id, tenant_id, service_type_id, amount, description, charge_date, period_month, period_year, source)
+                            VALUES (?, ?, ?, ?, ?, ?, 1, 2026, 'pre_billed')")
+            ->execute([$this->unit, $this->tenant, $stId, $amount, $description, $date]);
+        return (int) self::$db->lastInsertId();
+    }
+
+    #[Test]
+    public function opening_and_transfer_arrears_count_as_rent_behind(): void
+    {
+        // Rent itself is one bill behind; the 2025 opening balance and a
+        // transfer's Arrears charge are unpaid rent too, so 3 months in all.
+        for ($m = 1; $m <= 9; $m++) $this->pay($m);
+        $this->charge('7000.00', 'Balance brought forward (2025 arrears)');
+        $this->charge('5000.00', 'Rent balance carried from BT-Z', 'Arrears', '2026-10-05');
+        $this->charge('500.00', 'Internet', null, '2026-09-01');           // untyped but not arrears → still a charge
+        $st = $this->statement();
+        $this->assertSame('12000.00', $st['arrears_owed']);
+        $this->assertSame('18000.00', $st['rent_owed']);
+        $this->assertSame('500.00', $st['svc_owed']);
+        $this->assertSame('18500.00', $st['balance']);
+        $this->assertSame(3.0, $st['months_behind']);
+        $this->assertTrue($st['flagged']);
+        $this->assertSame(['Balance brought forward (2025 arrears)', 'Rent balance carried from BT-Z', 'October 2026'],
+                          array_column($st['bills'], 'period'), 'oldest first; an arrears charge precedes a same-day bill');
+        $this->assertSame(['Internet'], array_column($st['charges'], 'description'));
+        $this->assertSame($st['rent_owed'], money_sum(array_column($st['bills'], 'unpaid')));
+    }
+
+    #[Test]
+    public function arrears_charge_counts_only_its_unpaid_part_and_absorbs_a_rent_credit(): void
+    {
+        for ($m = 1; $m <= 10; $m++) $this->pay($m);                       // rent fully paid
+        $id = $this->charge('7000.00', 'Balance brought forward (2025 arrears)');
+        self::$db->prepare("INSERT INTO payments (invoice_no, unit_id, tenant_id, payment_type, amount, period_month, period_year, payment_date, received_by, status)
+                            VALUES ('BT-SVC', ?, ?, 'service', 2000, 1, 2026, '2026-03-01', 1, 'paid')")->execute([$this->unit, $this->tenant]);
+        self::$db->prepare("INSERT INTO charge_payments (charge_id, payment_id, amount) VALUES (?, ?, 2000)")
+            ->execute([$id, (int) self::$db->lastInsertId()]);
+        $st = $this->statement();
+        $this->assertSame('5000.00', $st['rent_owed']);
+        $this->assertSame([['Balance brought forward (2025 arrears)', '7000.00', '5000.00']],
+                          array_map(fn($b) => [$b['period'], $b['amount'], $b['unpaid']], $st['bills']));
+        $this->assertFalse($st['flagged']);
+
+        $this->pay(11, '3000.00');                                          // ₱3,000 rent paid ahead
+        $st = $this->statement();
+        $this->assertSame('2000.00', $st['rent_owed']);
+        $this->assertSame('2000.00', $st['bills'][0]['unpaid'], 'a rent credit reduces the itemised arrears too');
+    }
+
     #[Test]
     public function last_payment_ignores_non_cash_transfer_entries(): void
     {
