@@ -11,6 +11,10 @@
 //     minimum (§25) are no longer contract terms — handled outside the system.
 // Section numbers are unchanged from v2 so cross-references hold.
 //
+// Lessor address: v3 appends ", Caloocan City" (its approved contracts stored
+// street / barangay only) unless the address already names a city. v4 includes
+// this file with $lessorAddressFull = true and prints the address as typed.
+//
 // Rendered by renderContractBody() with:
 //   $v    normalised fields (CONTRACT_FIELDS keys + computed money)
 //   $meta ['contract_no','status','company_name','template_version']
@@ -88,7 +92,7 @@ $cityName = $cityRow ? '<span class="val" data-field="city">' . clean($cityRow[1
 
 <p>This Contract of Lease is made and entered into this <?= $signDay ?> day of <?= $signMonth ?>, <?= $signYear ?>, in <?= $cityName ?>, Metro Manila, Philippines, by and between:</p>
 
-<p class="party"><strong class="name"><?= $x('lessor_name', '14em') ?></strong>, of legal age, Filipino<?= $civil !== '' ? ', <span class="val" data-field="lessor_civil_status">' . clean($civil) . '</span>' : '' ?>, with address at <?= $x('lessor_address', '16em') ?>, Caloocan City<?= $repClause !== '' ? '<span class="val" data-field="lessor_rep_clause">' . clean($repClause) . '</span>' : '' ?>, hereinafter called the <strong>&ldquo;LESSOR&rdquo;</strong>;</p>
+<p class="party"><strong class="name"><?= $x('lessor_name', '14em') ?></strong>, of legal age, Filipino<?= $civil !== '' ? ', <span class="val" data-field="lessor_civil_status">' . clean($civil) . '</span>' : '' ?>, with address at <?= $x('lessor_address', '16em') ?><?= (empty($lessorAddressFull) && stripos((string)($v['lessor_address'] ?? ''), 'city') === false) ? ', Caloocan City' : '' ?><?= $repClause !== '' ? '<span class="val" data-field="lessor_rep_clause">' . clean($repClause) . '</span>' : '' ?>, hereinafter called the <strong>&ldquo;LESSOR&rdquo;</strong>;</p>
 
 <p class="and">&mdash; and &mdash;</p>
 

@@ -18,9 +18,11 @@ const CONTRACT_TEMPLATE_KEY     = 'lease-caloocan';
 // TCT / floor area / rooms / occupant cap; association dues, DST and the
 // attorney's-fee minimum are no longer contract terms. v1 and v2 stay
 // renderable for the contracts approved on them.
-const CONTRACT_TEMPLATE_VERSION = '3';
+// v4 (2026-10-17): v3 text, but the lessor address is printed exactly as typed
+// (v1–v3 appended ", Caloocan City" to it).
+const CONTRACT_TEMPLATE_VERSION = '4';
 // Months of advance rent each template version collects on signing.
-const CONTRACT_ADVANCE_MONTHS = ['1' => 1, '2' => 0, '3' => 0];
+const CONTRACT_ADVANCE_MONTHS = ['1' => 1, '2' => 0, '3' => 0, '4' => 0];
 const CONTRACT_NO_PREFIX        = 'LSE';
 // "Expiring" window. Matches the template's two-month notice to vacate
 // (Section 18), so a contract turns amber exactly when notice is due.
@@ -93,7 +95,7 @@ const CONTRACT_FIELDS = [
     'lessor_civil_status'=> ['label' => 'Civil status',        'section' => 'lessor', 'type' => 'text', 'max' => 40, 'def' => true,
                              'hint' => 'Leave blank for a corporation.'],
     'lessor_address'     => ['label' => 'Address',             'section' => 'lessor', 'type' => 'textarea', 'max' => 300, 'req' => true, 'def' => true,
-                             'hint' => 'Street / barangay only — the contract appends "Caloocan City".'],
+                             'hint' => 'Full address, including the city — printed exactly as typed.'],
     'lessor_rep_clause'  => ['label' => 'Representative clause','section' => 'lessor', 'type' => 'textarea', 'max' => 300, 'def' => true,
                              'hint' => 'Corporations only, e.g. "represented by Juan Dela Cruz per Board Resolution dated 1 October 2026".'],
     'lessor_email'       => ['label' => 'Email',               'section' => 'lessor', 'type' => 'text', 'max' => 120, 'def' => true],
