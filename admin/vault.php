@@ -425,31 +425,58 @@ $totalUserReturned = (string)$pdo->query("SELECT COALESCE(SUM(amount),0) FROM ca
 // vault_return ⇒ cash leaves the vault back to a user, so it subtracts from the balance.
 $vaultBalance      = money_sub(money_add(money_sub($totalRemitted, $totalDistrib), $totalReturned), $totalUserReturned);
 
-// Chart: monthly remittances per user for selected year, net of any
-// vault_return ("Return to User") issued that same month — a return
-// reduces how much actually left the user's hands. MONTH() in the
-// SELECT / GROUP BY is just a projection — the WHERE uses a sargable range
-// so idx_cash_user_date can be used. Net can go negative (e.g. a return
-// issued before any remittance that month).
+// Charts — every vault movement for the selected year, split by direction:
+//   in  = remittances from staff + dividends returned by recipients
+//   out = dividends paid + cash returned to users (vault_return)
+// MONTH() is only a projection; each WHERE is a sargable half-open range.
+// Sums stay DECIMAL strings until json — the chart only draws them.
 [$yrStart, $yrEnd] = yearRange($selectedYear);
-$cr = $pdo->prepare("
-    SELECT MONTH(ct.transaction_date) AS mo, ct.user_id AS uid, u.full_name,
-           SUM(CASE WHEN ct.transaction_type='remitted' THEN ct.amount ELSE -ct.amount END) AS total
-    FROM cash_transactions ct LEFT JOIN users u ON u.id=ct.user_id
+$flowKeys = ['remitted', 'div_returned', 'dividends', 'user_returns'];
+$flow = array_fill_keys($flowKeys, array_fill(0, 12, '0.00'));
+$fq = $pdo->prepare("
+    SELECT 'remitted' AS k, MONTH(transaction_date) AS mo, SUM(amount) AS s FROM cash_transactions
+     WHERE transaction_type='remitted' AND transaction_date >= ? AND transaction_date < ? GROUP BY mo
+    UNION ALL
+    SELECT 'user_returns', MONTH(transaction_date), SUM(amount) FROM cash_transactions
+     WHERE transaction_type='vault_return' AND transaction_date >= ? AND transaction_date < ? GROUP BY MONTH(transaction_date)
+    UNION ALL
+    SELECT 'dividends', MONTH(distribution_date), SUM(amount) FROM dividend_distributions
+     WHERE distribution_date >= ? AND distribution_date < ? GROUP BY MONTH(distribution_date)
+    UNION ALL
+    SELECT 'div_returned', MONTH(return_date), SUM(amount) FROM dividend_returns
+     WHERE return_date >= ? AND return_date < ? GROUP BY MONTH(return_date)
+");
+$fq->execute([$yrStart, $yrEnd, $yrStart, $yrEnd, $yrStart, $yrEnd, $yrStart, $yrEnd]);
+foreach ($fq->fetchAll() as $r) $flow[$r['k']][(int)$r['mo'] - 1] = (string)$r['s'];
+
+// Balance on Jan 1 of the selected year, so the tooltip can show the vault
+// balance at each month end (same formula as $vaultBalance, dated before).
+$oq = $pdo->prepare("
+    SELECT (SELECT COALESCE(SUM(amount),0) FROM cash_transactions WHERE transaction_type='remitted'     AND transaction_date < ?)
+         - (SELECT COALESCE(SUM(amount),0) FROM dividend_distributions WHERE distribution_date < ?)
+         + (SELECT COALESCE(SUM(amount),0) FROM dividend_returns       WHERE return_date < ?)
+         - (SELECT COALESCE(SUM(amount),0) FROM cash_transactions WHERE transaction_type='vault_return' AND transaction_date < ?)
+");
+$oq->execute([$yrStart, $yrStart, $yrStart, $yrStart]);
+$flowOpening = (string)$oq->fetchColumn();
+
+// Per staff member for the year: cash they remitted vs cash the vault handed
+// back to them. A user with only returns still gets a row.
+$sq = $pdo->prepare("
+    SELECT ct.user_id, u.full_name,
+           SUM(CASE WHEN ct.transaction_type='remitted'     THEN ct.amount ELSE 0 END) AS remitted,
+           SUM(CASE WHEN ct.transaction_type='vault_return' THEN ct.amount ELSE 0 END) AS returned
+    FROM cash_transactions ct LEFT JOIN users u ON u.id = ct.user_id
     WHERE ct.transaction_type IN ('remitted','vault_return')
       AND ct.transaction_date >= ? AND ct.transaction_date < ?
-    GROUP BY mo, uid, u.full_name ORDER BY uid, mo
+    GROUP BY ct.user_id, u.full_name
 ");
-$cr->execute([$yrStart, $yrEnd]);
-$chartByUser = [];
-foreach ($cr->fetchAll() as $row) {
-    $uid = $row['uid'];
-    if (!isset($chartByUser[$uid])) {
-        $chartByUser[$uid] = ['name' => $row['full_name'], 'data' => array_fill(0,12,0)];
-    }
-    $chartByUser[$uid]['data'][(int)$row['mo'] - 1] = (float)$row['total'];
-}
-$chartByUser = array_values($chartByUser);
+$sq->execute([$yrStart, $yrEnd]);
+$staffFlow = $sq->fetchAll();
+
+// Months of the selected year that have happened (current year stops at this
+// month; a future year shows none) — later months are left empty, not zero.
+$flowMonthsElapsed = $selectedYear < (int)date('Y') ? 12 : ($selectedYear > (int)date('Y') ? 0 : (int)date('n'));
 
 // All active users for remittance dropdown
 $allUsers = $pdo->query("SELECT id, full_name FROM users WHERE status='active' ORDER BY full_name")->fetchAll();
@@ -506,19 +533,23 @@ $returnRecords = $pdo->query("
     ORDER BY dret.return_date DESC, dret.id DESC
 ")->fetchAll();
 
-// Chart: dividend distributions per recipient for selected div_year
+// Chart: dividends per recipient for the selected div_year — paid, and any
+// returned by the recipient that year. Inactive recipients appear only if
+// money moved for them that year.
 $divYear = (int)($_GET['div_year'] ?? date('Y'));
 [$divYrStart, $divYrEnd] = yearRange($divYear);
 $divChartStmt = $pdo->prepare("
-    SELECT dr.id, dr.name, COALESCE(SUM(dd.amount),0) AS total
+    SELECT dr.id, dr.name, dr.is_active,
+           COALESCE(d.paid, 0) AS paid, COALESCE(d.n, 0) AS n, COALESCE(r.returned, 0) AS returned
     FROM dividend_recipients dr
-    LEFT JOIN dividend_distributions dd
-      ON dd.recipient_id = dr.id
-     AND dd.distribution_date >= ? AND dd.distribution_date < ?
-    GROUP BY dr.id, dr.name
+    LEFT JOIN (SELECT recipient_id, SUM(amount) AS paid, COUNT(*) AS n FROM dividend_distributions
+               WHERE distribution_date >= ? AND distribution_date < ? GROUP BY recipient_id) d ON d.recipient_id = dr.id
+    LEFT JOIN (SELECT recipient_id, SUM(amount) AS returned FROM dividend_returns
+               WHERE return_date >= ? AND return_date < ? GROUP BY recipient_id) r ON r.recipient_id = dr.id
+    WHERE dr.is_active = 1 OR d.paid IS NOT NULL OR r.returned IS NOT NULL
     ORDER BY dr.name
 ");
-$divChartStmt->execute([$divYrStart, $divYrEnd]);
+$divChartStmt->execute([$divYrStart, $divYrEnd, $divYrStart, $divYrEnd]);
 $divChart = $divChartStmt->fetchAll();
 
 // Available years for selectors
@@ -751,48 +782,124 @@ include '../includes/header.php';
   </div>
 </div>
 
-<!-- Chart -->
-<div class="card mb-4">
-  <div class="card-body">
-    <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
-      <h6 class="mb-0 fw-600"><i class="fa-solid fa-chart-bar me-2 text-primary-custom"></i>Monthly Remittances (Net) — <?= $selectedYear ?></h6>
-      <form method="GET" class="d-flex align-items-center gap-2">
-        <input type="hidden" name="div_year" value="<?= $divYear ?>">
-        <span class="text-muted small">Year:</span>
-        <select name="year" class="form-select form-select-sm" style="width:90px" onchange="this.form.submit()">
-          <?php foreach ($years as $y): ?>
-          <option value="<?= $y ?>" <?= $y==$selectedYear?'selected':'' ?>><?= $y ?></option>
-          <?php endforeach; ?>
-        </select>
-      </form>
+<?php
+// Year totals for the chart summary strips (exact — cents-based helpers).
+$flowIn  = money_add(money_sum($flow['remitted']), money_sum($flow['div_returned']));
+$flowOut = money_add(money_sum($flow['dividends']), money_sum($flow['user_returns']));
+$flowNet = money_sub($flowIn, $flowOut);
+$flowEnd = money_add($flowOpening, $flowNet);
+$flowAny = money_is_pos($flowIn) || money_is_pos($flowOut);
+$divPaid = money_sum(array_column($divChart, 'paid') ?: ['0.00']);
+$divRet  = money_sum(array_column($divChart, 'returned') ?: ['0.00']);
+$divPaidTo = count(array_filter($divChart, fn($r) => money_is_pos($r['paid'])));
+$yearSelect = function (string $name, int $current, string $otherName, int $otherVal) use ($years) {
+    ob_start(); ?>
+    <form method="GET" class="d-flex align-items-center gap-2 ms-auto">
+      <input type="hidden" name="<?= $otherName ?>" value="<?= $otherVal ?>">
+      <select name="<?= $name ?>" class="form-select form-select-sm" style="width:auto;font-size:11.5px" onchange="this.form.submit()" aria-label="Year">
+        <?php foreach ($years as $y): ?>
+        <option value="<?= $y ?>" <?= $y == $current ? 'selected' : '' ?>><?= $y ?></option>
+        <?php endforeach; ?>
+      </select>
+    </form>
+    <?php return ob_get_clean();
+};
+?>
+<style>
+/* Chart summary strip under a card title — same look as the dashboard's unit-chart stats. */
+.vault-chart-stats { display: flex; gap: 14px; flex-wrap: wrap; font-size: 11px; color: var(--gray-500);
+                     margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--gray-200); }
+.vault-chart-stats strong { color: var(--ink); }
+/* Horizontal bar charts: height is set per row count by _vSizeRows(). */
+.vault-rows { position: relative; min-height: 180px; }
+.vault-mini-tbl td, .vault-mini-tbl th { font-size: 11.5px; padding: 5px 6px !important; }
+.vault-mini-tbl thead th { background: transparent; border-bottom: 1px solid var(--gray-200); }
+.vault-mini-tbl td.num   { font-family: 'DM Mono', monospace; font-variant-numeric: tabular-nums; white-space: nowrap; }
+@media (max-width: 576px) { .vault-mini-tbl td, .vault-mini-tbl th { font-size: 10.5px; padding: 4px 4px !important; } }
+</style>
+<!-- Charts: vault cash flow + remittances by staff (shared year) -->
+<div class="row g-3 mb-4">
+  <div class="col-lg-8">
+    <div class="card h-100">
+      <div class="card-header" style="display:block">
+        <div class="d-flex align-items-center gap-2">
+          <span class="card-header-title"><i class="fa-solid fa-chart-column me-1"></i>Vault Cash Flow — <?= $selectedYear ?></span>
+          <?= $yearSelect('year', $selectedYear, 'div_year', $divYear) ?>
+        </div>
+        <div class="vault-chart-stats">
+          <span>In: <strong class="num"><?= money($flowIn) ?></strong></span>
+          <span>Out: <strong class="num"><?= money($flowOut) ?></strong></span>
+          <span>Net: <strong class="num" style="font-weight:<?= money_is_neg($flowNet) ? 800 : 600 ?>"><?= money_is_neg($flowNet) ? '▼ ' : '▲ ' ?><?= money(money_abs($flowNet)) ?></strong></span>
+          <span class="ms-auto">Balance <?= $selectedYear == date('Y') ? 'today' : 'at year end' ?>: <strong class="num"><?= money($flowEnd) ?></strong></span>
+        </div>
+      </div>
+      <div class="card-body">
+        <?php if (!$flowAny): ?>
+        <div class="text-center text-muted py-5"><i class="fa-solid fa-chart-column fa-2x mb-2 d-block" style="opacity:.2"></i>No money moved through the vault in <?= $selectedYear ?>.</div>
+        <?php else: ?>
+        <div class="chart-wrap"><canvas id="flowChart" role="img" aria-label="Money into and out of the vault per month, <?= $selectedYear ?>"></canvas></div>
+        <?php endif; ?>
+      </div>
     </div>
-    <?php if (empty($chartByUser)): ?>
-    <div class="text-center text-muted py-5"><i class="fa-solid fa-chart-bar fa-2x mb-2 d-block" style="opacity:.2"></i>No remittances recorded for <?= $selectedYear ?>.</div>
-    <?php else: ?>
-    <div class="chart-wrap"><canvas id="remittanceChart"></canvas></div>
-    <?php endif; ?>
+  </div>
+  <div class="col-lg-4">
+    <div class="card h-100">
+      <div class="card-header" style="display:block">
+        <span class="card-header-title"><i class="fa-solid fa-chart-bar me-1"></i>Remittances by Staff — <?= $selectedYear ?></span>
+        <div class="vault-chart-stats"><span>Remitted, less cash the vault returned to them</span></div>
+      </div>
+      <div class="card-body">
+        <?php if (empty($staffFlow)): ?>
+        <div class="text-center text-muted py-5"><i class="fa-solid fa-chart-bar fa-2x mb-2 d-block" style="opacity:.2"></i>No remittances recorded for <?= $selectedYear ?>.</div>
+        <?php else: ?>
+        <div class="vault-rows"><canvas id="staffChart" role="img" aria-label="Cash remitted per staff member, <?= $selectedYear ?>"></canvas></div>
+        <?php
+          $staffRows = array_map(fn($r) => $r + ['net' => money_sub($r['remitted'], $r['returned'])], $staffFlow);
+          usort($staffRows, fn($a, $b) => to_cents($b['net']) <=> to_cents($a['net']));
+        ?>
+        <div class="table-responsive mt-2">
+        <table class="table table-sm vault-mini-tbl mb-0">
+          <thead><tr><th>Staff</th><th class="text-end">Remitted</th><th class="text-end d-none d-sm-table-cell">Returned</th><th class="text-end">Net</th></tr></thead>
+          <tbody>
+          <?php foreach ($staffRows as $r): ?>
+            <tr>
+              <td class="cell-trunc"><?= clean(trim(preg_replace('/\s+/', ' ', (string)($r['full_name'] ?? 'Unknown user')))) ?></td>
+              <td class="text-end num"><?= money($r['remitted']) ?></td>
+              <td class="text-end num d-none d-sm-table-cell"><?= money_is_pos($r['returned']) ? money($r['returned']) : '—' ?></td>
+              <td class="text-end num fw-700"><?= money($r['net']) ?></td>
+            </tr>
+          <?php endforeach; ?>
+          </tbody>
+        </table>
+        </div>
+        <?php endif; ?>
+      </div>
+    </div>
   </div>
 </div>
 
-<!-- Dividend Distribution Chart -->
+<!-- Dividends per recipient -->
 <div class="card mb-4">
-  <div class="card-body">
-    <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
-      <h6 class="mb-0 fw-600"><i class="fa-solid fa-chart-column me-2" style="color:var(--success)"></i>Dividends per Recipient — <?= $divYear ?></h6>
-      <form method="GET" class="d-flex align-items-center gap-2">
-        <input type="hidden" name="year" value="<?= $selectedYear ?>">
-        <span class="text-muted small">Year:</span>
-        <select name="div_year" class="form-select form-select-sm" style="width:90px" onchange="this.form.submit()">
-          <?php foreach ($years as $y): ?>
-          <option value="<?= $y ?>" <?= $y==$divYear?'selected':'' ?>><?= $y ?></option>
-          <?php endforeach; ?>
-        </select>
-      </form>
+  <div class="card-header" style="display:block">
+    <div class="d-flex align-items-center gap-2">
+      <span class="card-header-title"><i class="fa-solid fa-chart-bar me-1"></i>Dividends per Recipient — <?= $divYear ?></span>
+      <?= $yearSelect('div_year', $divYear, 'year', $selectedYear) ?>
     </div>
+    <div class="vault-chart-stats">
+      <span>Paid: <strong class="num"><?= money($divPaid) ?></strong> to <?= $divPaidTo ?> of <?= count($divChart) ?> recipient<?= count($divChart) === 1 ? '' : 's' ?></span>
+      <?php if (money_is_pos($divRet)): ?>
+      <span>Returned: <strong class="num"><?= money($divRet) ?></strong></span>
+      <span>Net: <strong class="num"><?= money(money_sub($divPaid, $divRet)) ?></strong></span>
+      <?php endif; ?>
+    </div>
+  </div>
+  <div class="card-body">
     <?php if (empty($divChart)): ?>
-    <div class="text-center text-muted py-5"><i class="fa-solid fa-chart-column fa-2x mb-2 d-block" style="opacity:.2"></i>No recipients added yet.</div>
+    <div class="text-center text-muted py-5"><i class="fa-solid fa-chart-bar fa-2x mb-2 d-block" style="opacity:.2"></i>No recipients added yet.</div>
+    <?php elseif (!money_is_pos($divPaid) && !money_is_pos($divRet)): ?>
+    <div class="text-center text-muted py-5"><i class="fa-solid fa-chart-bar fa-2x mb-2 d-block" style="opacity:.2"></i>No dividends paid in <?= $divYear ?>.</div>
     <?php else: ?>
-    <div class="chart-wrap"><canvas id="divChart"></canvas></div>
+    <div class="vault-rows"><canvas id="divChart" role="img" aria-label="Dividends paid per recipient, <?= $divYear ?>"></canvas></div>
     <?php endif; ?>
   </div>
 </div>
@@ -1265,7 +1372,6 @@ include '../includes/header.php';
 
 <?php ob_start(); ?>
 <script>
-<?php $chartJson = json_encode($chartByUser, JSON_UNESCAPED_UNICODE); ?>
 // ── Modals ───────────────────────────────────────────────────
 const remittanceModal   = new bootstrap.Modal(document.getElementById('remittanceModal'));
 const distributionModal = new bootstrap.Modal(document.getElementById('distributionModal'));
@@ -1288,85 +1394,260 @@ const DIST_DATA = <?= json_encode($distMap,  JSON_UNESCAPED_UNICODE) ?>;
 const RET_DATA  = <?= json_encode($retMap,   JSON_UNESCAPED_UNICODE) ?>;
 
 // ── Charts (monochrome, theme-aware) ─────────────────────────
-const chartByUser  = <?= $chartJson ?>;
-const months       = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-<?php $divChartJson = json_encode($divChart, JSON_UNESCAPED_UNICODE); ?>
-const divChartData = <?= $divChartJson ?>;
+// Same grammar as the dashboard: one meaning per shade, position says the
+// rest. Black = money that came IN, grey = money that went OUT, the dashed
+// line is the result. Every colour comes from window.chartTheme().
+<?php
+$flowMonthly = [];
+foreach ($flowKeys as $k) $flowMonthly[$k] = array_map('floatval', $flow[$k]);
+?>
+const FLOW = <?= json_encode(['year' => $selectedYear, 'opening' => (float)$flowOpening, 'elapsed' => $flowMonthsElapsed] + $flowMonthly, JSON_UNESCAPED_UNICODE) ?>;
+const STAFF_FLOW = <?= json_encode(array_map(fn($r) => ['name' => trim(preg_replace('/\s+/', ' ', (string)($r['full_name'] ?? 'Unknown user'))),
+                                                        'remitted' => (float)$r['remitted'], 'returned' => (float)$r['returned']], $staffFlow), JSON_UNESCAPED_UNICODE) ?>;
+const DIV_FLOW = <?= json_encode(array_map(fn($r) => ['name' => $r['name'], 'active' => (bool)$r['is_active'], 'n' => (int)$r['n'],
+                                                      'paid' => (float)$r['paid'], 'returned' => (float)$r['returned']], $divChart), JSON_UNESCAPED_UNICODE) ?>;
+const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+const MONTHS_LONG = ['January','February','March','April','May','June','July','August','September','October','November','December'];
 
-var _remitChartInst = null, _divChartInst = null;
+var _flowChartInst = null, _staffChartInst = null, _divChartInst = null;
 
-function _monoTip(T) {
-  return { backgroundColor: T.paper, titleColor: T.tick, bodyColor: T.ink,
-    borderColor: T.grid, borderWidth: 1, cornerRadius: 8, displayColors: true,
-    titleFont: { size: 10, family: 'DM Sans' }, bodyFont: { size: 12, family: 'DM Sans', weight: '700' } };
+function _vPeso(v) { return (v < 0 ? '−' : '') + fmt(Math.abs(v || 0)); }
+// Compact peso label for axes and bar ends: ₱950 · ₱12.5k · ₱1.25M.
+function _vCompact(v) {
+  var a = Math.abs(v), sign = v < 0 ? '−' : '';
+  if (a >= 1e6) return sign + '₱' + (a / 1e6).toFixed(a >= 1e7 ? 1 : 2).replace(/\.?0+$/, '') + 'M';
+  if (a >= 1e3) return sign + '₱' + (a / 1e3).toFixed(a >= 1e5 ? 0 : 1).replace(/\.0$/, '') + 'k';
+  return sign + '₱' + Math.round(a);
 }
-// Stacked segments split by lightness; cycle the gray ramp for many users.
-function _grayAt(i, T) { return T.series[i % T.series.length]; }
+function _vTip(T, extra) {
+  return Object.assign({
+    backgroundColor: T.paper, titleColor: T.tick, bodyColor: T.ink, footerColor: T.ink,
+    borderColor: T.grid, borderWidth: 1, cornerRadius: 8, caretSize: 6, caretPadding: 8,
+    padding: { x: 12, y: 8 }, displayColors: true, boxPadding: 4,
+    titleFont: { size: 10, family: 'DM Sans' }, bodyFont: { size: 12, family: 'DM Sans', weight: '600' },
+    footerFont: { size: 12, family: 'DM Sans', weight: '700' }
+  }, extra || {});
+}
+function _vLegend(T) {
+  return { font: { size: 11, family: 'DM Sans' }, color: T.tick, padding: 16, usePointStyle: true, pointStyle: 'rect' };
+}
+// Diagonal hatch: a second "out" component told apart by texture as well as
+// lightness, so the two grey segments never rely on shade alone.
+function _vHatch(T) {
+  var c = document.createElement('canvas'); c.width = c.height = 8;
+  var x = c.getContext('2d');
+  x.fillStyle = T.paper; x.fillRect(0, 0, 8, 8);
+  x.strokeStyle = T.series[1]; x.lineWidth = 2;
+  x.beginPath(); x.moveTo(-2, 10); x.lineTo(10, -2); x.moveTo(-2, 2); x.lineTo(2, -2); x.moveTo(6, 10); x.lineTo(10, 6); x.stroke();
+  return x.createPattern(c, 'repeat');
+}
+// Writes a label just past the end of each row of a horizontal bar chart
+// (the vendored Chart.js build has no data-label plugin).
+var _vRowLabels = {
+  id: 'vaultRowLabels',
+  afterDatasetsDraw: function (chart, args, opts) {
+    if (!opts || typeof opts.text !== 'function') return;
+    var T = window.chartTheme(), ctx = chart.ctx, metas = chart.getSortedVisibleDatasetMetas();
+    ctx.save(); ctx.textBaseline = 'middle';
+    for (var i = 0; i < chart.data.labels.length; i++) {
+      var x = chart.chartArea.left, y = null;
+      metas.forEach(function (m) { var el = m.data[i]; if (el) { x = Math.max(x, el.x); if (y === null) y = el.y; } });
+      var t = opts.text(i);
+      if (!t || y === null) continue;
+      ctx.font = (t.bold ? '700 ' : '600 ') + '10.5px "DM Sans", sans-serif';
+      ctx.fillStyle = t.muted ? T.muted : (t.bold ? T.ink : T.tick);
+      ctx.fillText(t.text, x + 6, y);
+    }
+    ctx.restore();
+  }
+};
+function _vSizeRows(canvas, rows) {
+  canvas.parentNode.style.height = Math.max(180, rows * 34 + 64) + 'px';
+}
+function _vRowScales(T) {
+  return {
+    x: { beginAtZero: true, grid: { color: T.grid }, border: { display: false },
+         ticks: { callback: function (v) { return _vCompact(v); }, color: T.tick, font: { size: 10, family: 'DM Sans' }, maxTicksLimit: 6 } },
+    y: { grid: { display: false }, border: { display: false },
+         ticks: { color: T.ink, font: { size: 11, family: 'DM Sans', weight: '600' } } }
+  };
+}
+
+// ── Vault cash flow: one column per month ───────────────────
+// Money IN rises above the zero line (black), money OUT hangs below it (grey;
+// cash handed back to users is hatched), and the ◆ marks the month's net. A
+// lumpy month (a quarterly dividend run) is a long bar down, not a line that
+// drags every other month flat. Months not reached yet stay empty.
+function buildFlowChart(T) {
+  var el = document.getElementById('flowChart');
+  if (!el) return;
+  var f = FLOW, live = function (i) { return i < f.elapsed; };
+  var pick = function (arr, sign) { return arr.map(function (v, i) { return live(i) ? sign * v : null; }); };
+  var sum = function (arr) { return arr.reduce(function (s, v) { return s + (v || 0); }, 0); };
+  var inn = MONTHS.map(function (_, i) { return f.remitted[i] + f.div_returned[i]; });
+  var out = MONTHS.map(function (_, i) { return f.dividends[i] + f.user_returns[i]; });
+  var bal = [], run = f.opening;
+  MONTHS.forEach(function (_, i) { run += inn[i] - out[i]; bal.push(run); });
+  var cur = (f.year === new Date().getFullYear()) ? f.elapsed - 1 : -1;
+  // 2px paper seam between stacked segments; data ends rounded, baseline square.
+  var bar = function (o) { return Object.assign({ type: 'bar', stack: 'flow', borderRadius: 3, borderSkipped: 'start',
+                                                  barPercentage: 0.62, categoryPercentage: 0.9, borderColor: T.paper, borderWidth: 0 }, o); };
+
+  var ds = [
+    { type: 'line', label: 'Net for the month', data: pick(MONTHS.map(function (_, i) { return inn[i] - out[i]; }), 1), order: 0,
+      stack: 'net', showLine: false, pointStyle: 'rectRot', pointRadius: 5, pointHoverRadius: 7,
+      pointBackgroundColor: T.paper, pointBorderColor: T.ink, pointBorderWidth: 2, borderColor: T.ink, backgroundColor: T.paper },
+    bar({ label: 'Remitted by staff', dir: 'in', data: pick(f.remitted, 1), order: 2, backgroundColor: T.ink })
+  ];
+  // Optional legs appear only in a year they actually happened.
+  if (sum(f.div_returned) > 0)
+    ds.push(bar({ label: 'Returned by recipients', dir: 'in', data: pick(f.div_returned, 1), order: 2, backgroundColor: T.series[2], borderWidth: { top: 0, bottom: 2 } }));
+  ds.push(bar({ label: 'Dividends paid', dir: 'out', data: pick(f.dividends, -1), order: 1, backgroundColor: T.series[1] }));
+  if (sum(f.user_returns) > 0)
+    ds.push(bar({ label: 'Returned to users', dir: 'out', data: pick(f.user_returns, -1), order: 1,
+                  backgroundColor: _vHatch(T), borderColor: T.series[1], borderWidth: 1 }));
+
+  _flowChartInst = new Chart(el, {
+    data: { labels: MONTHS, datasets: ds },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      layout: { padding: { top: 8 } },
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { position: 'top', align: 'start', labels: Object.assign(_vLegend(T), {
+          sort: function (a, b) { return (a.datasetIndex === 0) - (b.datasetIndex === 0) || a.datasetIndex - b.datasetIndex; },
+          generateLabels: function (chart) {
+            return Chart.defaults.plugins.legend.labels.generateLabels(chart).map(function (l) {
+              var d = chart.data.datasets[l.datasetIndex];
+              if (l.datasetIndex === 0) { l.pointStyle = 'rectRot'; l.fillStyle = T.paper; l.strokeStyle = T.ink; l.lineWidth = 2; }
+              else { l.text = (d.dir === 'in' ? 'In · ' : 'Out · ') + l.text; l.strokeStyle = T.series[1]; l.lineWidth = d.label === 'Returned to users' ? 1 : 0; }
+              return l;
+            });
+          }
+        }) },
+        tooltip: _vTip(T, {
+          itemSort: function (a, b) { return (a.datasetIndex === 0) - (b.datasetIndex === 0) || a.datasetIndex - b.datasetIndex; },
+          filter: function (c) { return c.parsed.y !== null && (c.datasetIndex === 0 || c.parsed.y !== 0); },
+          callbacks: {
+            // A month not reached yet has every row filtered out, so items is
+            // empty — reading items[0] there threw inside Chart.js's event
+            // handler and froze the tooltip.
+            title: function (items) { return items.length ? MONTHS_LONG[items[0].dataIndex] + ' ' + f.year : ''; },
+            label: function (c) {
+              if (c.datasetIndex === 0) return ' Net: ' + (c.parsed.y < 0 ? '▼ ' : '▲ ') + fmt(Math.abs(c.parsed.y));
+              return ' ' + (c.dataset.dir === 'in' ? 'In · ' : 'Out · ') + c.dataset.label + ': ' + fmt(Math.abs(c.parsed.y));
+            },
+            footer: function (items) { return items.length ? 'Vault balance at month end: ' + _vPeso(bal[items[0].dataIndex]) : ''; }
+          }
+        })
+      },
+      scales: {
+        x: { stacked: true, grid: { display: false }, border: { display: false },
+             ticks: { font: function (c) { return { size: 11, family: 'DM Sans', weight: c.index === cur ? '800' : '500' }; },
+                      color: function (c) { return live(c.index) ? (c.index === cur ? T.ink : T.tick) : T.muted; }, padding: 6 } },
+        y: { stacked: true, beginAtZero: true, border: { display: false },
+             title: { display: true, text: 'Out ←     ·     → In', color: T.tick, font: { size: 10, family: 'DM Sans', weight: '600' } },
+             grid: { color: function (c) { return c.tick.value === 0 ? T.tick : T.grid; }, lineWidth: function (c) { return c.tick.value === 0 ? 1.5 : 1; } },
+             ticks: { callback: function (v) { return _vCompact(Math.abs(v)); }, color: T.tick, font: { size: 10, family: 'DM Sans' } } }
+      }
+    }
+  });
+}
+
+// ── By staff: remitted (black) with cash handed back (grey) on top ──
+// Ranked by net. A person who was handed back more than they remitted shows a
+// grey bar longer than the black one and a bold minus net label.
+function buildStaffChart(T) {
+  var el = document.getElementById('staffChart');
+  if (!el) return;
+  var rows = STAFF_FLOW.map(function (r) { return Object.assign({ net: r.remitted - r.returned }, r); })
+                       .sort(function (a, b) { return b.net - a.net; });
+  _vSizeRows(el, rows.length);
+  _staffChartInst = new Chart(el, {
+    type: 'bar',
+    data: {
+      labels: rows.map(function (r) { return r.name; }),
+      datasets: [
+        { label: 'Remitted to vault', data: rows.map(function (r) { return r.remitted; }), backgroundColor: T.ink,
+          borderRadius: 3, barPercentage: 0.9, categoryPercentage: 0.8, grouped: false, order: 2 },
+        { label: 'Returned to them', data: rows.map(function (r) { return r.returned; }), backgroundColor: T.series[1],
+          borderColor: T.paper, borderWidth: 2, borderSkipped: false,
+          borderRadius: 3, barPercentage: 0.45, categoryPercentage: 0.8, grouped: false, order: 1 }
+      ]
+    },
+    options: {
+      indexAxis: 'y', responsive: true, maintainAspectRatio: false,
+      interaction: { mode: 'index', axis: 'y', intersect: false },
+      layout: { padding: { right: 70, top: 4 } },
+      plugins: {
+        legend: { position: 'top', align: 'start', labels: Object.assign(_vLegend(T), { sort: function (a, b) { return a.datasetIndex - b.datasetIndex; } }) },
+        vaultRowLabels: { text: function (i) { var n = rows[i].net; return { text: _vCompact(n) + ' net', bold: n < 0 }; } },
+        tooltip: _vTip(T, { mode: 'index', axis: 'y', intersect: false, callbacks: {
+          label: function (c) { return ' ' + c.dataset.label + ': ' + _vPeso(c.parsed.x); },
+          footer: function (items) { return items.length ? 'Net remitted: ' + _vPeso(rows[items[0].dataIndex].net) : ''; }
+        } })
+      },
+      scales: _vRowScales(T)
+    },
+    plugins: [_vRowLabels]
+  });
+}
+
+// ── Dividends per recipient, largest first ───────────────────
+// One shade for everyone — a recipient is identified by its row label, not a
+// colour. Share of the year's payout is printed at each bar end.
+function buildDivChart(T) {
+  var el = document.getElementById('divChart');
+  if (!el) return;
+  var anyRet = DIV_FLOW.some(function (r) { return r.returned > 0; });
+  var rows = DIV_FLOW.map(function (r) { return Object.assign({ net: r.paid - r.returned }, r); })
+                     .sort(function (a, b) { return b.paid - a.paid || b.net - a.net || a.name.localeCompare(b.name); });
+  var total = rows.reduce(function (s, r) { return s + r.paid; }, 0);
+  _vSizeRows(el, rows.length);
+  var ds = [{ label: 'Dividends paid', data: rows.map(function (r) { return r.paid; }), backgroundColor: T.ink,
+              borderRadius: 3, barPercentage: 0.9, categoryPercentage: 0.8, grouped: false, order: 2 }];
+  if (anyRet) ds.push({ label: 'Returned to vault', data: rows.map(function (r) { return r.returned; }), backgroundColor: T.series[1],
+                        borderColor: T.paper, borderWidth: 2, borderSkipped: false,
+                        borderRadius: 3, barPercentage: 0.45, categoryPercentage: 0.8, grouped: false, order: 1 });
+  _divChartInst = new Chart(el, {
+    type: 'bar',
+    data: { labels: rows.map(function (r) { return r.active ? r.name : r.name + ' (inactive)'; }), datasets: ds },
+    options: {
+      indexAxis: 'y', responsive: true, maintainAspectRatio: false,
+      interaction: { mode: 'index', axis: 'y', intersect: false },
+      layout: { padding: { right: 96, top: 4 } },
+      plugins: {
+        legend: { display: anyRet, position: 'top', align: 'start', labels: _vLegend(T) },
+        vaultRowLabels: { text: function (i) {
+          var r = rows[i];
+          if (!r.paid && !r.returned) return { text: 'none this year', muted: true };
+          var pct = total ? Math.round(r.paid / total * 100) : 0;
+          return { text: _vCompact(anyRet ? r.net : r.paid) + (anyRet ? ' net' : '') + ' · ' + pct + '%' };
+        } },
+        tooltip: _vTip(T, { mode: 'index', axis: 'y', intersect: false, callbacks: {
+          label: function (c) {
+            var r = rows[c.dataIndex];
+            if (c.datasetIndex === 0) return ' Paid: ' + _vPeso(r.paid) + (r.n ? ' (' + r.n + ' payout' + (r.n === 1 ? '' : 's') + ')' : '');
+            return ' Returned: ' + _vPeso(r.returned);
+          },
+          footer: function (items) {
+            if (!items.length) return '';
+            var r = rows[items[0].dataIndex], pct = total ? (r.paid / total * 100).toFixed(1) : '0.0';
+            return (anyRet ? 'Net received: ' + _vPeso(r.net) + ' · ' : '') + pct + '% of ' + _vPeso(total) + ' paid';
+          }
+        } })
+      },
+      scales: _vRowScales(T)
+    },
+    plugins: [_vRowLabels]
+  });
+}
 
 function buildVaultCharts() {
   var T = window.chartTheme();
-  if (_remitChartInst) { _remitChartInst.destroy(); _remitChartInst = null; }
-  if (_divChartInst)   { _divChartInst.destroy();   _divChartInst = null; }
-
-  if (chartByUser.length > 0) {
-    var ctx = document.getElementById('remittanceChart').getContext('2d');
-    _remitChartInst = new Chart(ctx, {
-      type: 'bar',
-      data: {
-        labels: months,
-        datasets: chartByUser.map((u, i) => ({
-          label: u.name, data: u.data,
-          backgroundColor: _grayAt(i, T),
-          borderColor: T.paper, borderWidth: 1,
-          borderRadius: 3, stack: 'vault'
-        }))
-      },
-      options: {
-        responsive: true, maintainAspectRatio: false,
-        plugins: {
-          legend: { position: 'top', labels: { usePointStyle: true, pointStyle: 'rect', padding: 16, color: T.tick, font: { family: 'DM Sans' } } },
-          tooltip: Object.assign(_monoTip(T), { callbacks: {
-            label: c => { var v = parseFloat(c.raw||0); return ` ${c.dataset.label}: ${v<0?'-₱':'₱'}${Math.abs(v).toLocaleString('en-PH',{minimumFractionDigits:2})}`; } } })
-        },
-        scales: {
-          x: { stacked: true, grid: { display: false }, border: { display: false }, ticks: { color: T.tick, font: { family: 'DM Sans' } } },
-          y: { stacked: true, grid: { color: T.grid }, border: { display: false },
-               ticks: { color: T.tick, font: { family: 'DM Sans' }, callback: v => { var av = Math.abs(v); return (v<0?'-₱':'₱') + (av/1000>=1 ? (av/1000).toFixed(0)+'k' : av); } } }
-        }
-      }
-    });
-  }
-
-  if (divChartData.length > 0) {
-    var ctx2 = document.getElementById('divChart');
-    if (ctx2) {
-      _divChartInst = new Chart(ctx2.getContext('2d'), {
-        type: 'bar',
-        data: {
-          labels: divChartData.map(r => r.name),
-          datasets: [{
-            label: 'Total Distributed',
-            data: divChartData.map(r => parseFloat(r.total)),
-            backgroundColor: divChartData.map((_, i) => _grayAt(i, T)),
-            borderColor: T.paper, borderWidth: 1, borderRadius: 6
-          }]
-        },
-        options: {
-          responsive: true, maintainAspectRatio: false,
-          plugins: {
-            legend: { display: false },
-            tooltip: Object.assign(_monoTip(T), { callbacks: {
-              label: c => ` ₱${parseFloat(c.raw||0).toLocaleString('en-PH',{minimumFractionDigits:2})}` } })
-          },
-          scales: {
-            x: { grid: { display: false }, border: { display: false }, ticks: { color: T.tick, font: { family: 'DM Sans' } } },
-            y: { beginAtZero: true, grid: { color: T.grid }, border: { display: false },
-                 ticks: { color: T.tick, font: { family: 'DM Sans' }, callback: v => '₱' + (v/1000>=1 ? (v/1000).toFixed(0)+'k' : v) } }
-          }
-        }
-      });
-    }
-  }
+  [_flowChartInst, _staffChartInst, _divChartInst].forEach(function (c) { if (c) c.destroy(); });
+  _flowChartInst = _staffChartInst = _divChartInst = null;
+  buildFlowChart(T); buildStaffChart(T); buildDivChart(T);
 }
 buildVaultCharts();
 window.addEventListener('laskie:themechange', buildVaultCharts);
