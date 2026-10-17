@@ -403,9 +403,7 @@ $cashSubLabel = 'End of ' . date('M Y', mktime(0, 0, 0, $selMonth, 1, $selYear))
         <th>Timestamp</th><th>Action</th><th>Module</th><th>Details</th><th>IP Address</th>
       </tr></thead>
       <tbody>
-      <?php if(empty($myLogs)): ?>
-        <tr><td colspan="5" class="text-center py-4 text-muted">No activity logs for this period.</td></tr>
-      <?php endif; ?>
+      <?php // no colspan placeholder: DataTables rejects it ("Incorrect column count") and shows emptyTable instead ?>
       <?php foreach($myLogs as $log): ?>
       <tr>
         <td data-order="<?= $log['created_at'] ?>" class="mono" style="font-size:11.5px;white-space:nowrap"><?= date('M j, Y H:i:s',strtotime($log['created_at'])) ?></td>
@@ -456,7 +454,7 @@ $(document).ready(function(){
       pageLength: 25,
       order: [[0,'desc']],
       dom: '<"d-flex justify-content-between align-items-center mb-2"lf>rtip',
-      language: { search:'Filter:', lengthMenu:'Show _MENU_' }
+      language: { search:'Filter:', lengthMenu:'Show _MENU_', emptyTable:'No activity logs for this period.' }
     });
   }
 });

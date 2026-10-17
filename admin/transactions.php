@@ -435,11 +435,7 @@ function statusBadge(string $type, string $status, ?string $deletedAt = null): s
         </td>
       </tr>
       <?php endforeach; ?>
-      <?php if (empty($transactions)): ?>
-      <tr><td colspan="9" class="text-center py-5 text-muted">
-        <i class="fa-solid fa-inbox fa-2x d-block mb-2"></i>No transactions found for this period.
-      </td></tr>
-      <?php endif; ?>
+      <?php // no colspan placeholder: DataTables rejects it ("Incorrect column count") and shows emptyTable instead ?>
       </tbody>
     </table>
   </div>
@@ -453,7 +449,7 @@ $(document).ready(function() {
     order: [[0, 'desc']],
     columnDefs: [{orderable: false, targets: 8}],
     dom: '<"d-flex justify-content-between align-items-center mb-2 flex-wrap gap-2"lf>rtip',
-    language: {search: 'Search:', lengthMenu: 'Show _MENU_', info: '_START_–_END_ of _TOTAL_'}
+    language: {search: 'Search:', lengthMenu: 'Show _MENU_', info: '_START_–_END_ of _TOTAL_', emptyTable: 'No transactions found for this period.'}
   });
 });
 

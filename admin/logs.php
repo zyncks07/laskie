@@ -277,9 +277,7 @@ $deletes    = count(array_filter($logRows, fn($r)=>str_starts_with($r['action'],
         </td>
       </tr>
       <?php endforeach; ?>
-      <?php if(empty($logRows)): ?>
-      <tr><td colspan="7" class="text-center py-4 text-muted">No log entries found for this period.</td></tr>
-      <?php endif; ?>
+      <?php // no colspan placeholder: DataTables rejects it ("Incorrect column count") and shows emptyTable instead ?>
       </tbody>
     </table>
   </div>
@@ -325,6 +323,7 @@ $(document).ready(function(){
       search: 'Search:',
       lengthMenu: 'Show _MENU_',
       info: '_START_ to _END_ of _TOTAL_',
+      emptyTable: 'No log entries found for this period.',
       paginate: { previous: '\u2039', next: '\u203a' }
     }
   });
