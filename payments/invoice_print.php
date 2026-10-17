@@ -1,9 +1,13 @@
 <?php
 // payments/invoice_print.php — Printable Payment Invoice
-session_start();
+// Also rendered in-process by invoice_pdf_download.php, which sets $invoicePdf
+// first: the page then skips its own audit row (the download logs one) and the
+// on-screen buttons, and chromium prints it with the @media print rules below.
+if (session_status() !== PHP_SESSION_ACTIVE) session_start();
 require_once '../config/db.php';
 require_once '../config/functions.php';
 requireLogin();
+$invoicePdf = !empty($invoicePdf);
 
 $id = (int)($_GET['id'] ?? 0);
 if (!$id) die('<p style="font-family:sans-serif;padding:2rem;color:red;">Invalid invoice ID.</p>');
@@ -67,7 +71,7 @@ $description = $pay['payment_type'] === 'rent'
     ? 'Rental Payment — ' . date('F Y', mktime(0,0,0,$pay['period_month'],1,$pay['period_year']))
     : ($pay['service_name'] ?? 'Service Fee') . ' — ' . date('F Y', mktime(0,0,0,$pay['period_month'],1,$pay['period_year']));
 
-logActivity($pdo, 'PRINT_INVOICE', 'Payments', "Printed invoice {$pay['invoice_no']} (payment #{$id})");
+if (!$invoicePdf) logActivity($pdo, 'PRINT_INVOICE', 'Payments', "Printed invoice {$pay['invoice_no']} (payment #{$id})");
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -244,10 +248,13 @@ logActivity($pdo, 'PRINT_INVOICE', 'Payments', "Printed invoice {$pay['invoice_n
 </head>
 <body>
 
+<?php if (!$invoicePdf): ?>
 <div class="page-actions no-print">
   <button class="btn btn-secondary" onclick="window.close()"><i>←</i> Close</button>
+  <a class="btn btn-secondary" style="text-decoration:none" href="invoice_pdf_download.php?id=<?= (int)$id ?>">⤓ Download PDF</a>
   <button class="btn btn-primary" onclick="window.print()">🖨 Print Invoice</button>
 </div>
+<?php endif; ?>
 
 <div class="invoice" style="position:relative">
 
@@ -377,11 +384,13 @@ logActivity($pdo, 'PRINT_INVOICE', 'Payments', "Printed invoice {$pay['invoice_n
 
 </div>
 
+<?php if (!$invoicePdf): ?>
 <script>
 // Auto-print if ?print=1
 if (new URLSearchParams(window.location.search).get('print') === '1') {
   window.addEventListener('load', () => setTimeout(() => window.print(), 400));
 }
 </script>
+<?php endif; ?>
 </body>
 </html>
