@@ -79,7 +79,7 @@
 │   └── settings.php       # Settings + master password change
 │
 ├── payments/
-│   ├── collection.php     # Monthly rent collection grid
+│   ├── collection.php     # Monthly rent collection grid; ?collect_tenant=ID opens Record Payment for that tenant (Tenants page → Collect payment: deposits / advance before move-in)
 │   ├── history.php        # Statement of Account (per unit, date range)
 │   ├── invoice_print.php  # Printable single-invoice
 │   ├── api_payment.php    # Payment + service-charge CRUD API (JSON)
@@ -177,7 +177,10 @@ Read [`install.sql`](install.sql) for the authoritative DDL. The live DB is curr
     by `contractDisplayState()` — nothing stores them, no cron.
   - `template_key` + `template_version` pick the renderer (`includes/contracts/lease_caloocan_v{N}.php`), so a new
     template version never changes how an already-approved contract prints.
-    **v3 (current, 2026-10-05)** = v2's post-paid terms with the property city chosen from `CONTRACT_NCR_CITIES`
+    **v4 (current, 2026-10-17)** = v3 with the lessor address printed exactly as typed (full address, city
+    included); `lease_caloocan_v4.php` just sets `$lessorAddressFull` and includes v3. v3 still appends
+    ", Caloocan City" to a lessor address that names no city, so its approved contracts print unchanged.
+    **v3 (2026-10-05)** = v2's post-paid terms with the property city chosen from `CONTRACT_NCR_CITIES`
     (16 NCR cities, Caloocan split North/South) and no TCT / floor area / rooms / occupant cap / association dues /
     DST / attorney's-fee minimum (tracked manually, outside the system). **v2 (2026-10-04) is post-paid with no advance
     rent** (move-in = 2 months deposit + ₱3,000 utilities; `CONTRACT_ADVANCE_MONTHS`); v1 (pre-paid, 1 month advance)
@@ -347,7 +350,7 @@ Helpers Claude should reuse rather than re-implement:
 | `getUnitPaymentStatus($pdo, $unitId, $m, $y)` | Returns `'green'`/`'amber'`/`'red'`/`'gray'`. **Currently uncalled** — `dashboard.php` computes unit status inline |
 | `getPastTenantArrears($pdo, $unitId?)` / `getCurrentTenantArrears($pdo, $unitId?)` | Outstanding per unit keyed `unit_id`, split by whether the tenant is still in place. `getTenantArrears()` sums each tenancy's positive `tenantStatement()` balance — no arithmetic of its own (§5 inv. 16) |
 | `soaOpeningBalances($pdo, $unitId, $occupants, $dueDay, $baseRate, $scopeTenantId, $from)` | "Balance brought forward" per owner (tenant id, `''` unattributed): every SoA row dated before `$from`, same rules as the listed rows. Used by `history.php` + `soa_pdf.php` |
-| `soaDefaultFrom($tenant)` | Default SoA start: tenancy start, else Jan 1. End defaults to today |
+| `soaDefaultFrom($tenant, ?$pdo)` | Default SoA start: tenancy start, else Jan 1 — with `$pdo`, earlier if the tenant paid/was charged before move-in (deposit collected ahead). End defaults to today |
 | `resolvePeriodTenant($pdo, $unitId, $m, $y)` | Occupant of charge period M's cycle — attribution for a payment/charge posted without a tenant |
 | `reconEmit($page, $data)` | Emits the figures a page displayed as JSON, **only** when `RECON_MODE` is defined (reconcile harness + `callPage()` tests). No-op in production |
 | `getUserCashOnHand($pdo, $userId)` | Authoritative per-user **signed** ledger balance (`received + vault_return − remitted − expenses − refunded`). Can be negative — that means the business owes the user, not that they hold negative cash |
