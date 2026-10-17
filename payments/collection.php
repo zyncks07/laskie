@@ -23,6 +23,17 @@ $years = $pdo->query("SELECT DISTINCT YEAR(payment_date) y FROM payments WHERE d
 if (!in_array($curYear, $years)) array_unshift($years, $curYear);
 rsort($years);
 
+// ?collect_tenant=ID (Tenants page → Collect payment) opens Record Payment for
+// that tenant on load. Only an active tenant already assigned to a unit — a
+// payment always belongs to a unit, so a new tenant is given their unit (with
+// their future move-in date) before anything is collected.
+$collectFor = null;
+if (!empty($_GET['collect_tenant'])) {
+    $cq = $pdo->prepare("SELECT id, unit_id FROM tenants WHERE id=? AND status='active' AND unit_id IS NOT NULL");
+    $cq->execute([(int)$_GET['collect_tenant']]);
+    $collectFor = $cq->fetch() ?: null;
+}
+
 logActivity($pdo, 'VIEW_COLLECTION', 'Payments', 'Viewed payment collection dashboard');
 include '../includes/header.php';
 ?>
@@ -144,7 +155,7 @@ include '../includes/header.php';
             <select class="form-select" id="payService" onchange="onServiceChange(this.value)">
               <option value="">— Select service —</option>
               <?php foreach ($serviceTypes as $s): ?>
-              <option value="<?= $s['id'] ?>" data-amount="<?= $s['default_amount'] ?>"><?= clean($s['name']) ?><?= money_is_pos($s['default_amount']) ? ' — ' . money($s['default_amount']) : ' (variable)' ?></option>
+              <option value="<?= $s['id'] ?>" data-amount="<?= $s['default_amount'] ?>" data-name="<?= clean($s['name']) ?>"><?= clean($s['name']) ?><?= money_is_pos($s['default_amount']) ? ' — ' . money($s['default_amount']) : ' (variable)' ?></option>
               <?php endforeach; ?>
             </select>
           </div>
@@ -378,6 +389,10 @@ document.addEventListener('DOMContentLoaded', function() {
   loadSummary();
   document.getElementById('selMonth').addEventListener('change', loadSummary);
   document.getElementById('selYear').addEventListener('change', loadSummary);
+  // Arrived from the Tenants page's "Collect payment" button.
+  <?php if ($collectFor): ?>
+  openPaymentForTenant(<?= (int)$collectFor['unit_id'] ?>, <?= (int)$collectFor['id'] ?>);
+  <?php endif; ?>
 });
 
 function loadSummary() {
@@ -590,15 +605,47 @@ function onUnitChange(unitId) {
     var sel2 = document.getElementById('payTenant');
     sel2.innerHTML = '<option value="">— Select tenant —</option>';
     if (res && res.success && res.tenants.length) {
+      var active = [];
       res.tenants.forEach(function(t) {
         var o = document.createElement('option');
         o.value = t.id;
-        o.textContent = t.full_name;
+        o.textContent = t.full_name + (t.status !== 'active' ? ' (' + t.status + ')' : '');
         sel2.appendChild(o);
+        if (t.status === 'active') active.push(t.id);
       });
-      if (res.tenants.length === 1) sel2.value = res.tenants[0].id;
+      // A unit that changed hands lists its former tenant too — default to
+      // the one tenant living there now, never a guess between two.
+      if (_payPreselectTenant) sel2.value = _payPreselectTenant;
+      else if (active.length === 1) sel2.value = active[0];
+      else if (res.tenants.length === 1) sel2.value = res.tenants[0].id;
     }
+    _payPreselectTenant = null;
   });
+}
+
+// ── Collect for one tenant (Tenants page → "Collect payment") ──
+// Opens Record Payment on the tenant's unit with them selected. Defaults to a
+// Security Deposit of 2 months' rent — the move-in money a new tenant hands
+// over before the first post-paid bill exists — and the cashier can switch it
+// to a rent payment or any other service.
+var _payPreselectTenant = null;
+function openPaymentForTenant(unitId, tenantId) {
+  openPaymentModal();
+  setTimeout(function() {
+    var unitSel = document.getElementById('payUnit');
+    unitSel.value = unitId;
+    if (unitSel.value !== String(unitId)) return;
+    _payPreselectTenant = String(tenantId);
+    onUnitChange(unitId);
+    document.getElementById('payType').value = 'service';
+    onPayTypeChange('service');
+    var svc = document.getElementById('payService');
+    for (var i = 0; i < svc.options.length; i++) {
+      if (svc.options[i].dataset.name === 'Security Deposit') { svc.value = svc.options[i].value; break; }
+    }
+    var rate = parseFloat(unitSel.options[unitSel.selectedIndex].dataset.rate) || 0;
+    if (svc.value && rate > 0) document.getElementById('payAmount').value = (rate * 2).toFixed(2);
+  }, 100);
 }
 
 function onPayTypeChange(type) {
@@ -888,6 +935,8 @@ function viewUnitPayments(unitId, unitName, month, year) {
             '<td class="text-center">' +
               '<a href="../payments/invoice_print.php?id=' + pid + '" target="_blank" rel="noopener noreferrer" class="btn-icon" title="Print Invoice">' +
                 '<i class="fa-solid fa-print fa-xs"></i></a> ' +
+              '<a href="../payments/invoice_pdf_download.php?id=' + pid + '" class="btn-icon" title="Download invoice PDF (for email)" ' +
+                'data-pdf-download="Generating invoice PDF"><i class="fa-solid fa-file-pdf fa-xs"></i></a> ' +
               ((p.receipt_path || p.receipt_url)
                 ? '<a href="' + esc(safeUrl(p.receipt_path || p.receipt_url)) + '" target="_blank" rel="noopener noreferrer" class="btn-icon" title="View payment proof"><i class="fa-solid fa-paperclip fa-xs"></i></a> '
                 : '') +

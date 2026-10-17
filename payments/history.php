@@ -76,7 +76,7 @@ if ($selUnit) {
     }
 
     if ($dateFrom === null) {
-        $dateFrom = soaDefaultFrom($tenant);
+        $dateFrom = soaDefaultFrom($tenant, $pdo);
     }
 
     if ($tenant) {
@@ -679,7 +679,10 @@ include '../includes/header.php';
         </tr>
       </thead>
       <tbody>
-      <?php if (empty($ledger)): ?>
+      <?php // DataTables rejects a colspan row ("Incorrect column count") and shows
+            // its own emptyTable text instead; only the segmented unit ledger,
+            // which is not a DataTable, needs the placeholder row.
+            if (empty($ledger) && $scopeAll): ?>
         <tr><td colspan="9" class="text-center py-4 text-muted">No records for the selected period and unit.</td></tr>
       <?php endif; ?>
       <?php
@@ -1035,7 +1038,7 @@ $(document).ready(function(){
       order: [[0,'desc']],
       columnDefs: [{ targets: -1, orderable: false }],
       dom: '<"d-flex justify-content-between align-items-center mb-2"lf>rtip',
-      language: { search:'Filter:', lengthMenu:'Show _MENU_' }
+      language: { search:'Filter:', lengthMenu:'Show _MENU_', emptyTable:'No records for the selected period and unit.' }
     });
   }
   var refundModalEl = document.getElementById('refundModal');

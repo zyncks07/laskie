@@ -827,7 +827,7 @@ if ($action === 'monthly_summary') {
 // ── Get Tenants for a Unit (for dropdown) ─────────────────────
 if ($action === 'get_unit_tenants') {
     $unitId = (int)($_POST['unit_id'] ?? 0);
-    $rows = $pdo->prepare("SELECT id, full_name FROM tenants WHERE unit_id=? ORDER BY status='active' DESC, full_name");
+    $rows = $pdo->prepare("SELECT id, full_name, status FROM tenants WHERE unit_id=? ORDER BY status='active' DESC, full_name");
     $rows->execute([$unitId]);
     jsonOk(['tenants' => $rows->fetchAll()]);
 }

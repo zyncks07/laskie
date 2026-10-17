@@ -53,7 +53,7 @@ if (!$scopeAll) {
     }
     if (!$tenant && $unitTenants) $tenant = end($unitTenants);
 }
-$dateFrom = $dateFrom ?? soaDefaultFrom($tenant);
+$dateFrom = $dateFrom ?? soaDefaultFrom($tenant, $pdo);
 // Clamp absurd spans: the ledger is built month-by-month in PHP (a query per
 // month per occupant), so a 1000-year range would pin a worker. Cap at ~10 yrs.
 $fromTs = strtotime($dateFrom);

@@ -357,6 +357,15 @@ include '../includes/header.php';
         <td><span class="badge badge-<?= $t['status'] ?>"><?= ucfirst($t['status']) ?></span></td>
         <td class="text-center">
           <button class="btn-icon" title="Edit" onclick="editTenant(<?= $t['id'] ?>)"><i class="fa-solid fa-pen fa-xs"></i></button>
+          <?php if ($t['status'] === 'active'): ?>
+            <?php if ($t['unit_id']): ?>
+          <a class="btn-icon" title="Collect payment (deposit, advance rent, fees) — prints an invoice"
+             href="<?= clean(pageUrl('payments/collection.php?collect_tenant=' . (int)$t['id'])) ?>"><i class="fa-solid fa-hand-holding-dollar fa-xs"></i></a>
+            <?php else: ?>
+          <button class="btn-icon" title="Collect payment" data-name="<?= clean($t['full_name']) ?>"
+                  onclick="showToast('Assign ' + this.dataset.name + ' to a unit first (Edit → Unit, with their move-in date) — every payment belongs to a unit.', 'warning')"><i class="fa-solid fa-hand-holding-dollar fa-xs"></i></button>
+            <?php endif; ?>
+          <?php endif; ?>
           <?php if ($transfersOn && $t['status'] === 'active' && $t['unit_id']): ?>
           <button class="btn-icon" title="Transfer to another unit" data-id="<?= (int)$t['id'] ?>" data-name="<?= clean($t['full_name']) ?>"
                   data-unit="<?= (int)$t['unit_id'] ?>" data-unit-name="<?= clean($t['unit_name']) ?>"

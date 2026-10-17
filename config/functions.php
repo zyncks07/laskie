@@ -1162,8 +1162,24 @@ function prorateOccupancyMonth($monthlyRate, int $dueDay, ?string $contractStart
 // move-out. Shared by the SoA page, the preview and the PDF so a link that omits
 // the range opens all three on the same statement (they used to differ: the
 // preview started at Jan 1 and hid every earlier bill).
-function soaDefaultFrom(?array $tenant): string {
-    return ($tenant && !empty($tenant['contract_start'])) ? $tenant['contract_start'] : date('Y-01-01');
+// Given $pdo, it starts earlier when the tenant paid or was charged before
+// moving in (a security deposit collected ahead of move-in), so that money is
+// listed instead of disappearing into a zero "Balance brought forward".
+function soaDefaultFrom(?array $tenant, ?PDO $pdo = null): string {
+    $from = ($tenant && !empty($tenant['contract_start'])) ? $tenant['contract_start'] : date('Y-01-01');
+    if ($pdo && $tenant && !empty($tenant['id'])) {
+        $q = $pdo->prepare(
+            "SELECT LEAST(
+                 COALESCE((SELECT MIN(payment_date) FROM payments
+                           WHERE tenant_id=? AND deleted_at IS NULL AND status != 'voided'), '9999-12-31'),
+                 COALESCE((SELECT MIN(charge_date) FROM unit_charges
+                           WHERE tenant_id=? AND voided_at IS NULL), '9999-12-31'))"
+        );
+        $q->execute([(int)$tenant['id'], (int)$tenant['id']]);
+        $first = (string)$q->fetchColumn();
+        if ($first !== '' && $first < $from) $from = $first;
+    }
+    return $from;
 }
 
 // Opening balance ("Balance brought forward") of a Statement of Account: the
